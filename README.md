@@ -34,7 +34,8 @@ The app can check a GitHub repository's latest Release, download the Windows `.e
 Release requirements:
 
 - Tag name should be a semantic version, for example `v14.10.69`.
-- Attach a Windows portable `.exe` asset, for example `LocalApiImageGenerator-14.10.69-win-x64.exe`.
+- The included GitHub Actions workflow builds the Windows portable `.exe` and attaches it to the release automatically when a `v*` tag is pushed.
+- The release asset is named like `LocalApiImageGenerator-14.10.69-win-x64.exe`.
 - In the app, open Settings and fill the repository as `owner/repo`.
 
 ## Security Notes
