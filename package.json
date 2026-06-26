@@ -1,0 +1,40 @@
+{
+  "name": "local-api-image-generator-webui",
+  "version": "14.10.69",
+  "description": "Local APIMart and Flow2API image generator with batch management",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win portable --config.win.signAndEditExecutable=false --config.forceCodeSigning=false",
+    "dist:dir": "electron-builder --win dir --config.win.signAndEditExecutable=false --config.forceCodeSigning=false"
+  },
+  "author": "Local",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "35.7.5",
+    "electron-builder": "25.1.8"
+  },
+  "build": {
+    "appId": "com.local.api.image.generator.webui.v14_9_8",
+    "productName": "LocalApiImageGeneratorV14_10_3",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "win": {
+      "icon": "assets/rocket.ico",
+      "target": [
+        "portable"
+      ],
+      "artifactName": "LocalApiImageGenerator-14.10.69-win-${arch}.${ext}",
+      "signAndEditExecutable": false,
+      "verifyUpdateCodeSignature": false
+    },
+    "artifactName": "LocalApiImageGenerator-14.10.69-win-${arch}.${ext}",
+    "forceCodeSigning": false
+  }
+}

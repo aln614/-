@@ -1,0 +1,31 @@
+node_modules/
+dist/
+.electron_builder_cache/
+build_log.txt
+last_error.txt
+npm-debug.log*
+*.zip
+*.7z
+*.rar
+*.exe
+*.msi
+*.log
+*V14*.txt
+!README_CN.txt
+
+# Local runtime data and private Flow2API settings
+uploads/
+outputs/
+runtime/
+data/
+cache/
+flow2api_local/config/setting.toml
+flow2api_local/source/data/
+flow2api_local/source/logs/
+flow2api_local/source/.env
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
