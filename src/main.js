@@ -444,7 +444,12 @@ function httpJson(target, timeoutMs = 20000) {
       r.setEncoding('utf8');
       r.on('data', c => raw += c);
       r.on('end', () => {
-        if (r.statusCode < 200 || r.statusCode >= 300) return reject(new Error(`GitHub 更新检查失败：HTTP ${r.statusCode}`));
+        if (r.statusCode < 200 || r.statusCode >= 300) {
+          if (r.statusCode === 404) {
+            return reject(new Error('GitHub 更新检查失败：未找到 Release。请确认仓库已公开、已创建 Release，并且 Release 中包含 Windows EXE 附件。'));
+          }
+          return reject(new Error(`GitHub 更新检查失败：HTTP ${r.statusCode}`));
+        }
         try { resolve(JSON.parse(raw)); } catch (e) { reject(e); }
       });
     });
@@ -480,10 +485,10 @@ function pickWindowsExeAsset(release) {
 }
 async function checkSoftwareUpdate(repoInput = '', cfg = readConfig()) {
   const repo = normalizeUpdateRepo(repoInput || cfg.update_repo || '');
-  if (!repo || !/^[^/]+\/[^/]+$/.test(repo)) throw new Error('请填写 GitHub 仓库，例如：用户名/仓库名');
+  if (!repo || !/^[^/]+\/[^/]+$/.test(repo)) throw new Error('请填写 GitHub 仓库，例如：aln614/-');
   const release = await httpJson(`https://api.github.com/repos/${repo}/releases/latest`);
   const version = String(release.tag_name || release.name || '').replace(/^v/i, '').trim();
-  if (!version) throw new Error('GitHub Release 没有可识别的版本号 tag');
+  if (!version) throw new Error('GitHub Release 缺少可识别的版本号 tag');
   const asset = pickWindowsExeAsset(release);
   const current = getAppVersion();
   const info = {
@@ -502,7 +507,7 @@ async function checkSoftwareUpdate(repoInput = '', cfg = readConfig()) {
 }
 async function downloadSoftwareUpdate(repoInput = '', cfg = readConfig()) {
   const info = await checkSoftwareUpdate(repoInput, cfg);
-  if (!info.asset_url) throw new Error('最新 Release 没有找到 Windows .exe 资产，请先在 GitHub Release 上传单文件 EXE');
+  if (!info.asset_url) throw new Error('最新 Release 没有找到 Windows EXE 附件，请先在 GitHub Release 上传单文件 EXE。');
   const dest = path.join(updateCacheDir(), info.asset_name || `LocalApiImageGenerator-${info.latest_version}-win-x64.exe`);
   await downloadUrlToFile(info.asset_url, dest);
   const next = { ...info, downloaded_path: dest, downloaded_at: nowISO() };
@@ -512,7 +517,7 @@ async function downloadSoftwareUpdate(repoInput = '', cfg = readConfig()) {
 function installSoftwareUpdate(downloadedPath = '', cfg = readConfig()) {
   const file = String(downloadedPath || (cfg.update_last_check && cfg.update_last_check.downloaded_path) || '').trim();
   if (!file || !fs.existsSync(file)) throw new Error('未找到已下载的新版本 EXE');
-  if (!app.isPackaged) throw new Error('当前是开发调试模式，不能覆盖安装；打包后的 EXE 可直接更新');
+  if (!app.isPackaged) throw new Error('当前是开发调试模式，不能覆盖安装；打包后的 EXE 才可以原地更新。');
   const target = process.execPath;
   const bat = path.join(os.tmpdir(), `LAIG_update_${Date.now()}.bat`);
   const script = [

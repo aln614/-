@@ -3056,5 +3056,7 @@ body:not(.theme-dark) .asset-context-menu button:hover{background:rgba(20,184,16
 .theme-dark .software-update-result pre{background:rgba(255,255,255,.07)}
 .update-available{color:#0f766e}
 .update-current{color:#2563eb}
+.update-error{color:#dc2626}
 .theme-dark .update-available{color:#5eead4}
 .theme-dark .update-current{color:#93c5fd}
+.theme-dark .update-error{color:#fda4af}

@@ -155,6 +155,13 @@ function renderSoftwareUpdateInfo(info = null){
   $('#downloadUpdateBtn')?.toggleAttribute('disabled', !has || !info.asset_url);
   $('#installUpdateBtn')?.toggleAttribute('disabled', !info.downloaded_path);
 }
+function renderSoftwareUpdateError(message){
+  const box = $('#softwareUpdateResult');
+  if(!box) return;
+  box.innerHTML = `<div><b class="update-error">检查失败</b></div><div>${escapeHtml(message || '检查更新失败')}</div>`;
+  $('#downloadUpdateBtn')?.toggleAttribute('disabled', true);
+  $('#installUpdateBtn')?.toggleAttribute('disabled', true);
+}
 async function checkSoftwareUpdate(){
   const repo = $('#updateRepo')?.value?.trim() || '';
   try{
@@ -164,7 +171,11 @@ async function checkSoftwareUpdate(){
     softwareUpdateInfo = info;
     renderSoftwareUpdateInfo(info);
     toast(info.has_update ? '发现新版本' : '当前已是最新版本');
-  }catch(e){ toast(e.message || '检查更新失败'); }
+  }catch(e){
+    softwareUpdateInfo = null;
+    renderSoftwareUpdateError(e.message || '检查更新失败');
+    toast(e.message || '检查更新失败');
+  }
   finally{ const btn = $('#checkUpdateBtn'); if(btn) btn.disabled = false; }
 }
 async function downloadSoftwareUpdate(){
