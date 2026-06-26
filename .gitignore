@@ -23,6 +23,7 @@ flow2api_local/config/setting.toml
 flow2api_local/source/data/
 flow2api_local/source/logs/
 flow2api_local/source/.env
+flow2api_local/source/.github/
 
 # OS/editor
 .DS_Store
