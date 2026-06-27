@@ -19,6 +19,12 @@ let currentPort = 7860;
 let tunnelProcess = null;
 let tunnelState = { running: false, provider: '', url: '', logs: [], last_error: '' };
 const staticDir = path.join(__dirname, 'renderer');
+const APP_DISPLAY_NAME = 'TENYING_AI 1.0';
+const OUTPUT_ROOT_NAME = 'TENYING_AI_1_0';
+const OUTPUT_ZIP_DIR_NAME = 'TENYING_AI_1_0_Zips';
+const OUTPUT_WORD_DIR_NAME = 'TENYING_AI_1_0_Word';
+const OUTPUT_EXCEL_DIR_NAME = 'TENYING_AI_1_0_Excel';
+const OUTPUT_MJ_DIR_NAME = 'TENYING_AI_1_0_Midjourney';
 try { app.setAppUserModelId('com.local.api.image.generator.webui.v14_9_8'); } catch {}
 
 // V7.4：清除软件所有数据会同时清除本机配置、API Key、浏览器本地缓存和运行数据。
@@ -65,6 +71,11 @@ function removePathSafe(p) {
 function hardResetDataDirsBeforeInit() {
   if (!fs.existsSync(RESET_MARKER)) return false;
   const targets = new Set([DATA_ROOT, ...getLegacyDataRoots()]);
+  targets.add(path.join(app.getPath('pictures'), OUTPUT_ROOT_NAME));
+  targets.add(path.join(app.getPath('downloads'), OUTPUT_ZIP_DIR_NAME));
+  targets.add(path.join(app.getPath('downloads'), OUTPUT_WORD_DIR_NAME));
+  targets.add(path.join(app.getPath('downloads'), OUTPUT_EXCEL_DIR_NAME));
+  targets.add(path.join(app.getPath('pictures'), OUTPUT_MJ_DIR_NAME));
   targets.add(path.join(app.getPath('pictures'), 'LocalApiImageGenerator_V14_10_15'));
   targets.add(path.join(app.getPath('downloads'), 'LocalApiImageGenerator_V14_10_15_Zips'));
   for (const t of targets) removePathSafe(t);
@@ -73,7 +84,7 @@ function hardResetDataDirsBeforeInit() {
 }
 
 const DEFAULT_CONFIG = {
-  app_name: '本地调用api生成 V14.10.15',
+  app_name: APP_DISPLAY_NAME,
   image_api_platform: 'apimart',
   api_endpoint: 'https://api.apimart.ai',
   legacy_api_endpoint: 'http://127.0.0.1:38000',
@@ -1547,7 +1558,7 @@ async function downloadVideoResult(urlValue, destPath) {
 function videoOutputBaseDir() {
   const cfg = readConfig();
   // V11.4：视频保存目录和图片输出目录保持一致，不再额外放到 videos 子目录。
-  return cfg.output_dir || path.join(app.getPath('pictures'), 'LocalApiImageGenerator_V14_10_15');
+  return cfg.output_dir || path.join(app.getPath('pictures'), OUTPUT_ROOT_NAME);
 }
 
 async function pollApimartVideoTask(taskId, apiKey, localTaskId) {
@@ -2995,7 +3006,7 @@ function exportZip(batchId, owner, ids = null) {
     name = safeName(batch.note || batch.name, 'batch');
   }
   if (!images.length) throw new Error('没有可导出的图片');
-  const zipDir = path.join(app.getPath('downloads'), 'LocalApiImageGenerator_V14_10_15_Zips');
+  const zipDir = path.join(app.getPath('downloads'), OUTPUT_ZIP_DIR_NAME);
   const zipPath = path.join(zipDir, `${name}_${Date.now().toString(36)}.zip`);
   zipFiles(images.map(i => i.file_path), zipPath, name);
   return zipPath;
@@ -3030,7 +3041,7 @@ function exportBatchesZip(batchIds = [], owner = '') {
     }
   }
   if(!entries.length) throw new Error('选中批次没有可导出的生成图片');
-  const zipDir = path.join(app.getPath('downloads'), 'LocalApiImageGenerator_V14_10_15_Zips');
+  const zipDir = path.join(app.getPath('downloads'), OUTPUT_ZIP_DIR_NAME);
   const name = batches.length === 1 ? safeName(batches[0].note || batches[0].name, 'batch') : 'Selected_Batches_Images';
   const zipPath = path.join(zipDir, `${name}_${Date.now().toString(36)}.zip`);
   zipFileEntries(entries, zipPath);
@@ -3132,7 +3143,7 @@ function exportDescribeWord(batchId='', owner='') {
     {name:'word/document.xml', data:documentXml},
     ...mediaEntries
   ];
-  const dir = path.join(app.getPath('downloads'), 'LocalApiImageGenerator_V14_10_15_Word');
+  const dir = path.join(app.getPath('downloads'), OUTPUT_WORD_DIR_NAME);
   const file = path.join(dir, `${safeName(batch.note || batch.name || 'MJ_describe', 'MJ_describe')}.docx`);
   return writeZipBufferEntries(entries, file);
 }
@@ -3216,7 +3227,7 @@ function exportDescribeXlsx(batchId='', owner='') {
     ...(drawingAnchors.length ? [{name:'xl/drawings/drawing1.xml', data:drawingXml},{name:'xl/drawings/_rels/drawing1.xml.rels', data:`<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${drawingRels.join('')}</Relationships>`}] : []),
     ...mediaEntries
   ];
-  const dir = path.join(app.getPath('downloads'), 'LocalApiImageGenerator_V14_10_15_Excel');
+  const dir = path.join(app.getPath('downloads'), OUTPUT_EXCEL_DIR_NAME);
   const file = path.join(dir, `${safeName(batch.note || batch.name || 'MJ_describe', 'MJ_describe')}.xlsx`);
   return writeZipBufferEntries(entries, file);
 }
@@ -4041,7 +4052,7 @@ function buttonActionFromMeta(label='', customId='') {
   }
   return { action:'variation', index };
 }
-function mjOutputRoot() { return path.join(app.getPath('pictures'), 'LocalApiImageGenerator_V14_10_15_Midjourney'); }
+function mjOutputRoot() { return path.join(app.getPath('pictures'), OUTPUT_MJ_DIR_NAME); }
 function ensureMjBatchAndTask(body={}, owner='local') {
   const db = getDB(); const st = db._store;
   const action = String(body.action || 'imagine').trim().toLowerCase();
@@ -4778,7 +4789,7 @@ function createWindow() {
   const cfg = readConfig();
   mainWindow = new BrowserWindow({
     width: 1480, height: 960, minWidth: 1180, minHeight: 760,
-    title: (cfg.app_name || '本地调用api生成 V14.10.15') + '  V14.10.15',
+    title: (cfg.app_name || APP_DISPLAY_NAME),
     icon: path.join(__dirname, '..', 'assets', 'rocket.ico'),
     webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: false, preload: path.join(__dirname, 'preload.js') }
   });

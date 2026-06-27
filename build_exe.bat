@@ -43,10 +43,10 @@ if not defined LAIG_INNER_BUILD (
     exit /b !LAIG_BUILD_RC!
   )
 )
-title LocalApiImageGenerator Builder V14.5.4
+title TENYING_AI Builder 1.0
 cls
 echo =====================================================
-echo  LocalApiImageGenerator Builder V14.5.4
+echo  TENYING_AI Builder 1.0
 echo  electron-builder symlink privilege fix
 echo  This window will NOT close automatically.
 echo =====================================================

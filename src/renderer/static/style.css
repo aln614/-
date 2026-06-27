@@ -3010,7 +3010,7 @@ body:not(.theme-dark) .asset-context-menu button:hover{background:rgba(20,184,16
 #videoApiPlatformSwitch{flex-shrink:0}
 #videoModeHint{min-height:42px;display:flex;align-items:center}
 
-/* V14.10.69 GitHub release updater */
+/* V1.0 GitHub release updater */
 .software-update-card{
   background:rgba(255,255,255,.72)!important;
   border:1px solid rgba(255,255,255,.62)!important;

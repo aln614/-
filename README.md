@@ -33,9 +33,9 @@ The app can check a GitHub repository's latest Release, download the Windows `.e
 
 Release requirements:
 
-- Tag name should be a semantic version, for example `v14.10.69`.
+- Tag name should be a semantic version, for example `v1.0.0`.
 - The included GitHub Actions workflow builds the Windows portable `.exe` and attaches it to the release automatically when a `v*` tag is pushed.
-- The release asset is named like `LocalApiImageGenerator-14.10.69-win-x64.exe`.
+- The release asset is named like `TENYING_AI-1.0.0-win-x64.exe`.
 - In the app, open Settings and fill the repository as `owner/repo`.
 
 ## Security Notes

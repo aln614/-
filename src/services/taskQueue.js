@@ -109,7 +109,7 @@ class TaskQueue extends EventEmitter {
     const batchId = uuid('batch_');
     const createdAt = nowISO();
     const name = payload.name || `Batch_${createdAt.replace(/[\s:]/g, '_')}`;
-    const baseOut = payload.outputDir || cfg.outputDir || path.join(require('electron').app.getPath('pictures'), 'LocalApiImageGenerator_V14_10_15');
+    const baseOut = payload.outputDir || cfg.outputDir || path.join(require('electron').app.getPath('pictures'), 'TENYING_AI_1_0');
     const dirs = makeDirs(baseOut, name);
     const fullCfg = {
       ...cfg,

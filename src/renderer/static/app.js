@@ -721,7 +721,7 @@ function bindImageApiPlatformSwitch(){
 }
 
 function updateAppTitle(name){
-  const appName = (name || '本地调用api生成 V14.10.15').trim() || '本地调用api生成 V14.10.15';
+  const appName = (name || 'TENYING_AI 1.0').trim() || 'TENYING_AI 1.0';
   if($('#appBrand')) $('#appBrand').textContent = appName;
   if($('#appSubtitle')) $('#appSubtitle').textContent = 'APIMart / GrsAI 双平台 · 并发生成 · 多批次 · 视频编辑';
   document.title = appName;
@@ -1520,7 +1520,7 @@ async function loadConfig(){
   $('#retryTimes').value = c.retry_times || 2;
   $('#repeatCount').value = c.repeat_count || 1;
   $('#lanEnabled').checked = !!c.lan_enabled;
-  if($('#appName')) $('#appName').value = c.app_name || '本地调用api生成 V14.10.15';
+  if($('#appName')) $('#appName').value = c.app_name || 'TENYING_AI 1.0';
   $('#outputDir').value = c.output_dir || '';
   $('#logKeepDays').value = c.log_keep_days || 3;
   $('#pollInterval').value = c.poll_interval_ms || 800;
@@ -1538,7 +1538,7 @@ async function loadConfig(){
     renderSoftwareUpdateInfo(c.update_last_check);
   }
   renderAnnouncementCustomEditor(Array.isArray(c.announcement_custom_items) && c.announcement_custom_items.length ? c.announcement_custom_items : ((c.announcement_custom_title || c.announcement_custom_content) ? [{ title:c.announcement_custom_title || '', content:c.announcement_custom_content || '', tag:'自定义' }] : []));
-  updateAppTitle(c.app_name || '本地调用api生成 V14.10.15');
+  updateAppTitle(c.app_name || 'TENYING_AI 1.0');
   updateLanDisplay(c);
   if($('#publicProvider')) $('#publicProvider').value = c.public_provider || 'cloudflare';
   if($('#publicPassword')) $('#publicPassword').value = c.public_password || '';
@@ -1877,7 +1877,7 @@ function collectConfig(){
     poll_interval_ms: Number($('#pollInterval').value || 800),
     timeout_seconds: Number($('#timeoutSeconds').value || 1200),
     apimart_proxy_url: $('#apimartProxyUrl')?.value?.trim() || '',
-    app_name: $('#appName')?.value?.trim() || '本地调用api生成 V14.10.15',
+    app_name: $('#appName')?.value?.trim() || 'TENYING_AI 1.0',
     background_keepalive: $('#backgroundKeepalive') ? $('#backgroundKeepalive').checked : true,
     device_data_isolation: $('#deviceDataIsolation') ? $('#deviceDataIsolation').checked : true,
     prompt_multiline_tasks: isPromptMultilineTasksEnabled(),
@@ -1911,8 +1911,8 @@ async function handleConfigSave(payload, successMsg='当前设置已保存'){
     toast(successMsg || '当前设置已保存到主机本地');
     if(ret.config){
       updateLanDisplay(ret.config);
-      updateAppTitle(ret.config.app_name || payload.app_name || '本地调用api生成 V14.10.15');
-      if($('#appName')) $('#appName').value = ret.config.app_name || payload.app_name || '本地调用api生成 V14.10.15';
+      updateAppTitle(ret.config.app_name || payload.app_name || 'TENYING_AI 1.0');
+      if($('#appName')) $('#appName').value = ret.config.app_name || payload.app_name || 'TENYING_AI 1.0';
       if($('#backgroundKeepalive')) $('#backgroundKeepalive').checked = ret.config.background_keepalive !== false;
       if($('#clarity')) $('#clarity').value = ret.config.clarity || payload.clarity || '1K';
       if($('#claritySettings')) $('#claritySettings').value = ret.config.clarity || payload.clarity || '1K';

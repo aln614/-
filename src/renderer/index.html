@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>本地调用api生成</title>
+  <title>TENYING_AI 1.0</title>
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
   <div class="app-shell">
     <header class="topbar glass">
       <div>
-        <div class="brand" id="appBrand">本地调用api生成</div>
+        <div class="brand" id="appBrand">TENYING_AI 1.0</div>
         <div class="subtitle" id="appSubtitle">APIMart 批量生成工具 · 多批次 · 图片/视频 · AI聊天</div>
       </div>
       <div class="top-status">
@@ -486,7 +486,7 @@
       <section class="page" id="page-settings">
         <div class="section-head"><div><h1>设置中心</h1><p>默认输出目录、缓存、轮询间隔、主题偏好。自动主题按 24 小时制切换。</p></div></div>
         <div class="card">
-          <div class="row"><div><label>API 地址</label><select id="apiEndpoint"><option value="https://api.apimart.ai">https://api.apimart.ai（APIMart）</option><option value="http://127.0.0.1:38000">http://127.0.0.1:38000（本地 Flow2API）</option></select></div><div><label>软件名称</label><input id="appName" placeholder="例如：本地调用api生成" /></div></div>
+          <div class="row"><div><label>API 地址</label><select id="apiEndpoint"><option value="https://api.apimart.ai">https://api.apimart.ai（APIMart）</option><option value="http://127.0.0.1:38000">http://127.0.0.1:38000（本地 Flow2API）</option></select></div><div><label>软件名称</label><input id="appName" placeholder="例如：TENYING_AI 1.0" /></div></div>
           <div class="row"><div><label>布局主题</label><select id="themeMode"><option value="light">日间模式</option><option value="dark">深色模式</option><option value="auto">自动（按时间）</option></select></div><div class="setting-note-box">API 地址已移动到本机设置中心，首页只保留 API Key 和生成参数。</div></div>
           <div class="row"><div><label>输出目录</label><input id="outputDir" /></div><div><label>默认清晰度</label><select id="claritySettings"><option value="1K">1K 标准清晰</option><option value="2K">2K 高清</option><option value="4K">4K 超清</option></select></div></div>
           <div class="row"><div><label>日志保留天数</label><input id="logKeepDays" type="number" value="3" /></div><div><label>轮询间隔 ms</label><input id="pollInterval" type="number" value="800" /></div></div><div class="row"><div><label>APIMart 代理地址（可选）</label><input id="apimartProxyUrl" placeholder="例如：http://127.0.0.1:7890；不使用代理请留空" /></div><div class="setting-note-box">如果日志出现 ETIMEDOUT / Connection timed out，说明当前网络无法直连 api.apimart.ai，可在这里填系统代理地址。</div></div>
