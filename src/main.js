@@ -25,6 +25,7 @@ const OUTPUT_ZIP_DIR_NAME = 'TENYING_AI_1_0_Zips';
 const OUTPUT_WORD_DIR_NAME = 'TENYING_AI_1_0_Word';
 const OUTPUT_EXCEL_DIR_NAME = 'TENYING_AI_1_0_Excel';
 const OUTPUT_MJ_DIR_NAME = 'TENYING_AI_1_0_Midjourney';
+const DEFAULT_UPDATE_REPO = 'aln614/-';
 try { app.setAppUserModelId('com.local.api.image.generator.webui.v14_9_8'); } catch {}
 
 // V7.4：清除软件所有数据会同时清除本机配置、API Key、浏览器本地缓存和运行数据。
@@ -130,7 +131,7 @@ const DEFAULT_CONFIG = {
   announcement_custom_items: [],
   announcement_custom_enabled: false,
   asset_library_dir: '',
-  update_repo: '',
+  update_repo: DEFAULT_UPDATE_REPO,
   update_last_check: null
 };
 
@@ -495,7 +496,7 @@ function pickWindowsExeAsset(release) {
   return assets.find(a => /\.exe$/i.test(a.name || '') && /win|windows|x64|portable|localapi/i.test(a.name || '')) || assets.find(a => /\.exe$/i.test(a.name || '')) || null;
 }
 async function checkSoftwareUpdate(repoInput = '', cfg = readConfig()) {
-  const repo = normalizeUpdateRepo(repoInput || cfg.update_repo || '');
+  const repo = normalizeUpdateRepo(repoInput || cfg.update_repo || DEFAULT_UPDATE_REPO);
   if (!repo || !/^[^/]+\/[^/]+$/.test(repo)) throw new Error('请填写 GitHub 仓库，例如：aln614/-');
   const release = await httpJson(`https://api.github.com/repos/${repo}/releases/latest`);
   const version = String(release.tag_name || release.name || '').replace(/^v/i, '').trim();
@@ -531,13 +532,40 @@ function installSoftwareUpdate(downloadedPath = '', cfg = readConfig()) {
   if (!app.isPackaged) throw new Error('当前是开发调试模式，不能覆盖安装；打包后的 EXE 才可以原地更新。');
   const target = process.execPath;
   const bat = path.join(os.tmpdir(), `LAIG_update_${Date.now()}.bat`);
+  const backup = path.join(updateCacheDir(), `backup_${path.basename(target)}`);
+  const log = path.join(updateCacheDir(), 'last_update_install.log');
   const script = [
     '@echo off',
     'chcp 65001 >nul',
+    'setlocal EnableExtensions EnableDelayedExpansion',
+    `set "SRC=${file}"`,
+    `set "TARGET=${target}"`,
+    `set "BACKUP=${backup}"`,
+    `set "LOG=${log}"`,
+    'echo [%date% %time%] updater started>"%LOG%"',
+    'timeout /t 1 /nobreak >nul',
+    'if exist "%TARGET%" copy /Y "%TARGET%" "%BACKUP%" >>"%LOG%" 2>&1',
+    'set /a TRY=0',
+    ':RETRY_COPY',
+    'set /a TRY+=1',
+    'copy /Y "%SRC%" "%TARGET%" >>"%LOG%" 2>&1',
+    'if !ERRORLEVEL! EQU 0 goto LAUNCH_NEW',
+    'if !TRY! GEQ 60 goto ROLLBACK',
+    'timeout /t 1 /nobreak >nul',
+    'goto RETRY_COPY',
+    ':LAUNCH_NEW',
+    'echo [%date% %time%] update copied after !TRY! tries>>"%LOG%"',
+    'start "" "%TARGET%"',
     'timeout /t 2 /nobreak >nul',
-    `copy /Y "${file}" "${target}" >nul`,
-    `start "" "${target}"`,
-    'del "%~f0"'
+    'del /f /q "%SRC%" >>"%LOG%" 2>&1',
+    'del "%~f0"',
+    'exit /b 0',
+    ':ROLLBACK',
+    'echo [%date% %time%] update failed, rolling back>>"%LOG%"',
+    'if exist "%BACKUP%" copy /Y "%BACKUP%" "%TARGET%" >>"%LOG%" 2>&1',
+    'start "" "%TARGET%"',
+    'del "%~f0"',
+    'exit /b 1'
   ].join('\r\n');
   fs.writeFileSync(bat, script, 'utf8');
   spawn('cmd.exe', ['/c', 'start', '', bat], { detached:true, stdio:'ignore', windowsHide:true }).unref();

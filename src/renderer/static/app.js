@@ -1532,7 +1532,7 @@ async function loadConfig(){
   if($('#promptLibraryPermissionShared')) $('#promptLibraryPermissionShared').checked = c.prompt_library_permission_shared === true;
   if($('#announcementUrl')) $('#announcementUrl').value = c.announcement_url || 'https://apimart.ai/zh/log-updates';
   if($('#announcementCustomEnabled')) $('#announcementCustomEnabled').checked = c.announcement_custom_enabled === true;
-  if($('#updateRepo')) $('#updateRepo').value = c.update_repo || '';
+  if($('#updateRepo')) $('#updateRepo').value = c.update_repo || 'aln614/-';
   if(c.update_last_check){
     softwareUpdateInfo = c.update_last_check;
     renderSoftwareUpdateInfo(c.update_last_check);

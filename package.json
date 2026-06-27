@@ -1,6 +1,6 @@
 {
   "name": "local-api-image-generator-webui",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Local APIMart and Flow2API image generator with batch management",
   "main": "src/main.js",
   "scripts": {
@@ -30,11 +30,11 @@
       "target": [
         "portable"
       ],
-      "artifactName": "TENYING_AI-1.0.0-win-${arch}.${ext}",
+      "artifactName": "TENYING_AI-${version}-win-${arch}.${ext}",
       "signAndEditExecutable": false,
       "verifyUpdateCodeSignature": false
     },
-    "artifactName": "TENYING_AI-1.0.0-win-${arch}.${ext}",
+    "artifactName": "TENYING_AI-${version}-win-${arch}.${ext}",
     "forceCodeSigning": false
   }
 }
