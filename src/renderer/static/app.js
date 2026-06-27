@@ -3651,6 +3651,82 @@ const APIMART_VIDEO_MODEL_RULES_UI = {
     durations:[2,3,4,5,6,7,8,9,10,11,12], defaultDuration:'5'
   }
 };
+function videoRange(min, max){ return Array.from({length:Math.max(0, max - min + 1)}, (_, i)=>min + i); }
+function registerApimartVideoUiRules(items = []){
+  items.forEach(item=>{
+    const model = String(item.model || '').trim();
+    if(!model) return;
+    APIMART_VIDEO_MODEL_RULES_UI[model.toLowerCase()] = {
+      label:item.label || model,
+      resolutions:item.resolutions || ['720p'],
+      defaultResolution:item.defaultResolution || (item.resolutions || ['720p'])[0],
+      aspects:item.aspects || ['16:9','9:16','1:1'],
+      defaultAspect:item.defaultAspect || '16:9',
+      durations:item.durations || videoRange(item.durationMin || 4, item.durationMax || 10),
+      defaultDuration:String(item.defaultDuration || 5),
+      note:item.note || ''
+    };
+  });
+}
+registerApimartVideoUiRules([
+  { model:'doubao-seedance-1-5-pro', label:'Doubao Seedance 1.5 Pro', resolutions:['480p','720p','1080p'], defaultResolution:'720p', aspects:['16:9','9:16','1:1'], durationMin:4, durationMax:12 },
+  { model:'doubao-seedance-2.0', label:'Doubao Seedance 2.0', resolutions:['480p','720p','1080p','4k'], aspects:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'], durationMin:4, durationMax:15 },
+  { model:'doubao-seedance-2.0-fast', label:'Doubao Seedance 2.0 Fast', resolutions:['480p','720p'], aspects:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'], durationMin:4, durationMax:15 },
+  { model:'doubao-seedance-2.0-face', label:'Doubao Seedance 2.0 Face', resolutions:['480p','720p','1080p'], aspects:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'], durationMin:4, durationMax:15 },
+  { model:'doubao-seedance-2.0-fast-face', label:'Doubao Seedance 2.0 Fast Face', resolutions:['480p','720p'], aspects:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'], durationMin:4, durationMax:15 },
+  { model:'doubao-seedance-2.0-mini', label:'Doubao Seedance 2.0 Mini', resolutions:['480p','720p'], aspects:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'], durationMin:4, durationMax:15 },
+  { model:'sora-2', label:'Sora 2', resolutions:['720p'], aspects:['16:9','9:16'], durations:[4,8,12,16,20], defaultDuration:8 },
+  { model:'sora-2-pro', label:'Sora 2 Pro', resolutions:['720p','1024p','1080p'], aspects:['16:9','9:16'], durations:[4,8,12,16,20], defaultDuration:8 },
+  { model:'veo3.1-fast', label:'VEO3.1 Fast', resolutions:['720p','1080p','4k'], durations:[8], defaultDuration:8 },
+  { model:'veo3.1-quality', label:'VEO3.1 Quality', resolutions:['720p','1080p','4k'], durations:[8], defaultDuration:8 },
+  { model:'veo3.1-lite', label:'VEO3.1 Lite', resolutions:['720p','1080p','4k'], durations:[8], defaultDuration:8 },
+  { model:'veo3.1-fast-official', label:'VEO3.1 Official Fast', resolutions:['720p','1080p','4k'], durations:[4,6,8], defaultDuration:8 },
+  { model:'veo3.1-quality-official', label:'VEO3.1 Official Quality', resolutions:['720p','1080p','4k'], durations:[4,6,8], defaultDuration:8 },
+  { model:'MiniMax-Hailuo-02', label:'MiniMax Hailuo 02', resolutions:['768p','1080p'], defaultResolution:'768p', durations:[5,10] },
+  { model:'MiniMax-Hailuo-2.3', label:'MiniMax Hailuo 2.3', resolutions:['768p','1080p'], defaultResolution:'768p', durations:[6,10], defaultDuration:6 },
+  { model:'MiniMax-Hailuo-2.3-Fast', label:'MiniMax Hailuo 2.3 Fast', resolutions:['768p','1080p'], defaultResolution:'768p', durations:[6,10], defaultDuration:6 },
+  { model:'skyreels-v4-fast', label:'SkyReels V4 Fast', resolutions:['480p','720p','1080p'], durationMin:3, durationMax:15 },
+  { model:'skyreels-v4-std', label:'SkyReels V4 Std', resolutions:['480p','720p','1080p'], durationMin:3, durationMax:15 },
+  { model:'happyhorse-1.0', label:'HappyHorse 1.0', resolutions:['720p','1080p'], durationMin:3, durationMax:15 },
+  { model:'happyhorse-1.1', label:'HappyHorse 1.1', resolutions:['720p','1080p'], durationMin:3, durationMax:15 },
+  { model:'wan2.5-preview', label:'Wan2.5 Preview', resolutions:['480p','720p','1080p'], aspects:['16:9','9:16','1:1','4:3','3:4'], durations:[5,10] },
+  { model:'wan2.6', label:'Wan2.6', resolutions:['720p','1080p'], durations:[5,10,15] },
+  { model:'wan2.6-i2v', label:'Wan2.6 I2V', resolutions:['720p','1080p'], durationMin:2, durationMax:15 },
+  { model:'wan2.6-i2v-flash', label:'Wan2.6 I2V Flash', resolutions:['720p','1080p'], defaultResolution:'1080p', durationMin:2, durationMax:15 },
+  { model:'wan2.7', label:'Wan2.7', resolutions:['720p','1080p'], durationMin:2, durationMax:15 },
+  { model:'wan2.7-r2v', label:'Wan2.7 R2V', resolutions:['720p','1080p'], defaultResolution:'1080p', durationMin:2, durationMax:15 },
+  { model:'wan2.7-videoedit', label:'Wan2.7 VideoEdit', resolutions:['720p','1080p'], defaultResolution:'1080p', durations:[0,2,3,4,5,6,7,8,9,10], defaultDuration:0 },
+  { model:'kling-v2-6', label:'Kling 2.6', resolutions:['720p','1080p'], durations:[5,10] },
+  { model:'kling-v2-6-motion-control', label:'Kling 2.6 Motion Control', resolutions:['720p','1080p'], durationMin:3, durationMax:30 },
+  { model:'kling-v3', label:'Kling v3', resolutions:['720p','1080p','4k'], durationMin:3, durationMax:15 },
+  { model:'kling-v3-motion-control', label:'Kling v3 Motion Control', resolutions:['720p','1080p'], durationMin:3, durationMax:30 },
+  { model:'kling-v3-omni', label:'Kling v3 Omni', resolutions:['720p','1080p','4k'], durationMin:3, durationMax:15 },
+  { model:'kling-video-o1', label:'Kling Video O1', resolutions:['720p','1080p'], durationMin:3, durationMax:15 },
+  { model:'kling-3.0-turbo', label:'Kling 3.0 Turbo', resolutions:['720p','1080p'], durationMin:3, durationMax:15 },
+  { model:'viduq3', label:'Vidu Q3', resolutions:['540p','720p','1080p'], durationMin:3, durationMax:16 },
+  { model:'viduq3-mix', label:'Vidu Q3 Mix', resolutions:['720p','1080p'], durationMin:1, durationMax:16 },
+  { model:'viduq3-pro', label:'Vidu Q3 Pro', resolutions:['540p','720p','1080p'], durationMin:1, durationMax:16 },
+  { model:'viduq3-turbo', label:'Vidu Q3 Turbo', resolutions:['540p','720p','1080p'], durationMin:1, durationMax:16 },
+  { model:'grok-imagine-1.5-video-apimart', label:'Grok Imagine 1.5 Video', resolutions:['480p','720p'], defaultResolution:'480p', durationMin:3, durationMax:15 },
+  { model:'pixverse-v6', label:'Pixverse v6', resolutions:['360p','540p','720p','1080p'], durationMin:1, durationMax:15 }
+]);
+const APIMART_VIDEO_MODEL_GROUPS_UI = [
+  ['Omni / Google', ['omni-flash-ext','veo3.1-fast','veo3.1-quality','veo3.1-lite','veo3.1-fast-official','veo3.1-quality-official']],
+  ['Doubao Seedance', ['doubao-seedance-1-0-pro-fast','doubao-seedance-1-0-pro-quality','doubao-seedance-1-5-pro','doubao-seedance-2.0','doubao-seedance-2.0-fast','doubao-seedance-2.0-face','doubao-seedance-2.0-fast-face','doubao-seedance-2.0-mini']],
+  ['Sora / MiniMax / SkyReels', ['sora-2','sora-2-pro','MiniMax-Hailuo-02','MiniMax-Hailuo-2.3','MiniMax-Hailuo-2.3-Fast','skyreels-v4-fast','skyreels-v4-std']],
+  ['HappyHorse / Wan', ['happyhorse-1.0','happyhorse-1.1','wan2.5-preview','wan2.6','wan2.6-i2v','wan2.6-i2v-flash','wan2.7','wan2.7-r2v','wan2.7-videoedit']],
+  ['Kling', ['kling-v2-6','kling-v2-6-motion-control','kling-v3','kling-v3-motion-control','kling-v3-omni','kling-video-o1','kling-3.0-turbo']],
+  ['Vidu / Grok / Pixverse', ['viduq3','viduq3-mix','viduq3-pro','viduq3-turbo','grok-imagine-1.5-video-apimart','pixverse-v6']]
+];
+function apimartVideoModelOptionsHtml(){
+  return APIMART_VIDEO_MODEL_GROUPS_UI.map(([label, models])=>{
+    const opts = models.map(value=>{
+      const rule = APIMART_VIDEO_MODEL_RULES_UI[String(value).toLowerCase()];
+      return rule ? `<option value="${value}">${escapeHtml(rule.label || value)}</option>` : '';
+    }).join('');
+    return `<optgroup label="${escapeHtml(label)}">${opts}</optgroup>`;
+  }).join('');
+}
 function currentApimartVideoRule(){
   const key = ($('#videoModel')?.value || 'omni-flash-ext').toLowerCase();
   return APIMART_VIDEO_MODEL_RULES_UI[key] || APIMART_VIDEO_MODEL_RULES_UI['omni-flash-ext'];
@@ -3689,7 +3765,11 @@ function rebuildVideoPlatformOptions(){
     if(duration) duration.innerHTML = '<option value="4" selected>4 秒</option><option value="6">6 秒</option><option value="8">8 秒</option><option value="10">10 秒</option>';
     if(aspect) aspect.innerHTML = '<option value="16:9" selected>16:9 横屏</option><option value="9:16">9:16 竖屏</option>';
   }else{
-    if(model) model.innerHTML = '<option value="omni-flash-ext">Omni Flash（视频编辑）</option><option value="doubao-seedance-1-0-pro-fast">Doubao Seedance 1.0 Pro Fast</option><option value="doubao-seedance-1-0-pro-quality">Doubao Seedance 1.0 Pro Quality</option>';
+    if(model) {
+      const oldModel = model.value;
+      model.innerHTML = apimartVideoModelOptionsHtml();
+      if([...model.options].some(option=>option.value === oldModel)) model.value = oldModel;
+    }
     const rule = currentApimartVideoRule();
     if(duration) duration.innerHTML = rule.durations.map(v=>`<option value="${v}" ${String(v)===String(rule.defaultDuration)?'selected':''}>${v} 秒</option>`).join('');
     if(aspect) aspect.innerHTML = rule.aspects.map(v=>`<option value="${v}" ${v===rule.defaultAspect?'selected':''}>${v}</option>`).join('');
@@ -3770,9 +3850,9 @@ function updateVideoModeUI(){
     ? (hasVideo
       ? '本地 Flow2API：上传视频编辑仅支持 Omni Flash。中文提示词会原样直接提交给 Google Flow，不会调用翻译服务。'
       : '本地 Flow2API：Omni Flash 支持文生、首帧、多素材及上传视频编辑；Veo 3.1 仅支持文生 / 图生视频。')
-    : ($('#videoModel')?.value || '').startsWith('doubao-seedance')
-      ? 'Doubao Seedance：支持文生、首帧；quality 支持首尾帧。它不支持上传视频编辑，多素材请改用 Omni Flash。'
-      : 'Omni Flash 支持 4/6/8/10 秒及直接上传视频编辑；公网视频 URL 必须是 APIMart 云端可访问的 HTTP/HTTPS 直链。';
+    : ($('#videoModel')?.value || '').startsWith('omni')
+      ? 'Omni Flash 支持 4/6/8/10 秒及直接上传视频编辑；公网视频 URL 必须是 APIMart 云端可访问的 HTTP/HTTPS 直链。'
+      : 'APIMart 视频系列已按官方文档匹配模型、时长、比例和分辨率；上传视频编辑仅对支持 video_url / video_urls 的模型开放。'
   if(platform === 'flow2api' && images > 7){
     toast('本地 Flow2API Omni Flash 最多支持 7 张图片素材');
   }else if(platform === 'flow2api' && images > 2 && $('#videoModel')?.value !== 'fast' && $('#videoModel')?.value !== 'omni'){
