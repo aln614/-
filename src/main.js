@@ -545,6 +545,14 @@ async function downloadSoftwareUpdate(repoInput = '', cfg = readConfig()) {
   saveConfig({ update_repo: info.repo, update_last_check: next });
   return { ok:true, ...next };
 }
+async function applyLatestSoftwareUpdate(repoInput = '', cfg = readConfig()) {
+  const info = await checkSoftwareUpdate(repoInput, cfg);
+  if (!info.has_update) return { ok:true, ...info, message:'当前已是最新版本' };
+  if (!info.asset_url) throw new Error('最新 Release 没有找到 Windows EXE 附件，请先等待 GitHub Actions 构建完成。');
+  const downloaded = await downloadSoftwareUpdate(repoInput, readConfig());
+  const installed = installSoftwareUpdate(downloaded.downloaded_path || '', readConfig());
+  return { ok:true, ...downloaded, ...installed };
+}
 function installSoftwareUpdate(downloadedPath = '', cfg = readConfig()) {
   const file = String(downloadedPath || (cfg.update_last_check && cfg.update_last_check.downloaded_path) || '').trim();
   if (!file || !fs.existsSync(file)) throw new Error('未找到已下载的新版本 EXE');
@@ -4648,6 +4656,11 @@ async function apiHandler(req, res, parsed) {
       if (!local) return send(res, {ok:false,error:'只有主机端可以安装软件更新'}, 403);
       const body = await readBody(req);
       return send(res, installSoftwareUpdate(body.path || '', readConfig()));
+    }
+    if (method === 'POST' && p === '/api/update/apply_latest') {
+      if (!local) return send(res, {ok:false,error:'只有主机端可以执行软件更新'}, 403);
+      const body = await readBody(req);
+      return send(res, await applyLatestSoftwareUpdate(body.repo || body.update_repo || '', readConfig()));
     }
     if (method === 'GET' && p === '/api/public_status') {
       const publicCfg = configForClient(cfg, local, publicHost);

@@ -34,6 +34,7 @@ let currentPreviewMeta = {};
 const PREVIEW_BG_STORAGE_KEY = 'LAIG_PREVIEW_BG_SETTINGS';
 let previewBgSettings = { color:'black', opacity:0 };
 let softwareUpdateInfo = null;
+let softwareUpdateBusy = false;
 const mjRegionState = { meta:null, button:null, drawing:false, erase:false, brushSize:42, zoom:1, fitScale:1, panX:0, panY:0, panning:false, panPointerId:null, panStartX:0, panStartY:0, panOriginX:0, panOriginY:0, spacePressed:false, cursorVisible:false, submitting:false, undoStack:[], redoStack:[], strokeChanged:false };
 
 function normalizeAnnouncementItems(items=[], opts={}){
@@ -141,6 +142,7 @@ function renderSoftwareUpdateInfo(info = null){
   if(!box) return;
   if(!info){
     box.textContent = '尚未检查更新。';
+    $('#otaUpdateBtn')?.toggleAttribute('disabled', softwareUpdateBusy);
     $('#downloadUpdateBtn')?.toggleAttribute('disabled', true);
     $('#installUpdateBtn')?.toggleAttribute('disabled', true);
     return;
@@ -152,13 +154,15 @@ function renderSoftwareUpdateInfo(info = null){
     <div>EXE：${escapeHtml(info.asset_name || '未找到 .exe 资产')}</div>
     ${info.downloaded_path ? `<code>${escapeHtml(info.downloaded_path)}</code>` : ''}
     ${info.notes ? `<pre>${escapeHtml(String(info.notes).slice(0, 1200))}</pre>` : ''}`;
-  $('#downloadUpdateBtn')?.toggleAttribute('disabled', !has || !info.asset_url);
-  $('#installUpdateBtn')?.toggleAttribute('disabled', !info.downloaded_path);
+  $('#otaUpdateBtn')?.toggleAttribute('disabled', softwareUpdateBusy);
+  $('#downloadUpdateBtn')?.toggleAttribute('disabled', softwareUpdateBusy || !has || !info.asset_url);
+  $('#installUpdateBtn')?.toggleAttribute('disabled', softwareUpdateBusy || !info.downloaded_path);
 }
 function renderSoftwareUpdateError(message){
   const box = $('#softwareUpdateResult');
   if(!box) return;
   box.innerHTML = `<div><b class="update-error">检查失败</b></div><div>${escapeHtml(message || '检查更新失败')}</div>`;
+  $('#otaUpdateBtn')?.toggleAttribute('disabled', softwareUpdateBusy);
   $('#downloadUpdateBtn')?.toggleAttribute('disabled', true);
   $('#installUpdateBtn')?.toggleAttribute('disabled', true);
 }
@@ -182,13 +186,48 @@ async function downloadSoftwareUpdate(){
   const repo = $('#updateRepo')?.value?.trim() || softwareUpdateInfo?.repo || '';
   try{
     const btn = $('#downloadUpdateBtn');
+    const installBtn = $('#installUpdateBtn');
     if(btn){ btn.disabled = true; btn.textContent = '下载中...'; }
+    if(installBtn) installBtn.disabled = true;
     const info = await api('/api/update/download', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({repo})});
     softwareUpdateInfo = info;
     renderSoftwareUpdateInfo(info);
     toast('新版 EXE 已下载');
   }catch(e){ toast(e.message || '下载更新失败'); }
-  finally{ const btn = $('#downloadUpdateBtn'); if(btn){ btn.textContent = '下载新版'; btn.disabled = !softwareUpdateInfo?.has_update; } }
+  finally{
+    const btn = $('#downloadUpdateBtn');
+    if(btn){ btn.textContent = '下载新版'; btn.disabled = !softwareUpdateInfo?.has_update || !softwareUpdateInfo?.asset_url; }
+    const installBtn = $('#installUpdateBtn');
+    if(installBtn) installBtn.disabled = !softwareUpdateInfo?.downloaded_path;
+  }
+}
+async function applySoftwareUpdateOta(){
+  const repo = $('#updateRepo')?.value?.trim() || softwareUpdateInfo?.repo || '';
+  const btn = $('#otaUpdateBtn');
+  let failed = false;
+  try{
+    softwareUpdateBusy = true;
+    if(btn){ btn.disabled = true; btn.textContent = 'OTA 更新中...'; }
+    $('#checkUpdateBtn')?.toggleAttribute('disabled', true);
+    $('#downloadUpdateBtn')?.toggleAttribute('disabled', true);
+    $('#installUpdateBtn')?.toggleAttribute('disabled', true);
+    const box = $('#softwareUpdateResult');
+    if(box) box.innerHTML = '<div><b class="update-available">正在检查、下载并准备原地更新...</b></div><div>更新文件会先保存到软件数据目录的 updates 缓存中，随后自动替换当前 EXE 并重启。</div>';
+    const info = await api('/api/update/apply_latest', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({repo})});
+    softwareUpdateInfo = info;
+    renderSoftwareUpdateInfo(info);
+    toast(info.has_update ? '已下载，正在原地更新并重启...' : (info.message || '当前已是最新版本'));
+  }catch(e){
+    failed = true;
+    softwareUpdateInfo = null;
+    renderSoftwareUpdateError(e.message || 'OTA 更新失败');
+    toast(e.message || 'OTA 更新失败');
+  }finally{
+    softwareUpdateBusy = false;
+    if(btn){ btn.textContent = 'OTA 一键更新'; btn.disabled = false; }
+    $('#checkUpdateBtn')?.toggleAttribute('disabled', false);
+    if(!failed) renderSoftwareUpdateInfo(softwareUpdateInfo);
+  }
 }
 async function installSoftwareUpdateNow(){
   try{
@@ -1940,6 +1979,7 @@ $('#saveConfigBtn').addEventListener('click', async()=>{ updateApiKeyWarning(); 
 $('#saveLanBtn').addEventListener('click', async()=>{ await handleConfigSave({lan_enabled:$('#lanEnabled').checked, port:Number($('#servicePort').value||7868)}, '局域网设置已保存，已立即生效'); });
 $('#saveSettingsBtn').addEventListener('click', async()=>{ await handleConfigSave(collectConfig(), '设置已保存'); });
 $('#checkUpdateBtn')?.addEventListener('click', checkSoftwareUpdate);
+$('#otaUpdateBtn')?.addEventListener('click', applySoftwareUpdateOta);
 $('#downloadUpdateBtn')?.addEventListener('click', downloadSoftwareUpdate);
 $('#installUpdateBtn')?.addEventListener('click', installSoftwareUpdateNow);
 
