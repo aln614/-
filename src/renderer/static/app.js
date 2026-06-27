@@ -3631,6 +3631,46 @@ const imageTaskPreviewMap = new Map();
 function getHomeApiKey(){ return ($('#apiKey')?.value || '').trim(); }
 const VIDEO_PLATFORM_KEY = CLIENT_CONFIG_KEY + '_active_video_platform';
 function currentVideoPlatform(){ return ($('#videoApiPlatformSwitch .platform-btn.active')?.dataset?.platform || localStorage.getItem(VIDEO_PLATFORM_KEY) || 'apimart') === 'flow2api' ? 'flow2api' : 'apimart'; }
+const APIMART_VIDEO_MODEL_RULES_UI = {
+  'omni-flash-ext': {
+    label:'Omni Flash（视频编辑）',
+    resolutions:['720p','1080p','4k'], defaultResolution:'1080p',
+    aspects:['16:9','9:16','1:1','4:3','3:4'], defaultAspect:'9:16',
+    durations:[4,6,8,10], defaultDuration:'6'
+  },
+  'doubao-seedance-1-0-pro-fast': {
+    label:'Doubao Seedance 1.0 Pro Fast',
+    resolutions:['480p','720p','1080p'], defaultResolution:'1080p',
+    aspects:['16:9','9:16','1:1','4:3','3:4','21:9'], defaultAspect:'16:9',
+    durations:[2,3,4,5,6,7,8,9,10,11,12], defaultDuration:'5'
+  },
+  'doubao-seedance-1-0-pro-quality': {
+    label:'Doubao Seedance 1.0 Pro Quality',
+    resolutions:['480p','720p','1080p'], defaultResolution:'1080p',
+    aspects:['16:9','9:16','1:1','4:3','3:4','21:9'], defaultAspect:'16:9',
+    durations:[2,3,4,5,6,7,8,9,10,11,12], defaultDuration:'5'
+  }
+};
+function currentApimartVideoRule(){
+  const key = ($('#videoModel')?.value || 'omni-flash-ext').toLowerCase();
+  return APIMART_VIDEO_MODEL_RULES_UI[key] || APIMART_VIDEO_MODEL_RULES_UI['omni-flash-ext'];
+}
+function videoModeAutoLabel(){
+  const hasVideo = hasReferenceVideo();
+  const images = videoRefImages.length;
+  if(hasVideo) return '上传视频编辑';
+  if(images > 2) return '多素材生成';
+  if(images === 2) return '首尾帧生成';
+  if(images === 1) return '首帧生成';
+  return '文生视频';
+}
+function currentVideoModeValue(){
+  const v = $('#videoModeSelect')?.value || 'auto';
+  return v === 'auto' ? 'auto' : v;
+}
+function videoModeLabel(v){
+  return ({auto:`自动识别：${videoModeAutoLabel()}`,text_to_video:'文生视频',first_frame:'首帧生成',first_last_frame:'首尾帧生成',multi_reference:'多素材生成',video_edit:'上传视频编辑'})[v || 'auto'] || videoModeAutoLabel();
+}
 function videoPlatformApiKey(platform=currentVideoPlatform()){
   const p = platform === 'flow2api' ? 'flow2api' : 'apimart';
   const own = localStorage.getItem(`${CLIENT_CONFIG_KEY}_video_key_${p}`) || '';
@@ -3649,9 +3689,10 @@ function rebuildVideoPlatformOptions(){
     if(duration) duration.innerHTML = '<option value="4" selected>4 秒</option><option value="6">6 秒</option><option value="8">8 秒</option><option value="10">10 秒</option>';
     if(aspect) aspect.innerHTML = '<option value="16:9" selected>16:9 横屏</option><option value="9:16">9:16 竖屏</option>';
   }else{
-    if(model) model.innerHTML = '<option value="omni-flash-ext">Omni Flash（视频编辑）</option>';
-    if(duration) duration.innerHTML = '<option value="4">4 秒</option><option value="6" selected>6 秒</option><option value="8">8 秒</option><option value="10">10 秒</option>';
-    if(aspect) aspect.innerHTML = '<option value="16:9">16:9 横屏</option><option value="9:16" selected>9:16 竖屏</option><option value="1:1">1:1 方形</option><option value="4:3">4:3 横图</option><option value="3:4">3:4 竖图</option>';
+    if(model) model.innerHTML = '<option value="omni-flash-ext">Omni Flash（视频编辑）</option><option value="doubao-seedance-1-0-pro-fast">Doubao Seedance 1.0 Pro Fast</option><option value="doubao-seedance-1-0-pro-quality">Doubao Seedance 1.0 Pro Quality</option>';
+    const rule = currentApimartVideoRule();
+    if(duration) duration.innerHTML = rule.durations.map(v=>`<option value="${v}" ${String(v)===String(rule.defaultDuration)?'selected':''}>${v} 秒</option>`).join('');
+    if(aspect) aspect.innerHTML = rule.aspects.map(v=>`<option value="${v}" ${v===rule.defaultAspect?'selected':''}>${v}</option>`).join('');
   }
   updateVideoResolutionOptions();
 }
@@ -3659,7 +3700,13 @@ function updateVideoDurationOptions(){
   const duration = $('#videoDuration');
   if(!duration) return;
   const old = duration.value;
-  const omni = currentVideoPlatform() === 'apimart' || $('#videoModel')?.value === 'omni';
+  if(currentVideoPlatform() === 'apimart'){
+    const rule = currentApimartVideoRule();
+    duration.innerHTML = rule.durations.map(v=>`<option value="${v}">${v} 秒</option>`).join('');
+    duration.value = [...duration.options].some(o=>o.value===old) ? old : rule.defaultDuration;
+    return;
+  }
+  const omni = $('#videoModel')?.value === 'omni';
   duration.innerHTML = omni
     ? '<option value="4">4 秒</option><option value="6">6 秒</option><option value="8">8 秒</option><option value="10">10 秒</option>'
     : '<option value="4">4 秒</option><option value="6">6 秒</option><option value="8">8 秒</option>';
@@ -3669,6 +3716,18 @@ function updateVideoResolutionOptions(){
   const resolution = $('#videoResolution');
   if(!resolution) return;
   const old = resolution.value;
+  if(currentVideoPlatform() === 'apimart'){
+    const rule = currentApimartVideoRule();
+    resolution.innerHTML = rule.resolutions.map(v=>`<option value="${v}">${v.toUpperCase()}</option>`).join('');
+    resolution.value = [...resolution.options].some(o=>o.value===old) ? old : rule.defaultResolution;
+    const aspect = $('#videoAspect');
+    if(aspect){
+      const oldAspect = aspect.value;
+      aspect.innerHTML = rule.aspects.map(v=>`<option value="${v}">${v}</option>`).join('');
+      aspect.value = [...aspect.options].some(o=>o.value===oldAspect) ? oldAspect : rule.defaultAspect;
+    }
+    return;
+  }
   const flowQuality = currentVideoPlatform() === 'flow2api' && $('#videoModel')?.value === 'quality';
   resolution.innerHTML = currentVideoPlatform() === 'apimart' || flowQuality
     ? '<option value="720p">720p</option><option value="1080p">1080p</option><option value="4k">4K</option>'
@@ -3700,16 +3759,20 @@ function updateVideoModeUI(){
   const hasVideo = hasReferenceVideo();
   syncFlow2VideoEditModel();
   const images = videoRefImages.length;
-  let mode = hasVideo ? '上传视频编辑' : images > 2 ? '多素材生成' : images === 2 ? '首尾帧生成' : images === 1 ? '首帧生成' : '文生视频';
-  if($('#videoModeHint')) $('#videoModeHint').textContent = mode;
+  const selectedMode = currentVideoModeValue();
+  let mode = selectedMode === 'auto' ? videoModeAutoLabel() : videoModeLabel(selectedMode);
+  if($('#videoModeHint')) $('#videoModeHint').textContent = selectedMode === 'auto' ? `当前：${mode}` : `已手动选择：${mode}`;
+  const apimartRule = currentApimartVideoRule();
   if($('#videoPlatformState')) $('#videoPlatformState').textContent = platform === 'flow2api'
     ? `本地 Flow2API · ${mode} · 流式进度反馈`
-    : `APIMart · Omni Flash · ${mode}`;
+    : `APIMart · ${apimartRule.label} · ${mode}`;
   if($('#videoPlatformWarning')) $('#videoPlatformWarning').textContent = platform === 'flow2api'
     ? (hasVideo
       ? '本地 Flow2API：上传视频编辑仅支持 Omni Flash。中文提示词会原样直接提交给 Google Flow，不会调用翻译服务。'
       : '本地 Flow2API：Omni Flash 支持文生、首帧、多素材及上传视频编辑；Veo 3.1 仅支持文生 / 图生视频。')
-    : 'Omni Flash 支持 4/6/8/10 秒及直接上传视频编辑；公网视频 URL 必须是 APIMart 云端可访问的 HTTP/HTTPS 直链。';
+    : ($('#videoModel')?.value || '').startsWith('doubao-seedance')
+      ? 'Doubao Seedance：支持文生、首帧；quality 支持首尾帧。它不支持上传视频编辑，多素材请改用 Omni Flash。'
+      : 'Omni Flash 支持 4/6/8/10 秒及直接上传视频编辑；公网视频 URL 必须是 APIMart 云端可访问的 HTTP/HTTPS 直链。';
   if(platform === 'flow2api' && images > 7){
     toast('本地 Flow2API Omni Flash 最多支持 7 张图片素材');
   }else if(platform === 'flow2api' && images > 2 && $('#videoModel')?.value !== 'fast' && $('#videoModel')?.value !== 'omni'){
@@ -3746,7 +3809,7 @@ function syncVideoApiKeyFromHome(){
 }
 function hasReferenceVideo(){ return !!(videoFilesData.length || ($('#videoUrlInput')?.value || '').trim()); }
 function updateVideoDurationVisibility(){
-  const refVideo = hasReferenceVideo();
+  const refVideo = hasReferenceVideo() || currentVideoModeValue() === 'video_edit';
   $('#videoDurationWrap')?.classList.toggle('hidden', refVideo);
   updateVideoModeUI();
 }
@@ -3819,11 +3882,12 @@ async function submitVideoTask(){
   // 视频真实可用性由 APIMart 远端返回结果决定，本地只负责提交与显示真实错误。
   localStorage.setItem(`${CLIENT_CONFIG_KEY}_video_key_${platform}`, apiKey);
   const refVideoMode = hasReferenceVideo();
+  if(currentVideoModeValue() === 'video_edit' && !refVideoMode) return toast('已选择“上传视频编辑”，请先上传主任务视频或填写公开视频 URL');
   if(platform === 'flow2api' && refVideoMode && !flow2VideoModelSupportsUploadedVideo()) {
     return toast('本地 Flow2API 上传视频编辑仅支持 Omni Flash，请切换模型后重试');
   }
   const platformCfg = loadClientConfig(platform) || {};
-  const body = { video_platform:platform, api_endpoint:platform === 'flow2api' ? (platformCfg.api_endpoint || 'http://127.0.0.1:38000') : 'https://api.apimart.ai', api_key:apiKey, video_model:$('#videoModel')?.value || '', copies:Number($('#videoRepeatCount')?.value || 1), prompts:$('#videoPrompt').value, prompt_multiline_tasks: $('#videoPromptMultilineTasks') ? $('#videoPromptMultilineTasks').checked : false, resolution:$('#videoResolution').value, aspect_ratio:$('#videoAspect').value, video_url:$('#videoUrlInput').value.trim(), video_files:videoFilesData, ref_images:videoRefImages };
+  const body = { video_platform:platform, api_endpoint:platform === 'flow2api' ? (platformCfg.api_endpoint || 'http://127.0.0.1:38000') : 'https://api.apimart.ai', api_key:apiKey, video_model:$('#videoModel')?.value || '', video_mode:currentVideoModeValue(), seed:$('#videoSeed')?.value?.trim() || '', copies:Number($('#videoRepeatCount')?.value || 1), prompts:$('#videoPrompt').value, prompt_multiline_tasks: $('#videoPromptMultilineTasks') ? $('#videoPromptMultilineTasks').checked : false, resolution:$('#videoResolution').value, aspect_ratio:$('#videoAspect').value, video_url:$('#videoUrlInput').value.trim(), video_files:videoFilesData, ref_images:videoRefImages };
   if(!refVideoMode) body.duration = $('#videoDuration').value;
   $('#startVideoBtn').disabled = true; $('#startVideoBtn').textContent = '批量提交中...';
   try{
@@ -4167,6 +4231,8 @@ function setupVideoPage(){
     }
   });
   $('#videoModel')?.addEventListener('change', ()=>{ updateVideoDurationOptions(); updateVideoResolutionOptions(); updateVideoModeUI(); updateVideoTaskEstimate(); });
+  $('#videoModeSelect')?.addEventListener('change', ()=>{ updateVideoModeUI(); updateVideoDurationVisibility(); updateVideoTaskEstimate(); });
+  $('#videoSeed')?.addEventListener('input', updateVideoTaskEstimate);
   $('#videoRepeatCount')?.addEventListener('input', updateVideoTaskEstimate);
   if($('#openVideoUrlBtn')) $('#openVideoUrlBtn').textContent = '复制视频';
   const videoPanel = $('#videoRealtimePanel');

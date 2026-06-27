@@ -1082,11 +1082,30 @@ function optionalInt(value) {
 }
 const APIMART_VIDEO_MODEL_RULES = {
   'omni-flash-ext': {
+    label: 'Omni Flash',
     endpoint: '/v1/videos/generations', taskQuery: 'batch',
     resolutions: ['720p','1080p','4k'], defaultResolution: '1080p',
     aspectRatios: ['16:9','9:16','1:1','4:3','3:4'], defaultAspectRatio: '9:16',
     durations: [4,6,8,10], defaultDuration: 6,
-    supportsImageUrls: true, supportsVideoUrls: true
+    supportsImageUrls: true, supportsVideoUrls: true, supportsImageWithRoles: false
+  },
+  'doubao-seedance-1-0-pro-fast': {
+    label: 'Doubao Seedance 1.0 Pro Fast',
+    endpoint: '/v1/videos/generations', taskQuery: 'batch',
+    resolutions: ['480p','720p','1080p'], defaultResolution: '1080p',
+    aspectRatios: ['16:9','9:16','1:1','4:3','3:4','21:9'], defaultAspectRatio: '16:9',
+    durationRange: [2,12], defaultDuration: 5,
+    supportsImageUrls: false, supportsVideoUrls: false, supportsImageWithRoles: true,
+    supportsLastFrame: false
+  },
+  'doubao-seedance-1-0-pro-quality': {
+    label: 'Doubao Seedance 1.0 Pro Quality',
+    endpoint: '/v1/videos/generations', taskQuery: 'batch',
+    resolutions: ['480p','720p','1080p'], defaultResolution: '1080p',
+    aspectRatios: ['16:9','9:16','1:1','4:3','3:4','21:9'], defaultAspectRatio: '16:9',
+    durationRange: [2,12], defaultDuration: 5,
+    supportsImageUrls: false, supportsVideoUrls: false, supportsImageWithRoles: true,
+    supportsLastFrame: true
   }
 };
 function getApimartVideoRule(model = 'Omni-Flash-Ext') {
@@ -1104,12 +1123,52 @@ function normalizeVideoAspectRatio(value, model = 'Omni-Flash-Ext') {
 }
 function normalizeVideoDuration(value, defaultValue = 6, model = 'Omni-Flash-Ext') {
   const rule = getApimartVideoRule(model);
+  if (Array.isArray(rule.durationRange) && rule.durationRange.length >= 2) {
+    const min = Number(rule.durationRange[0]);
+    const max = Number(rule.durationRange[1]);
+    return safeInt(value, defaultValue || rule.defaultDuration || min, min, max);
+  }
   const allowed = rule.durations || [4, 6, 8, 10];
   const n = safeInt(value, defaultValue || rule.defaultDuration || 6, 1, 60);
   if (allowed.includes(n)) return n;
   const fallback = allowed.includes(Number(defaultValue)) ? Number(defaultValue) : (rule.defaultDuration || 6);
   addLog(`APIMart ${model} 时长 ${n} 不受支持，已自动改为 ${fallback} 秒`, { level:'warn' });
   return fallback;
+}
+
+function normalizeVideoMode(value = 'auto') {
+  const mode = String(value || 'auto').trim();
+  return ['auto','text_to_video','first_frame','first_last_frame','multi_reference','video_edit'].includes(mode) ? mode : 'auto';
+}
+function resolveApimartVideoMode(requested = 'auto', { imageCount = 0, hasVideo = false } = {}) {
+  const mode = normalizeVideoMode(requested);
+  if (mode !== 'auto') return mode;
+  if (hasVideo) return 'video_edit';
+  if (imageCount > 2) return 'multi_reference';
+  if (imageCount === 2) return 'first_last_frame';
+  if (imageCount === 1) return 'first_frame';
+  return 'text_to_video';
+}
+function apimartVideoModeLabel(mode = 'text_to_video') {
+  return ({
+    text_to_video: '文生视频',
+    first_frame: '首帧生成',
+    first_last_frame: '首尾帧生成',
+    multi_reference: '多素材生成',
+    video_edit: '上传视频编辑'
+  })[mode] || '文生视频';
+}
+function buildApimartVideoImageRolePayload(model = 'Omni-Flash-Ext', imageUrls = [], mode = 'auto') {
+  const rule = getApimartVideoRule(model);
+  const urls = (imageUrls || []).filter(Boolean);
+  if (!urls.length || !rule.supportsImageWithRoles || mode === 'text_to_video') return [];
+  if (mode === 'multi_reference') throw new Error(`${rule.label || model} 不支持多素材参考图模式，请选择 Omni Flash 或改为首帧/首尾帧。`);
+  if (mode === 'first_last_frame') {
+    if (!rule.supportsLastFrame) throw new Error(`${rule.label || model} 不支持首尾帧同时使用，请切换到 quality 模型。`);
+    if (urls.length < 2) throw new Error('首尾帧生成需要至少 2 张参考图：第 1 张为首帧，第 2 张为尾帧。');
+    return [{ url: urls[0], role: 'first_frame' }, { url: urls[1], role: 'last_frame' }];
+  }
+  return [{ url: urls[0], role: 'first_frame' }];
 }
 
 function assertApimartVideoReferenceRules({ imageUrls = [], videoUrl = '', context = '视频任务' } = {}) {
@@ -1924,10 +1983,13 @@ async function createApimartVideoTask(body, ownerId, req, cfg) {
   const sourceVideoName = String(body.source_video_name || '').trim();
   const localId = uuid('video_');
   const st = ensureVideoStore();
+  const videoModel = String(body.video_model || 'omni-flash-ext').trim() || 'omni-flash-ext';
+  const initialImageCount = refImages.length + (Array.isArray(body.ref_image_urls) ? body.ref_image_urls.filter(Boolean).length : 0);
+  const requestedMode = resolveApimartVideoMode(body.video_mode, { imageCount: initialImageCount, hasVideo: !!(videoItem || videoUrlInput || prebuiltLocalVideoPath) });
   // V12.2：任务一创建就进入视频生成库，数量立即与“视频数 × 提示词数”匹配；随后每个任务独立提交并轮询 task_id。
   const row = {
     id:localId, owner_id:ownerId, task_id:'', status:'等待提交', progress:0, progress_text:'等待提交到 APIMart', platform:'apimart',
-    prompt, model:'Omni-Flash-Ext', resolution:body.resolution || '1080p', aspect_ratio:body.aspect_ratio || '9:16', duration:'',
+    prompt, model:videoModel, resolution:body.resolution || '1080p', aspect_ratio:body.aspect_ratio || '9:16', duration:'',
     mode: videoItem || videoUrlInput ? '参考视频编辑' : (refImages.length || (body.ref_image_urls||[]).length ? '图生视频' : '文生视频'),
     image_urls:Array.isArray(body.ref_image_urls) ? body.ref_image_urls.filter(Boolean) : [],
     video_url:videoUrlInput, local_video_path:'', remote_url:'', file_path:'', error_message:'',
@@ -1949,7 +2011,9 @@ async function createApimartVideoTask(body, ownerId, req, cfg) {
       }
     }
     assertApimartVideoReferenceRules({ imageUrls, videoUrl, context:'视频任务' });
-    const videoModel = 'Omni-Flash-Ext';
+    const rule = getApimartVideoRule(videoModel);
+    const mode = resolveApimartVideoMode(body.video_mode, { imageCount: imageUrls.length, hasVideo: !!videoUrl });
+    if (videoUrl && !rule.supportsVideoUrls) throw new Error(`${rule.label || videoModel} 不支持上传视频编辑，请切换 Omni Flash。`);
     const payload = {
       model: videoModel,
       prompt,
@@ -1958,16 +2022,21 @@ async function createApimartVideoTask(body, ownerId, req, cfg) {
     };
     // APIMart 文档说明 size 是 aspect_ratio 的兼容字段。部分网关/控制台会读取 size，保持二者一致可提高兼容性。
     payload.size = payload.aspect_ratio;
-    if (imageUrls.length) payload.image_urls = imageUrls;
+    if (imageUrls.length && rule.supportsImageUrls) payload.image_urls = imageUrls;
+    const imageWithRoles = buildApimartVideoImageRolePayload(videoModel, imageUrls, mode);
+    if (imageWithRoles.length) payload.image_with_roles = imageWithRoles;
     if (videoUrl) {
       await probePublicVideoUrl(videoUrl);
       payload.video_urls = [videoUrl];
     }
-    if (!videoUrl) payload.duration = normalizeVideoDuration(body.duration, 6, payload.model);
+    if (!videoUrl) payload.duration = normalizeVideoDuration(body.duration, rule.defaultDuration || 6, payload.model);
+    const seed = optionalInt(body.seed);
+    if (seed !== undefined) payload.seed = seed;
     row.resolution = payload.resolution;
     row.aspect_ratio = payload.aspect_ratio;
     row.duration = payload.duration || '';
     row.mode = videoUrl ? '参考视频编辑' : (imageUrls.length ? '图生视频' : '文生视频');
+    row.mode = apimartVideoModeLabel(mode);
     row.image_urls = imageUrls;
     row.video_url = videoUrl;
     row.reference_public_url = videoUrl;

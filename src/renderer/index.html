@@ -291,7 +291,8 @@
               <div id="videoDurationWrap"><label>时长</label><select id="videoDuration"><option value="4">4 秒</option><option value="6" selected>6 秒</option><option value="8">8 秒</option><option value="10">10 秒</option></select><div class="field-help">文生视频 / 图生视频可选时长；参考视频编辑模式会自动隐藏时长并且不传 duration。</div></div>
               <div><label>比例</label><select id="videoAspect"><option value="16:9">16:9 横屏</option><option value="9:16" selected>9:16 竖屏</option><option value="1:1">1:1 方形</option></select></div>
             </div>
-            <div class="row"><div><label>主任务执行规则</label><div class="estimate">一个主任务视频 = 一个独立任务</div></div><div><label>当前模式</label><div class="estimate" id="videoModeHint">文生视频</div></div></div>
+            <div class="row"><div><label>主任务执行规则</label><div class="estimate">一个主任务视频 = 一个独立任务</div></div><div><label>当前模式</label><select id="videoModeSelect"><option value="auto">自动识别</option><option value="text_to_video">文生视频</option><option value="first_frame">首帧生成</option><option value="first_last_frame">首尾帧生成</option><option value="multi_reference">多素材生成</option><option value="video_edit">上传视频编辑</option></select><div class="field-help" id="videoModeHint">文生视频</div></div></div>
+            <div class="row" id="videoAdvancedRuleRow"><div><label>Seed（可选）</label><input id="videoSeed" type="number" min="-1" step="1" placeholder="-1 或留空为随机" /></div><div class="setting-note-box">Doubao Seedance 支持 2-12 秒、480p/720p/1080p、16:9/9:16/1:1/4:3/3:4/21:9；首尾帧需要 quality 模型。</div></div>
             <div class="warning" id="videoPlatformWarning">上传视频时使用 Omni Flash 编辑；公网视频 URL 必须是 APIMart 云端可访问的 HTTP/HTTPS 直链。</div>
             <div id="videoUrlWrap"><label>已有公开视频 URL（可选）</label><input id="videoUrlInput" placeholder="https://.../reference.mp4，可不填" /></div>
           </div>
