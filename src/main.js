@@ -325,6 +325,23 @@ function requestOrigin(req){
   const host = headerFirst(req.headers['x-forwarded-host']) || forwardedHostName(req) || req.headers.host || '';
   return host ? `${proto}://${host}`.replace(/\/+$/,'') : '';
 }
+function isSameOriginRequest(req) {
+  const raw = String(req.headers.origin || req.headers.referer || '').trim();
+  if (!raw) return true;
+  if (raw === 'null') return false;
+  try {
+    const got = new URL(raw);
+    const host = headerFirst(req.headers['x-forwarded-host']) || forwardedHostName(req) || req.headers.host || '';
+    if (!host) return false;
+    const expected = new URL(`${got.protocol}//${host}`);
+    return got.host.toLowerCase() === expected.host.toLowerCase();
+  } catch {
+    return false;
+  }
+}
+function requiresSameOriginCheck(method = '') {
+  return String(method || '').toUpperCase() !== 'OPTIONS';
+}
 function getOwner(req, parsed, cfg = readConfig()) {
   if (cfg.device_data_isolation === false) return 'shared';
   return cleanOwner(req.headers['x-laig-client-id'] || req.headers['x-client-id'] || parsed.query.client_id || parsed.query.owner || '', isLocalReq(req));
@@ -410,10 +427,11 @@ function readBody(req) {
   });
 }
 function safeJoinStatic(p) {
-  const clean = decodeURIComponent(p === '/' ? '/index.html' : p).replace(/^\/+/, '');
-  const full = path.join(staticDir, clean);
-  if (!full.startsWith(staticDir)) return null;
-  return full;
+  let clean = '';
+  try { clean = decodeURIComponent(p === '/' ? '/index.html' : p).replace(/^\/+/, ''); }
+  catch { return null; }
+  const full = path.resolve(staticDir, clean);
+  return isPathInside(staticDir, full) ? full : null;
 }
 function contentType(file) {
   const ext = path.extname(file).toLowerCase();
@@ -520,7 +538,8 @@ async function checkSoftwareUpdate(repoInput = '', cfg = readConfig()) {
 async function downloadSoftwareUpdate(repoInput = '', cfg = readConfig()) {
   const info = await checkSoftwareUpdate(repoInput, cfg);
   if (!info.asset_url) throw new Error('最新 Release 没有找到 Windows EXE 附件，请先在 GitHub Release 上传单文件 EXE。');
-  const dest = path.join(updateCacheDir(), info.asset_name || `LocalApiImageGenerator-${info.latest_version}-win-x64.exe`);
+  const assetName = path.basename(String(info.asset_name || `LocalApiImageGenerator-${info.latest_version}-win-x64.exe`));
+  const dest = ensureInside(updateCacheDir(), path.join(updateCacheDir(), assetName));
   await downloadUrlToFile(info.asset_url, dest);
   const next = { ...info, downloaded_path: dest, downloaded_at: nowISO() };
   saveConfig({ update_repo: info.repo, update_last_check: next });
@@ -530,6 +549,8 @@ function installSoftwareUpdate(downloadedPath = '', cfg = readConfig()) {
   const file = String(downloadedPath || (cfg.update_last_check && cfg.update_last_check.downloaded_path) || '').trim();
   if (!file || !fs.existsSync(file)) throw new Error('未找到已下载的新版本 EXE');
   if (!app.isPackaged) throw new Error('当前是开发调试模式，不能覆盖安装；打包后的 EXE 才可以原地更新。');
+  const updateFile = ensureInside(updateCacheDir(), file);
+  if (path.extname(updateFile).toLowerCase() !== '.exe') throw new Error('更新文件必须是 EXE');
   const target = process.execPath;
   const bat = path.join(os.tmpdir(), `LAIG_update_${Date.now()}.bat`);
   const backup = path.join(updateCacheDir(), `backup_${path.basename(target)}`);
@@ -538,7 +559,7 @@ function installSoftwareUpdate(downloadedPath = '', cfg = readConfig()) {
     '@echo off',
     'chcp 65001 >nul',
     'setlocal EnableExtensions EnableDelayedExpansion',
-    `set "SRC=${file}"`,
+    `set "SRC=${updateFile}"`,
     `set "TARGET=${target}"`,
     `set "BACKUP=${backup}"`,
     `set "LOG=${log}"`,
@@ -2338,6 +2359,8 @@ function copyFileToSystemClipboard(filePath, label='文件') {
 }
 function copyVideoFileToSystemClipboard(filePath) { return copyFileToSystemClipboard(filePath, '视频'); }
 function streamVideoFile(file, req, res, download=false) {
+  try { file = resolveServedFilePath(file, readConfig()); }
+  catch { return sendText(res, 'video access denied', 'text/plain', 403); }
   if (!file || !fs.existsSync(file)) return sendText(res, 'video not found', 'text/plain', 404);
   const stat = fs.statSync(file);
   const total = stat.size;
@@ -2450,6 +2473,40 @@ function ensureInside(base, target) {
   const t = path.resolve(target);
   if (t !== b && !t.startsWith(b + path.sep)) throw new Error('路径不在资产库目录内');
   return t;
+}
+function pathKey(p) {
+  const resolved = path.resolve(String(p || ''));
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+function isPathInside(base, target) {
+  const b = pathKey(base);
+  const t = pathKey(target);
+  return !!b && !!t && (t === b || t.startsWith(b + path.sep));
+}
+function allowedFileRoots(cfg = readConfig()) {
+  const roots = [
+    path.join(DATA_ROOT, 'uploads'),
+    path.join(DATA_ROOT, 'zips'),
+    path.join(app.getPath('pictures'), OUTPUT_ROOT_NAME),
+    path.join(app.getPath('pictures'), OUTPUT_MJ_DIR_NAME),
+    path.join(app.getPath('downloads'), OUTPUT_ZIP_DIR_NAME),
+    path.join(app.getPath('downloads'), OUTPUT_WORD_DIR_NAME),
+    path.join(app.getPath('downloads'), OUTPUT_EXCEL_DIR_NAME),
+    path.join(app.getPath('downloads'), 'LocalApiImageGenerator_AssetLibrary_Zips'),
+    updateCacheDir(),
+    defaultAssetLibraryDir(cfg)
+  ];
+  if (cfg.output_dir) roots.push(cfg.output_dir);
+  return Array.from(new Set(roots.map(r => path.resolve(r)).filter(Boolean)));
+}
+function isAllowedServedFile(filePath = '', cfg = readConfig()) {
+  const resolved = path.resolve(String(filePath || ''));
+  return allowedFileRoots(cfg).some(root => isPathInside(root, resolved));
+}
+function resolveServedFilePath(filePath = '', cfg = readConfig()) {
+  const resolved = path.resolve(String(filePath || ''));
+  if (!isAllowedServedFile(resolved, cfg)) throw new Error('文件路径不在允许访问的程序目录内');
+  return resolved;
 }
 function assetDbPath(cfg=readConfig()) {
   const base = defaultAssetLibraryDir(cfg);
@@ -4533,6 +4590,9 @@ async function apiHandler(req, res, parsed) {
   const p = parsed.pathname;
   const method = req.method.toUpperCase();
   if (method === 'OPTIONS') return send(res, {ok:true});
+  if (requiresSameOriginCheck(method) && !isSameOriginRequest(req)) {
+    return send(res, {ok:false,error:'跨站请求已拦截'}, 403);
+  }
   if (!local && publicHost && p === '/api/public_login' && method === 'POST') {
     const body = await readBody(req).catch(()=>({}));
     const pass = String(cfg.public_password || '').trim();
@@ -4802,8 +4862,7 @@ function requestHandler(req, res) {
       const hit = (st.public_videos || []).find(v => v.id === cleanId && v.active !== false && !isPublicTempExpired(v));
       if (hit) file = hit.path;
     } catch {}
-    if (!file) { try { file = base64UrlDecode(token); } catch {} }
-    if (!file || !fs.existsSync(file)) return sendText(res, 'not found or expired', 'text/plain', 404);
+    if (!file || !isAllowedServedFile(file, readConfig()) || !fs.existsSync(file)) return sendText(res, 'not found or expired', 'text/plain', 404);
     const ext = path.extname(file).toLowerCase();
     if (!isPublicFile && !['.mp4','.mov'].includes(ext)) return sendText(res, 'unsupported video type', 'text/plain', 400);
     const stat = fs.statSync(file);
@@ -4834,7 +4893,9 @@ function requestHandler(req, res) {
     if (!local && publicHost && !hasPublicAccess(req, parsed, cfg)) return sendText(res, 'public access denied', 'text/plain', 403);
     if (!local && publicHost && !cfg.public_enabled) return sendText(res, 'public access disabled', 'text/plain', 403);
     if (!local && !publicHost && !cfg.lan_enabled) return sendText(res, 'lan access disabled', 'text/plain', 403);
-    const file = parsed.query.path;
+    let file = '';
+    try { file = resolveServedFilePath(parsed.query.path || '', cfg); }
+    catch { return sendText(res, 'file access denied', 'text/plain', 403); }
     if (!file || !fs.existsSync(file)) return sendText(res, 'not found', 'text/plain', 404);
     if (/^video\//i.test(contentType(file))) return streamVideoFile(file, req, res, parsed.pathname === '/download');
     const headers = {'Content-Type': contentType(file), 'Access-Control-Allow-Origin':'*'};
