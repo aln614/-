@@ -512,21 +512,17 @@
             <div class="actions"><button class="secondary" id="addAnnouncementItemBtn" type="button">新增一条自定义公告</button></div>
             <div class="field-help">自定义公告只保存在本机主机配置里，局域网访问端打开顶部公告时也会看到。</div>
           </div>
-          <div class="card software-update-card">
-            <h2>GitHub 版本更新</h2>
-            <div class="row">
-              <div>
-                <label>开源仓库</label>
-                <input id="updateRepo" placeholder="例如：你的GitHub用户名/LocalApiImageGenerator" />
+          <div class="about-update-section">
+            <h2>关于</h2>
+            <div class="about-update-card">
+              <div class="about-update-row">
+                <span>版本</span>
+                <b id="appVersionText">-</b>
               </div>
-              <div class="setting-note-box">软件会读取 GitHub 最新 Release，下载其中的 Windows .exe 文件，然后在原程序位置直接替换并重启；用户不需要重新安装。</div>
-            </div>
-            <div class="software-update-result" id="softwareUpdateResult">尚未检查更新。</div>
-            <div class="actions">
-              <button class="secondary" id="checkUpdateBtn" type="button">检查新版本</button>
-              <button class="primary" id="otaUpdateBtn" type="button">OTA 一键更新</button>
-              <button class="primary" id="downloadUpdateBtn" type="button" disabled>下载新版</button>
-              <button class="danger" id="installUpdateBtn" type="button" disabled>更新并重启</button>
+              <div class="about-update-row">
+                <span>检查更新</span>
+                <button class="about-update-btn" id="checkUpdateBtn" type="button" aria-label="检查更新"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11m0 0 4-4m-4 4-4-4M5 17v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>检查更新</span></button>
+              </div>
             </div>
           </div>
 
@@ -762,6 +758,29 @@
         <div class="preview-prompt-box" id="videoPreviewPromptBox"><b>提示词</b><pre id="videoPreviewPrompt">-</pre></div>
         <div class="actions"><button class="secondary" id="copyVideoPromptBtn">复制提示词</button><button class="secondary" id="copyVideoUrlBtn">复制视频链接</button><button class="primary" id="openVideoUrlBtn">打开视频</button></div>
       </aside>
+    </div>
+  </div>
+  <div class="modal software-update-modal" id="softwareUpdateModal" aria-hidden="true">
+    <div class="software-update-dialog glass-modal">
+      <button class="modal-close glass-close" id="closeSoftwareUpdateModal" type="button">×</button>
+      <div class="software-update-head">
+        <div>
+          <h2 id="softwareUpdateModalTitle">版本更新</h2>
+          <div class="software-update-sub" id="softwareUpdateModalSub">检查更新后会在这里显示新版本内容。</div>
+        </div>
+        <div class="software-update-badge" id="softwareUpdateBadge">-</div>
+      </div>
+      <div class="software-update-body">
+        <div class="software-update-line"><span>当前版本</span><b id="softwareUpdateCurrentVersion">-</b></div>
+        <div class="software-update-line"><span>最新版本</span><b id="softwareUpdateLatestVersion">-</b></div>
+        <div class="software-update-line"><span>Release</span><a id="softwareUpdateReleaseUrl" href="#" target="_blank" rel="noreferrer">-</a></div>
+        <div class="software-update-line"><span>EXE</span><b id="softwareUpdateAssetName">-</b></div>
+        <div class="software-update-notes" id="softwareUpdateNotes">暂无更新内容。</div>
+      </div>
+      <div class="software-update-actions">
+        <button class="secondary" id="softwareUpdateModalCloseBtn" type="button">关闭</button>
+        <button class="danger" id="softwareUpdateModalInstallBtn" type="button">立即更新</button>
+      </div>
     </div>
   </div>
   <div class="modal danger-confirm-modal" id="clearAllDataModal" aria-hidden="true">

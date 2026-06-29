@@ -365,6 +365,7 @@ function configForClient(cfg, local, publicHost) {
   out.is_local_client = !!local;
   out.is_public_client = !!publicHost;
   out.device_data_isolation = cfg.device_data_isolation !== false;
+  out.app_version = getAppVersion();
   return out;
 }
 function getLocalIP() {

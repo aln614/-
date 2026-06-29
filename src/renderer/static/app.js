@@ -1,4 +1,4 @@
-﻿const $ = (s) => document.querySelector(s);
+const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 let mainImages = [];
 let refImages = [];
@@ -35,6 +35,7 @@ const PREVIEW_BG_STORAGE_KEY = 'LAIG_PREVIEW_BG_SETTINGS';
 let previewBgSettings = { color:'black', opacity:0 };
 let softwareUpdateInfo = null;
 let softwareUpdateBusy = false;
+let softwareUpdateModalVisible = false;
 const mjRegionState = { meta:null, button:null, drawing:false, erase:false, brushSize:42, zoom:1, fitScale:1, panX:0, panY:0, panning:false, panPointerId:null, panStartX:0, panStartY:0, panOriginX:0, panOriginY:0, spacePressed:false, cursorVisible:false, submitting:false, undoStack:[], redoStack:[], strokeChanged:false };
 
 function normalizeAnnouncementItems(items=[], opts={}){
@@ -137,111 +138,127 @@ async function api(path, opts = {}) {
   return data;
 }
 
+function bindSoftwareUpdateModal(modal){
+  if(!modal || modal.dataset.bound === '1') return modal;
+  modal.dataset.bound = '1';
+  modal.addEventListener('click', e=>{ if(e.target === modal) closeSoftwareUpdateModal(); });
+  modal.querySelector('#closeSoftwareUpdateModal')?.addEventListener('click', closeSoftwareUpdateModal);
+  modal.querySelector('#softwareUpdateModalCloseBtn')?.addEventListener('click', closeSoftwareUpdateModal);
+  modal.querySelector('#softwareUpdateModalInstallBtn')?.addEventListener('click', ()=>applySoftwareUpdateOta());
+  return modal;
+}
+function ensureSoftwareUpdateModal(){
+  let modal = $('#softwareUpdateModal');
+  if(modal) return bindSoftwareUpdateModal(modal);
+  modal = document.createElement('div');
+  modal.id = 'softwareUpdateModal';
+  modal.className = 'modal software-update-modal';
+  modal.innerHTML = `<div class="software-update-dialog glass-modal"><button class="modal-close glass-close" id="closeSoftwareUpdateModal" type="button">×</button><div class="software-update-head"><div><h2 id="softwareUpdateModalTitle">版本更新</h2><div class="software-update-sub" id="softwareUpdateModalSub">检查更新后会在这里显示新版本内容。</div></div><div class="software-update-badge" id="softwareUpdateBadge">-</div></div><div class="software-update-body"><div class="software-update-line"><span>当前版本</span><b id="softwareUpdateCurrentVersion">-</b></div><div class="software-update-line"><span>最新版本</span><b id="softwareUpdateLatestVersion">-</b></div><div class="software-update-line"><span>Release</span><a id="softwareUpdateReleaseUrl" href="#" target="_blank" rel="noreferrer">-</a></div><div class="software-update-line"><span>EXE</span><b id="softwareUpdateAssetName">-</b></div><div class="software-update-notes" id="softwareUpdateNotes">暂无更新内容。</div></div><div class="software-update-actions"><button class="secondary" id="softwareUpdateModalCloseBtn" type="button">关闭</button><button class="danger" id="softwareUpdateModalInstallBtn" type="button">立即更新</button></div></div>`;
+  document.body.appendChild(modal);
+  return bindSoftwareUpdateModal(modal);
+}
+function openSoftwareUpdateModal(){
+  const modal = ensureSoftwareUpdateModal();
+  modal.classList.add('active');
+  modal.setAttribute('aria-hidden','false');
+  softwareUpdateModalVisible = true;
+}
+function closeSoftwareUpdateModal(){
+  const modal = $('#softwareUpdateModal');
+  modal?.classList.remove('active');
+  modal?.setAttribute('aria-hidden','true');
+  softwareUpdateModalVisible = false;
+}
+function renderSoftwareUpdateModal(info = null){
+  const modal = ensureSoftwareUpdateModal();
+  const has = !!info?.has_update;
+  const current = $('#softwareUpdateCurrentVersion');
+  const latest = $('#softwareUpdateLatestVersion');
+  const release = $('#softwareUpdateReleaseUrl');
+  const asset = $('#softwareUpdateAssetName');
+  const notes = $('#softwareUpdateNotes');
+  const badge = $('#softwareUpdateBadge');
+  const sub = $('#softwareUpdateModalSub');
+  if(current) current.textContent = info?.current_version || '-';
+  if(latest) latest.textContent = info?.latest_version || '-';
+  if(release){
+    const url = info?.release_url || '';
+    release.textContent = url || '-';
+    release.href = url || '#';
+    release.classList.toggle('muted-link', !url);
+  }
+  if(asset) asset.textContent = info?.asset_name || '未找到 .exe 资产';
+  if(notes) notes.innerHTML = info?.notes ? escapeHtml(String(info.notes).slice(0, 3000)).replace(/\n/g, '<br>') : '暂无更新内容。';
+  if(badge) badge.textContent = info ? (has ? '发现新版本' : '当前最新') : '-';
+  if(sub) sub.textContent = info ? (has ? '检测到新版本，确认后即可直接下载并原地更新。' : '当前软件已经是最新版本。') : '检查更新后会在这里显示新版本内容。';
+  const updateBtn = $('#softwareUpdateModalInstallBtn');
+  if(updateBtn){
+    updateBtn.disabled = softwareUpdateBusy || !has || !info?.asset_url;
+    updateBtn.textContent = softwareUpdateBusy ? '正在更新...' : (has ? '立即更新' : '已是最新版本');
+    updateBtn.classList.toggle('loading', softwareUpdateBusy);
+  }
+}
 function renderSoftwareUpdateInfo(info = null){
-  const box = $('#softwareUpdateResult');
-  if(!box) return;
   if(!info){
-    box.textContent = '尚未检查更新。';
-    $('#otaUpdateBtn')?.toggleAttribute('disabled', softwareUpdateBusy);
-    $('#downloadUpdateBtn')?.toggleAttribute('disabled', true);
-    $('#installUpdateBtn')?.toggleAttribute('disabled', true);
+    renderSoftwareUpdateModal(null);
     return;
   }
-  const has = !!info.has_update;
-  box.innerHTML = `<div><b class="${has ? 'update-available' : 'update-current'}">${has ? '发现新版本' : '当前已是最新版本'}</b></div>
-    <div>当前版本：${escapeHtml(info.current_version || '-')} · 最新版本：${escapeHtml(info.latest_version || '-')}</div>
-    <div>Release：${info.release_url ? `<a href="${escapeHtml(info.release_url)}" target="_blank">${escapeHtml(info.release_url)}</a>` : '-'}</div>
-    <div>EXE：${escapeHtml(info.asset_name || '未找到 .exe 资产')}</div>
-    ${info.downloaded_path ? `<code>${escapeHtml(info.downloaded_path)}</code>` : ''}
-    ${info.notes ? `<pre>${escapeHtml(String(info.notes).slice(0, 1200))}</pre>` : ''}`;
-  $('#otaUpdateBtn')?.toggleAttribute('disabled', softwareUpdateBusy);
-  $('#downloadUpdateBtn')?.toggleAttribute('disabled', softwareUpdateBusy || !has || !info.asset_url);
-  $('#installUpdateBtn')?.toggleAttribute('disabled', softwareUpdateBusy || !info.downloaded_path);
+  renderSoftwareUpdateModal(info);
 }
 function renderSoftwareUpdateError(message){
-  const box = $('#softwareUpdateResult');
-  if(!box) return;
-  box.innerHTML = `<div><b class="update-error">检查失败</b></div><div>${escapeHtml(message || '检查更新失败')}</div>`;
-  $('#otaUpdateBtn')?.toggleAttribute('disabled', softwareUpdateBusy);
-  $('#downloadUpdateBtn')?.toggleAttribute('disabled', true);
-  $('#installUpdateBtn')?.toggleAttribute('disabled', true);
+  const info = {
+    current_version: softwareUpdateInfo?.current_version || '-',
+    latest_version: softwareUpdateInfo?.latest_version || '-',
+    release_url: softwareUpdateInfo?.release_url || '',
+    asset_name: softwareUpdateInfo?.asset_name || '',
+    notes: message || '检查更新失败',
+    has_update: false
+  };
+  renderSoftwareUpdateModal(info);
+  openSoftwareUpdateModal();
 }
 async function checkSoftwareUpdate(){
-  const repo = $('#updateRepo')?.value?.trim() || '';
+  const repo = softwareUpdateInfo?.repo || '';
   try{
     const btn = $('#checkUpdateBtn');
     if(btn) btn.disabled = true;
     const info = await api('/api/update/check', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({repo})});
     softwareUpdateInfo = info;
     renderSoftwareUpdateInfo(info);
+    openSoftwareUpdateModal();
     toast(info.has_update ? '发现新版本' : '当前已是最新版本');
   }catch(e){
     softwareUpdateInfo = null;
     renderSoftwareUpdateError(e.message || '检查更新失败');
+    openSoftwareUpdateModal();
     toast(e.message || '检查更新失败');
   }
   finally{ const btn = $('#checkUpdateBtn'); if(btn) btn.disabled = false; }
 }
-async function downloadSoftwareUpdate(){
-  const repo = $('#updateRepo')?.value?.trim() || softwareUpdateInfo?.repo || '';
-  try{
-    const btn = $('#downloadUpdateBtn');
-    const installBtn = $('#installUpdateBtn');
-    if(btn){ btn.disabled = true; btn.textContent = '下载中...'; }
-    if(installBtn) installBtn.disabled = true;
-    const info = await api('/api/update/download', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({repo})});
-    softwareUpdateInfo = info;
-    renderSoftwareUpdateInfo(info);
-    toast('新版 EXE 已下载');
-  }catch(e){ toast(e.message || '下载更新失败'); }
-  finally{
-    const btn = $('#downloadUpdateBtn');
-    if(btn){ btn.textContent = '下载新版'; btn.disabled = !softwareUpdateInfo?.has_update || !softwareUpdateInfo?.asset_url; }
-    const installBtn = $('#installUpdateBtn');
-    if(installBtn) installBtn.disabled = !softwareUpdateInfo?.downloaded_path;
-  }
-}
 async function applySoftwareUpdateOta(){
-  const repo = $('#updateRepo')?.value?.trim() || softwareUpdateInfo?.repo || '';
-  const btn = $('#otaUpdateBtn');
+  const repo = softwareUpdateInfo?.repo || '';
   let failed = false;
   try{
     softwareUpdateBusy = true;
-    if(btn){ btn.disabled = true; btn.textContent = 'OTA 更新中...'; }
     $('#checkUpdateBtn')?.toggleAttribute('disabled', true);
-    $('#downloadUpdateBtn')?.toggleAttribute('disabled', true);
-    $('#installUpdateBtn')?.toggleAttribute('disabled', true);
-    const box = $('#softwareUpdateResult');
-    if(box) box.innerHTML = '<div><b class="update-available">正在检查、下载并准备原地更新...</b></div><div>更新文件会先保存到软件数据目录的 updates 缓存中，随后自动替换当前 EXE 并重启。</div>';
+    renderSoftwareUpdateInfo(softwareUpdateInfo);
     const info = await api('/api/update/apply_latest', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({repo})});
     softwareUpdateInfo = info;
     renderSoftwareUpdateInfo(info);
+    openSoftwareUpdateModal();
     toast(info.has_update ? '已下载，正在原地更新并重启...' : (info.message || '当前已是最新版本'));
   }catch(e){
     failed = true;
     softwareUpdateInfo = null;
     renderSoftwareUpdateError(e.message || 'OTA 更新失败');
+    openSoftwareUpdateModal();
     toast(e.message || 'OTA 更新失败');
   }finally{
     softwareUpdateBusy = false;
-    if(btn){ btn.textContent = 'OTA 一键更新'; btn.disabled = false; }
     $('#checkUpdateBtn')?.toggleAttribute('disabled', false);
     if(!failed) renderSoftwareUpdateInfo(softwareUpdateInfo);
   }
 }
-async function installSoftwareUpdateNow(){
-  try{
-    const btn = $('#installUpdateBtn');
-    if(btn){ btn.disabled = true; btn.textContent = '更新中...'; }
-    await api('/api/update/install', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:softwareUpdateInfo?.downloaded_path || ''})});
-    toast('正在原地更新并重启...');
-  }catch(e){
-    toast(e.message || '更新失败');
-    const btn = $('#installUpdateBtn');
-    if(btn){ btn.disabled = false; btn.textContent = '更新并重启'; }
-  }
-}
-
 function withPublicAccess(url){
   if(!url || /^data:/i.test(url) || /^blob:/i.test(url)) return url;
   try{
@@ -1446,7 +1463,7 @@ function applyPermissionUI(){
   });
   // 手机端主要用于局域网/公网访问，永远不显示设置入口；本机管理设置请使用 PC 端。
   $$('.mobile-ui .nav[data-page="settings"]').forEach(btn => btn.style.display = 'none');
-  ['saveLanBtn','saveSettingsBtn','startPublicBtn','stopPublicBtn','checkUpdateBtn','downloadUpdateBtn','installUpdateBtn'].forEach(id => {
+  ['saveLanBtn','saveSettingsBtn','startPublicBtn','stopPublicBtn','checkUpdateBtn'].forEach(id => {
     const el = document.getElementById(id);
     if(el) el.disabled = !isLocalClient;
   });
@@ -1456,7 +1473,7 @@ function applyPermissionUI(){
     clearAllBtn.title = isLocalClient ? '清除软件所有数据' : '只有主机端可以清除所有数据';
     clearAllBtn.textContent = isLocalClient ? '清除软件所有数据' : '只有主机端可以清除所有数据';
   }
-  ['publicProvider','publicPassword','publicPermission','cloudflaredPath','ngrokPath','manualPublicUrl','lanEnabled','servicePort','appName','outputDir','updateRepo'].forEach(id => {
+  ['publicProvider','publicPassword','publicPermission','cloudflaredPath','ngrokPath','manualPublicUrl','lanEnabled','servicePort','appName','outputDir'].forEach(id => {
     const el = document.getElementById(id);
     if(el && !isLocalClient) el.disabled = true;
   });
@@ -1571,7 +1588,7 @@ async function loadConfig(){
   if($('#promptLibraryPermissionShared')) $('#promptLibraryPermissionShared').checked = c.prompt_library_permission_shared === true;
   if($('#announcementUrl')) $('#announcementUrl').value = c.announcement_url || 'https://apimart.ai/zh/log-updates';
   if($('#announcementCustomEnabled')) $('#announcementCustomEnabled').checked = c.announcement_custom_enabled === true;
-  if($('#updateRepo')) $('#updateRepo').value = c.update_repo || 'aln614/-';
+  if($('#appVersionText')) $('#appVersionText').textContent = c.app_version || c.version || '-';
   if(c.update_last_check){
     softwareUpdateInfo = c.update_last_check;
     renderSoftwareUpdateInfo(c.update_last_check);
@@ -1926,7 +1943,6 @@ function collectConfig(){
     announcement_custom_items: announcementItems,
     announcement_custom_title: announcementItems[0]?.title || '',
     announcement_custom_content: announcementItems[0]?.content || '',
-    update_repo: $('#updateRepo')?.value?.trim() || '',
     mj_settings: collectMjCurrentSettings(),
     mj_tab: mjState?.tab || 'imagine',
     output_dir: $('#outputDir').value.trim(),
@@ -1979,10 +1995,6 @@ $('#saveConfigBtn').addEventListener('click', async()=>{ updateApiKeyWarning(); 
 $('#saveLanBtn').addEventListener('click', async()=>{ await handleConfigSave({lan_enabled:$('#lanEnabled').checked, port:Number($('#servicePort').value||7868)}, '局域网设置已保存，已立即生效'); });
 $('#saveSettingsBtn').addEventListener('click', async()=>{ await handleConfigSave(collectConfig(), '设置已保存'); });
 $('#checkUpdateBtn')?.addEventListener('click', checkSoftwareUpdate);
-$('#otaUpdateBtn')?.addEventListener('click', applySoftwareUpdateOta);
-$('#downloadUpdateBtn')?.addEventListener('click', downloadSoftwareUpdate);
-$('#installUpdateBtn')?.addEventListener('click', installSoftwareUpdateNow);
-
 const CLEAR_ALL_CONFIRM_TEXT = '清空所有数据';
 function setClearAllModalError(text=''){
   const el = $('#clearAllDataError');
