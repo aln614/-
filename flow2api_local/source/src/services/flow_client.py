@@ -1805,13 +1805,16 @@ class FlowClient:
                     await self._notify_browser_captcha_error(
                         browser_id=browser_id,
                         project_id=project_id,
-                        error_reason="video_generation_risk_control",
+                        error_reason="video_generation_recaptcha_retry",
                         error_message=str(exc),
                     )
-                    raise RuntimeError(
-                        "Google Flow rejected this video edit request during submit. "
-                        "Raw error: " + str(exc)
-                    ) from exc
+                    if retry_attempt < max_retries - 1:
+                        debug_logger.log_warning(
+                            f"[VIDEO EDIT] reCAPTCHA submit rejected, retrying "
+                            f"({retry_attempt + 2}/{max_retries}): {str(exc)[:240]}"
+                        )
+                        await asyncio.sleep(min(8, 2 * (retry_attempt + 1)))
+                        continue
                     # A rejected VIDEO_GENERATION assessment is an account/IP risk
                     # decision. Immediate retries worsen the cooldown and leave the
                     # desktop app displaying misleading progress.

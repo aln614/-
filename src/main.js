@@ -1005,6 +1005,15 @@ function buildPublicVideoUrl(filePath, cfg, ownerId='') {
   // V10.9：使用短直链，最后路径直接以 .mp4/.mov 结尾，避免 APIMart 对长 token/中文文件名/二级路径探测失败。
   return `${base}/public-video/${id}${ext}`;
 }
+function buildLocalFlow2VideoUrl(filePath, ownerId='', endpoint='') {
+  const ext = path.extname(filePath).toLowerCase();
+  if (!['.mp4','.mov','.webm','.m4v'].includes(ext)) throw new Error('Flow2API source video must be mp4/mov/webm/m4v');
+  const id = registerPublicVideo(filePath, ownerId, { kind:'flow2api_source_video', expireHours:2 });
+  const host = String(endpoint || '').includes('127.0.0.1') || /localhost/i.test(String(endpoint || ''))
+    ? (process.env.LAIG_FLOW2API_HOST_ACCESS || 'host.docker.internal')
+    : '127.0.0.1';
+  return `http://${host}:${currentPort || Number(readConfig().port || 7861)}/public-video/${id}${ext}`;
+}
 async function probePublicVideoUrl(urlValue) {
   if (!urlValue) return;
   if (!/^https?:\/\//i.test(urlValue)) throw new Error('参考视频 URL 必须是 HTTP/HTTPS 公网直链');
@@ -1949,9 +1958,21 @@ async function runFlow2VideoTask(row, body, ownerId) {
     }
     const sourceIndex = Math.max(0, Number(row.source_video_index || 0));
     const sourceItem = Array.isArray(body.video_files) && body.video_files.length ? body.video_files[sourceIndex] : null;
-    const sourceVideo = sourceItem
+    let sourceVideo = sourceItem
       ? (typeof sourceItem === 'string' ? sourceItem : sourceItem?.data)
       : String(body.video_url || '').trim();
+    if (sourceItem && typeof sourceItem === 'object' && sourceItem.data) {
+      const localSourcePath = dataUrlToFile(sourceItem, ownerId);
+      if (localSourcePath) {
+        row.local_video_path = localSourcePath;
+        row.video_url = buildLocalFlow2VideoUrl(localSourcePath, ownerId, endpoint);
+        sourceVideo = row.video_url;
+        touch(row.status || '提交中', Math.max(3, Number(row.progress || 0)), 'Source video prepared for local Flow2API upload', {
+          local_video_path: localSourcePath,
+          video_url: row.video_url
+        });
+      }
+    }
     if (sourceVideo) content.push({ type:'video_url', video_url:{ url:sourceVideo } });
     if (/^omni_flash_edit_/i.test(String(row.model || '')) && !sourceVideo) {
       const imageCount = Array.isArray(body.ref_images) ? body.ref_images.length : 0;
@@ -4877,7 +4898,7 @@ function requestHandler(req, res) {
     } catch {}
     if (!file || !isAllowedServedFile(file, readConfig()) || !fs.existsSync(file)) return sendText(res, 'not found or expired', 'text/plain', 404);
     const ext = path.extname(file).toLowerCase();
-    if (!isPublicFile && !['.mp4','.mov'].includes(ext)) return sendText(res, 'unsupported video type', 'text/plain', 400);
+    if (!isPublicFile && !['.mp4','.mov','.webm','.m4v'].includes(ext)) return sendText(res, 'unsupported video type', 'text/plain', 400);
     const stat = fs.statSync(file);
     if (stat.size > 100 * 1024 * 1024) return sendText(res, 'file too large', 'text/plain', 413);
     const total = stat.size;

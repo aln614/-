@@ -1441,6 +1441,12 @@ class GenerationHandler:
 
     def _get_no_token_error_message(self, generation_type: str) -> str:
         """获取无可用Token时的详细错误信息"""
+        if config.captcha_method == "extension":
+            return (
+                "Chrome Flow2API extension is not connected to this local Flow2API service. "
+                "Open Google Flow in Chrome, reload the Flow2API extension, and keep the Flow tab open. "
+                "If it still fails, check that the extension server is http://127.0.0.1:38000."
+            )
         if generation_type == "image":
             return "没有可用的Token进行图片生成。所有Token都处于禁用、冷却、锁定或已过期状态。"
         else:
