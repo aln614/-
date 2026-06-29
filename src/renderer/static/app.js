@@ -238,15 +238,23 @@ async function checkSoftwareUpdate(){
 async function applySoftwareUpdateOta(){
   const repo = softwareUpdateInfo?.repo || '';
   let failed = false;
+  let timeoutTimer = null;
   try{
     softwareUpdateBusy = true;
     $('#checkUpdateBtn')?.toggleAttribute('disabled', true);
     renderSoftwareUpdateInfo(softwareUpdateInfo);
+    timeoutTimer = setTimeout(() => {
+      if(softwareUpdateBusy){
+        softwareUpdateBusy = false;
+        renderSoftwareUpdateInfo(softwareUpdateInfo);
+        toast('更新已后台开始，若长时间没有变化请稍后再检查日志');
+      }
+    }, 60000);
     const info = await api('/api/update/apply_latest', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({repo})});
     softwareUpdateInfo = info;
     renderSoftwareUpdateInfo(info);
     openSoftwareUpdateModal();
-    toast(info.has_update ? '已下载，正在原地更新并重启...' : (info.message || '当前已是最新版本'));
+    toast(info.message || (info.has_update ? '更新已开始，完成后会自动替换并重启' : '当前已是最新版本'));
   }catch(e){
     failed = true;
     softwareUpdateInfo = null;
@@ -254,6 +262,7 @@ async function applySoftwareUpdateOta(){
     openSoftwareUpdateModal();
     toast(e.message || 'OTA 更新失败');
   }finally{
+    if(timeoutTimer) clearTimeout(timeoutTimer);
     softwareUpdateBusy = false;
     $('#checkUpdateBtn')?.toggleAttribute('disabled', false);
     if(!failed) renderSoftwareUpdateInfo(softwareUpdateInfo);

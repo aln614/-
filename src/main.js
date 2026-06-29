@@ -550,9 +550,16 @@ async function applyLatestSoftwareUpdate(repoInput = '', cfg = readConfig()) {
   const info = await checkSoftwareUpdate(repoInput, cfg);
   if (!info.has_update) return { ok:true, ...info, message:'当前已是最新版本' };
   if (!info.asset_url) throw new Error('最新 Release 没有找到 Windows EXE 附件，请先等待 GitHub Actions 构建完成。');
-  const downloaded = await downloadSoftwareUpdate(repoInput, readConfig());
-  const installed = installSoftwareUpdate(downloaded.downloaded_path || '', readConfig());
-  return { ok:true, ...downloaded, ...installed };
+  const nextCfg = readConfig();
+  setImmediate(async () => {
+    try {
+      const downloaded = await downloadSoftwareUpdate(repoInput, nextCfg);
+      installSoftwareUpdate(downloaded.downloaded_path || '', readConfig());
+    } catch (e) {
+      addLog(`软件更新失败：${e.message || e}`, { level:'error' });
+    }
+  });
+  return { ok:true, ...info, message:'更新任务已在后台开始，下载完成后会自动替换并重启。' };
 }
 function installSoftwareUpdate(downloadedPath = '', cfg = readConfig()) {
   const file = String(downloadedPath || (cfg.update_last_check && cfg.update_last_check.downloaded_path) || '').trim();
