@@ -1569,7 +1569,7 @@ function setPage(name){
   if(name === 'images') loadImages();
   if(name === 'video'){ syncVideoApiKeyFromHome(); loadVideoTasks(); }
   if(name === 'video-manage') loadVideoTasks();
-  if(name === 'history') { currentBatchFilter = currentBatchFilter || 'all'; renderHistory(); }
+  if(name === 'history') { currentBatchFilter = currentBatchFilter || 'all'; loadBatches().finally(forceRenderHistory); }
   if(name === 'api') loadLogs();
   if(name === 'logs') loadLogs();
   if(name === 'tools') syncToolConfigFromHome();
@@ -2464,8 +2464,8 @@ function renderHistory(){
   $$('.history-delete').forEach(btn=>btn.addEventListener('click',()=>deleteBatch(btn.dataset.id, btn)));
   updateBatchDurationBadges();
 }
-$('#historySearch').addEventListener('input', renderHistory);
-$$('.history-filters .chip').forEach(btn=>btn.addEventListener('click',()=>{ $$('.history-filters .chip').forEach(x=>x.classList.remove('active')); btn.classList.add('active'); currentBatchFilter = btn.dataset.filter || 'all'; renderHistory(); }));
+$('#historySearch').addEventListener('input', forceRenderHistory);
+$$('.history-filters .chip').forEach(btn=>btn.addEventListener('click',()=>{ $$('.history-filters .chip').forEach(x=>x.classList.remove('active')); btn.classList.add('active'); currentBatchFilter = btn.dataset.filter || 'all'; forceRenderHistory(); }));
 
 function updateHistorySelectionUi(){
   const count = selectedHistoryBatches.size;
@@ -2482,6 +2482,7 @@ function updateHistorySelectionUi(){
     all.indeterminate = checked > 0 && checked < checks.length;
   }
 }
+function forceRenderHistory(){ lastHistorySignature = ''; renderHistory(); }
 function isDescribeBatch(b={}){
   try{
     const cfg = JSON.parse(b.config_json || '{}') || {};
@@ -2541,7 +2542,7 @@ function renderHistory(){
     return okFilter && (!q || JSON.stringify(b).toLowerCase().includes(q));
   });
   selectedHistoryBatches.forEach(id=>{ if(!source.some(b=>b.id === id)) selectedHistoryBatches.delete(id); });
-  const historySig = stableSig(list.map(b=>[b.id,b.status,b.task_count,b.success_count,b.fail_count,b.note,b.updated_at,selectedHistoryBatches.has(b.id)]));
+  const historySig = stableSig([q, filter, list.map(b=>[b.id,b.batch_type,b.status,b.task_count,b.success_count,b.fail_count,b.note,b.updated_at,selectedHistoryBatches.has(b.id)])]);
   if(historySig === lastHistorySignature){ updateBatchDurationBadges(); updateHistorySelectionUi(); return; }
   lastHistorySignature = historySig;
   $('#historyRows').innerHTML = list.map(b=>`<tr data-history-batch-id="${b.id}" class="${selectedHistoryBatches.has(b.id)?'history-row-selected':''}">
@@ -4288,6 +4289,22 @@ function groupVideosByBatch(rows = []){
     return { key, title:videoBatchTitle(rows,key), rows, done, fail, progress, created_at:rows[0]?.created_at || '' };
   }).sort((a,b)=>String(b.created_at || '').localeCompare(String(a.created_at || '')));
 }
+function videoBatchSelectionState(rows = []){
+  const ids = rows.map(v=>v.id).filter(Boolean);
+  const selected = ids.filter(id=>videoSelectedIds.has(id)).length;
+  return { total:ids.length, selected, all:ids.length > 0 && selected === ids.length };
+}
+function toggleVideoBatchSelection(key){
+  const rows = groupVideosByBatch(videoTasksCache).find(g=>g.key === key)?.rows || [];
+  const state = videoBatchSelectionState(rows);
+  rows.forEach(v=>{ if(!v.id) return; state.all ? videoSelectedIds.delete(v.id) : videoSelectedIds.add(v.id); });
+  lastVideoManageSignature = '';
+  renderVideoLibrary();
+}
+function videoBatchHeadHtml(g){
+  const state = videoBatchSelectionState(g.rows);
+  return `<div class="video-day-head"><div><strong>${escapeHtml(g.title)}</strong><small>${escapeHtml(formatBeijingTime(g.created_at || ''))}</small></div><div class="video-batch-head-actions"><span>${g.rows.length} 个视频 · 已完成 ${g.done}${g.fail ? ` · 失败 ${g.fail}` : ''}</span><button type="button" class="video-batch-select ${state.all?'active':''}" data-video-batch-select="${escapeHtml(g.key)}">${state.all?'已全选':'选择本批'}${state.selected ? ` · ${state.selected}/${state.total}` : ''}</button></div></div>`;
+}
 function renderVideoRecentBatches(batches = []){
   const box = $('#videoRecentBatchPanel');
   if(!box) return;
@@ -4393,8 +4410,9 @@ function renderVideoLibrary(){
     if(manageSig !== lastVideoManageSignature){
       lastVideoManageSignature = manageSig;
       const groups = groupVideosByBatch(manageRows);
-      manageBox.innerHTML = groups.map(g=>`<section class="video-day-group video-batch-group" data-video-batch="${escapeHtml(g.key)}"><div class="video-day-head"><div><strong>${escapeHtml(g.title)}</strong><small>${escapeHtml(formatBeijingTime(g.created_at || ''))}</small></div><span>${g.rows.length} 个视频 · 已完成 ${g.done}${g.fail ? ` · 失败 ${g.fail}` : ''}</span></div><div class="video-batch-progress"><i style="width:${g.progress}%"></i></div><div class="video-day-grid">${g.rows.map(v=>renderVideoCard(v,{selectable:true})).join('')}</div></section>`).join('');
+      manageBox.innerHTML = groups.map(g=>`<section class="video-day-group video-batch-group" data-video-batch="${escapeHtml(g.key)}">${videoBatchHeadHtml(g)}<div class="video-batch-progress"><i style="width:${g.progress}%"></i></div><div class="video-day-grid">${g.rows.map(v=>renderVideoCard(v,{selectable:true})).join('')}</div></section>`).join('');
       initLazyVideoFirstFrames(manageBox);
+      manageBox.querySelectorAll('[data-video-batch-select]').forEach(btn=>btn.addEventListener('click', e=>{ e.stopPropagation(); toggleVideoBatchSelection(btn.dataset.videoBatchSelect || ''); }));
     }
   }
 }
