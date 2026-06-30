@@ -464,6 +464,28 @@ function updateCacheDir() {
   ensureDir(dir);
   return dir;
 }
+let softwareUpdateRuntime = {
+  state: 'idle',
+  message: '',
+  repo: '',
+  version: '',
+  asset_name: '',
+  downloaded_path: '',
+  bytes: 0,
+  total: 0,
+  progress: 0,
+  started_at: '',
+  updated_at: ''
+};
+function setSoftwareUpdateRuntime(patch = {}) {
+  softwareUpdateRuntime = { ...softwareUpdateRuntime, ...patch, updated_at: nowISO() };
+  try { saveConfig({ update_runtime: softwareUpdateRuntime }); } catch {}
+  return softwareUpdateRuntime;
+}
+function getSoftwareUpdateStatus() {
+  const cfg = readConfig();
+  return { ok:true, ...(cfg.update_runtime || softwareUpdateRuntime), last_check: cfg.update_last_check || null };
+}
 function httpJson(target, timeoutMs = 20000) {
   return new Promise((resolve, reject) => {
     const req = https.get(target, { timeout: timeoutMs, headers: { 'User-Agent':'LocalApiImageGenerator-Updater', 'Accept':'application/vnd.github+json' } }, r => {
@@ -510,9 +532,72 @@ function downloadUrlToFile(target, dest, timeoutMs = 180000) {
     file.on('error', reject);
   });
 }
+function downloadUrlToFileRobust(target, dest, opts = {}) {
+  const timeoutMs = Number(opts.timeoutMs || 30 * 60 * 1000);
+  const idleTimeoutMs = Number(opts.idleTimeoutMs || 120000);
+  const redirectsLeft = Number.isFinite(opts.redirectsLeft) ? opts.redirectsLeft : 8;
+  const onProgress = typeof opts.onProgress === 'function' ? opts.onProgress : null;
+  return new Promise((resolve, reject) => {
+    ensureDir(path.dirname(dest));
+    const tmp = `${dest}.part`;
+    try { fs.rmSync(tmp, { force:true }); } catch {}
+    const file = fs.createWriteStream(tmp);
+    const lib = String(target).startsWith('https:') ? https : http;
+    let req;
+    const totalTimer = setTimeout(() => {
+      try { req?.destroy(new Error('新版 EXE 下载超过 30 分钟，请检查网络后重试')); } catch {}
+    }, timeoutMs);
+    const cleanup = () => {
+      clearTimeout(totalTimer);
+      try { file.close(()=>{}); } catch {}
+      try { fs.rmSync(tmp, { force:true }); } catch {}
+    };
+    req = lib.get(target, { headers:{ 'User-Agent':'LocalApiImageGenerator-Updater', 'Accept':'application/octet-stream' } }, r => {
+      if (r.statusCode >= 300 && r.statusCode < 400 && r.headers.location) {
+        r.resume();
+        clearTimeout(totalTimer);
+        file.close(()=>{ try { fs.rmSync(tmp, { force:true }); } catch {} });
+        if (redirectsLeft <= 0) return reject(new Error('新版 EXE 下载重定向次数过多'));
+        return downloadUrlToFileRobust(r.headers.location, dest, { ...opts, redirectsLeft:redirectsLeft - 1 }).then(resolve, reject);
+      }
+      if (r.statusCode < 200 || r.statusCode >= 300) {
+        r.resume(); cleanup();
+        return reject(new Error(`新版 EXE 下载失败：HTTP ${r.statusCode}`));
+      }
+      const total = Number(r.headers['content-length'] || 0);
+      let bytes = 0;
+      r.on('data', chunk => {
+        bytes += chunk.length;
+        if (onProgress) onProgress({ bytes, total });
+      });
+      r.pipe(file);
+      file.on('finish', () => file.close(() => {
+        clearTimeout(totalTimer);
+        try {
+          const stat = fs.statSync(tmp);
+          if (!stat.size) throw new Error('新版 EXE 下载为空文件');
+          fs.renameSync(tmp, dest);
+          resolve(dest);
+        } catch (e) {
+          cleanup();
+          reject(e);
+        }
+      }));
+    });
+    req.setTimeout(idleTimeoutMs, () => req.destroy(new Error('新版 EXE 下载长时间无数据响应，请稍后重试')));
+    req.on('error', e => { cleanup(); reject(e); });
+    file.on('error', e => { cleanup(); reject(e); });
+  });
+}
 function pickWindowsExeAsset(release) {
   const assets = Array.isArray(release.assets) ? release.assets : [];
-  return assets.find(a => /\.exe$/i.test(a.name || '') && /win|windows|x64|portable|localapi/i.test(a.name || '')) || assets.find(a => /\.exe$/i.test(a.name || '')) || null;
+  const exeAssets = assets
+    .filter(a => /\.exe$/i.test(a.name || '') && (!a.state || a.state === 'uploaded') && Number(a.size || 0) > 0)
+    .sort((a, b) => {
+      const score = x => (/tenying|localapi|image|generator/i.test(x.name || '') ? 8 : 0) + (/win|windows/i.test(x.name || '') ? 4 : 0) + (/x64|portable/i.test(x.name || '') ? 2 : 0);
+      return score(b) - score(a);
+    });
+  return exeAssets[0] || null;
 }
 async function checkSoftwareUpdate(repoInput = '', cfg = readConfig()) {
   const repo = normalizeUpdateRepo(repoInput || cfg.update_repo || DEFAULT_UPDATE_REPO);
@@ -522,15 +607,24 @@ async function checkSoftwareUpdate(repoInput = '', cfg = readConfig()) {
   if (!version) throw new Error('GitHub Release 缺少可识别的版本号 tag');
   const asset = pickWindowsExeAsset(release);
   const current = getAppVersion();
+  const hasUpdate = compareVersions(version, current) > 0;
+  const updateReady = hasUpdate && !!(asset && asset.browser_download_url);
+  const message = hasUpdate
+    ? (updateReady ? '检测到新版本，可直接更新。' : '检测到新版本，但 GitHub Release 安装包还未上传完成，请稍后再检查。')
+    : '当前已经是最新版本。';
   const info = {
     repo,
     current_version: current,
     latest_version: version,
-    has_update: compareVersions(version, current) > 0,
+    has_update: hasUpdate,
+    update_ready: updateReady,
+    update_status: updateReady ? 'ready' : (hasUpdate ? 'waiting_asset' : 'latest'),
+    message,
     release_url: release.html_url || `https://github.com/${repo}/releases/latest`,
     notes: release.body || '',
     asset_name: asset ? asset.name : '',
     asset_url: asset ? asset.browser_download_url : '',
+    asset_size: asset ? Number(asset.size || 0) : 0,
     checked_at: nowISO()
   };
   saveConfig({ update_repo: repo, update_last_check: info });
@@ -541,21 +635,35 @@ async function downloadSoftwareUpdate(repoInput = '', cfg = readConfig()) {
   if (!info.asset_url) throw new Error('最新 Release 没有找到 Windows EXE 附件，请先在 GitHub Release 上传单文件 EXE。');
   const assetName = path.basename(String(info.asset_name || `LocalApiImageGenerator-${info.latest_version}-win-x64.exe`));
   const dest = ensureInside(updateCacheDir(), path.join(updateCacheDir(), assetName));
-  await downloadUrlToFile(info.asset_url, dest);
+  setSoftwareUpdateRuntime({ state:'downloading', message:'正在下载新版 EXE...', repo:info.repo, version:info.latest_version, asset_name:assetName, downloaded_path:'', bytes:0, total:info.asset_size || 0, progress:0, started_at:nowISO() });
+  await downloadUrlToFileRobust(info.asset_url, dest, {
+    onProgress: p => {
+      const total = p.total || info.asset_size || 0;
+      const progress = total ? Math.max(1, Math.min(99, Math.round(p.bytes / total * 100))) : 0;
+      setSoftwareUpdateRuntime({ state:'downloading', message:`正在下载新版 EXE${total ? ` ${progress}%` : ''}`, bytes:p.bytes, total, progress });
+    }
+  });
   const next = { ...info, downloaded_path: dest, downloaded_at: nowISO() };
   saveConfig({ update_repo: info.repo, update_last_check: next });
+  setSoftwareUpdateRuntime({ state:'downloaded', message:'新版 EXE 下载完成，准备安装...', downloaded_path:dest, progress:100 });
   return { ok:true, ...next };
 }
 async function applyLatestSoftwareUpdate(repoInput = '', cfg = readConfig()) {
   const info = await checkSoftwareUpdate(repoInput, cfg);
   if (!info.has_update) return { ok:true, ...info, message:'当前已是最新版本' };
   if (!info.asset_url) throw new Error('最新 Release 没有找到 Windows EXE 附件，请先等待 GitHub Actions 构建完成。');
+  if (softwareUpdateRuntime.state === 'downloading' || softwareUpdateRuntime.state === 'installing') {
+    return { ok:true, ...info, update_runtime:softwareUpdateRuntime, message:'更新任务已经在后台运行，请等待完成。' };
+  }
+  setSoftwareUpdateRuntime({ state:'queued', message:'更新任务已排队，准备下载...', repo:info.repo, version:info.latest_version, asset_name:info.asset_name, bytes:0, total:info.asset_size || 0, progress:0, started_at:nowISO() });
   const nextCfg = readConfig();
   setImmediate(async () => {
     try {
       const downloaded = await downloadSoftwareUpdate(repoInput, nextCfg);
+      setSoftwareUpdateRuntime({ state:'installing', message:'下载完成，正在替换并重启软件...', progress:100, downloaded_path:downloaded.downloaded_path || '' });
       installSoftwareUpdate(downloaded.downloaded_path || '', readConfig());
     } catch (e) {
+      setSoftwareUpdateRuntime({ state:'failed', message:e.message || String(e), progress:0 });
       addLog(`软件更新失败：${e.message || e}`, { level:'error' });
     }
   });
@@ -4690,6 +4798,10 @@ async function apiHandler(req, res, parsed) {
       if (!local) return send(res, {ok:false,error:'只有主机端可以执行软件更新'}, 403);
       const body = await readBody(req);
       return send(res, await applyLatestSoftwareUpdate(body.repo || body.update_repo || '', readConfig()));
+    }
+    if (method === 'GET' && p === '/api/update/status') {
+      if (!local) return send(res, {ok:false,error:'只有主机端可以查看软件更新状态'}, 403);
+      return send(res, getSoftwareUpdateStatus());
     }
     if (method === 'GET' && p === '/api/public_status') {
       const publicCfg = configForClient(cfg, local, publicHost);
