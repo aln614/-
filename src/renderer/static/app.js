@@ -142,7 +142,6 @@ function bindSoftwareUpdateModal(modal){
   if(!modal || modal.dataset.bound === '1') return modal;
   modal.dataset.bound = '1';
   modal.addEventListener('click', e=>{ if(e.target === modal) closeSoftwareUpdateModal(); });
-  modal.querySelector('#closeSoftwareUpdateModal')?.addEventListener('click', closeSoftwareUpdateModal);
   modal.querySelector('#softwareUpdateModalCloseBtn')?.addEventListener('click', closeSoftwareUpdateModal);
   modal.querySelector('#softwareUpdateModalInstallBtn')?.addEventListener('click', ()=>applySoftwareUpdateOta());
   return modal;
@@ -153,7 +152,7 @@ function ensureSoftwareUpdateModal(){
   modal = document.createElement('div');
   modal.id = 'softwareUpdateModal';
   modal.className = 'modal software-update-modal';
-  modal.innerHTML = `<div class="software-update-dialog glass-modal"><button class="modal-close glass-close" id="closeSoftwareUpdateModal" type="button">×</button><div class="software-update-head"><div><h2 id="softwareUpdateModalTitle">版本更新</h2><div class="software-update-sub" id="softwareUpdateModalSub">检查更新后会在这里显示新版本内容。</div></div><div class="software-update-badge" id="softwareUpdateBadge">-</div></div><div class="software-update-body"><div class="software-update-line"><span>当前版本</span><b id="softwareUpdateCurrentVersion">-</b></div><div class="software-update-line"><span>最新版本</span><b id="softwareUpdateLatestVersion">-</b></div><div class="software-update-line"><span>Release</span><a id="softwareUpdateReleaseUrl" href="#" target="_blank" rel="noreferrer">-</a></div><div class="software-update-line"><span>EXE</span><b id="softwareUpdateAssetName">-</b></div><div class="software-update-notes" id="softwareUpdateNotes">暂无更新内容。</div></div><div class="software-update-actions"><button class="secondary" id="softwareUpdateModalCloseBtn" type="button">关闭</button><button class="danger" id="softwareUpdateModalInstallBtn" type="button">立即更新</button></div></div>`;
+  modal.innerHTML = `<div class="software-update-dialog glass-modal"><div class="software-update-head"><div><h2 id="softwareUpdateModalTitle">版本更新</h2><div class="software-update-sub" id="softwareUpdateModalSub">检查更新后会在这里显示新版本内容。</div></div><div class="software-update-badge" id="softwareUpdateBadge">-</div></div><div class="software-update-body"><div class="software-update-line"><span>当前版本</span><b id="softwareUpdateCurrentVersion">-</b></div><div class="software-update-line"><span>最新版本</span><b id="softwareUpdateLatestVersion">-</b></div><div class="software-update-line"><span>Release</span><a id="softwareUpdateReleaseUrl" href="#" target="_blank" rel="noreferrer">-</a></div><div class="software-update-line"><span>EXE</span><b id="softwareUpdateAssetName">-</b></div><div class="software-update-notes" id="softwareUpdateNotes">暂无更新内容。</div></div><div class="software-update-actions"><button class="secondary" id="softwareUpdateModalCloseBtn" type="button">关闭</button><button class="danger" id="softwareUpdateModalInstallBtn" type="button">立即更新</button></div></div>`;
   document.body.appendChild(modal);
   return bindSoftwareUpdateModal(modal);
 }
