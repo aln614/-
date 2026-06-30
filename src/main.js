@@ -589,6 +589,36 @@ function downloadUrlToFileRobust(target, dest, opts = {}) {
     file.on('error', e => { cleanup(); reject(e); });
   });
 }
+function downloadUrlToFileWithSystemCurl(target, dest, opts = {}) {
+  return new Promise((resolve, reject) => {
+    if (process.platform !== 'win32') return reject(new Error('system curl fast path is only enabled on Windows'));
+    ensureDir(path.dirname(dest));
+    const tmp = `${dest}.part`;
+    try { fs.rmSync(tmp, { force:true }); } catch {}
+    const args = ['-L', '--fail', '--retry', '3', '--retry-delay', '2', '--connect-timeout', '20', '--output', tmp, target];
+    const child = spawn('curl.exe', args, { windowsHide:true, stdio:['ignore', 'ignore', 'pipe'] });
+    let stderr = '';
+    const timer = setTimeout(() => {
+      try { child.kill(); } catch {}
+      reject(new Error('系统下载器超过 30 分钟未完成'));
+    }, Number(opts.timeoutMs || 30 * 60 * 1000));
+    child.stderr.on('data', chunk => { stderr += chunk.toString(); });
+    child.on('error', e => { clearTimeout(timer); try { fs.rmSync(tmp, { force:true }); } catch {}; reject(e); });
+    child.on('close', code => {
+      clearTimeout(timer);
+      try {
+        if (code !== 0) throw new Error((stderr || `curl exited with code ${code}`).slice(-600));
+        const stat = fs.statSync(tmp);
+        if (!stat.size) throw new Error('新版 EXE 下载为空文件');
+        fs.renameSync(tmp, dest);
+        resolve(dest);
+      } catch (e) {
+        try { fs.rmSync(tmp, { force:true }); } catch {}
+        reject(e);
+      }
+    });
+  });
+}
 function pickWindowsExeAsset(release) {
   const assets = Array.isArray(release.assets) ? release.assets : [];
   const exeAssets = assets
@@ -636,13 +666,19 @@ async function downloadSoftwareUpdate(repoInput = '', cfg = readConfig()) {
   const assetName = path.basename(String(info.asset_name || `LocalApiImageGenerator-${info.latest_version}-win-x64.exe`));
   const dest = ensureInside(updateCacheDir(), path.join(updateCacheDir(), assetName));
   setSoftwareUpdateRuntime({ state:'downloading', message:'正在下载新版 EXE...', repo:info.repo, version:info.latest_version, asset_name:assetName, downloaded_path:'', bytes:0, total:info.asset_size || 0, progress:0, started_at:nowISO() });
-  await downloadUrlToFileRobust(info.asset_url, dest, {
-    onProgress: p => {
-      const total = p.total || info.asset_size || 0;
-      const progress = total ? Math.max(1, Math.min(99, Math.round(p.bytes / total * 100))) : 0;
-      setSoftwareUpdateRuntime({ state:'downloading', message:`正在下载新版 EXE${total ? ` ${progress}%` : ''}`, bytes:p.bytes, total, progress });
-    }
-  });
+  try {
+    setSoftwareUpdateRuntime({ state:'downloading', message:'正在调用系统下载器下载新版 EXE...', progress:1 });
+    await downloadUrlToFileWithSystemCurl(info.asset_url, dest, { timeoutMs: 30 * 60 * 1000 });
+  } catch (fastError) {
+    addLog(`系统下载器失败，切换到内置下载：${fastError.message || fastError}`, { level:'warn' });
+    await downloadUrlToFileRobust(info.asset_url, dest, {
+      onProgress: p => {
+        const total = p.total || info.asset_size || 0;
+        const progress = total ? Math.max(1, Math.min(99, Math.round(p.bytes / total * 100))) : 0;
+        setSoftwareUpdateRuntime({ state:'downloading', message:`正在下载新版 EXE${total ? ` ${progress}%` : ''}`, bytes:p.bytes, total, progress });
+      }
+    });
+  }
   const next = { ...info, downloaded_path: dest, downloaded_at: nowISO() };
   saveConfig({ update_repo: info.repo, update_last_check: next });
   setSoftwareUpdateRuntime({ state:'downloaded', message:'新版 EXE 下载完成，准备安装...', downloaded_path:dest, progress:100 });
@@ -904,6 +940,26 @@ function ensureVideoStore() {
   if (!Array.isArray(st.public_videos)) st.public_videos = [];
   db._save();
   return st;
+}
+function cleanupStaleVideoTasks(owner = '') {
+  const st = ensureVideoStore();
+  const stuck = new Set(['等待提交', '提交中', '重试中']);
+  const cutoff = Date.now() - 20 * 60 * 1000;
+  let changed = false;
+  for (const row of st.video_tasks || []) {
+    if (owner && row.owner_id !== owner) continue;
+    if (row.task_id || !stuck.has(String(row.status || ''))) continue;
+    const ts = Date.parse(row.updated_at || row.created_at || '');
+    if (!Number.isFinite(ts) || ts > cutoff) continue;
+    row.status = '失败';
+    row.progress_text = '提交超时，未收到远端 task_id';
+    row.error_message = row.error_message || '任务长时间停留在提交中，且没有后端 task_id，已自动标记失败。请重新提交。';
+    row.finished_at = nowISO();
+    row.updated_at = nowISO();
+    changed = true;
+  }
+  if (changed) getDB()._save();
+  return changed;
 }
 function pickTaskIdFromApimart(obj={}) {
   const candidates = [];
@@ -2251,11 +2307,12 @@ async function retryApimartVideoRow(row, body, ownerId, req, cfg, error) {
   if (!row) return null;
   const retryLimit = Math.max(0, Number(row.retry_times ?? body.retry_times ?? 0));
   const retryCount = Math.max(0, Number(row.retry_count || 0));
+  const permanent = isPermanentApimartVideoError(error);
   row.status = '失败';
   row.progress_text = '任务失败';
   row.error_message = error?.message || String(error || 'APIMart video task failed');
   row.updated_at = nowISO();
-  if (retryCount < retryLimit) {
+  if (!permanent && retryCount < retryLimit) {
     const nextRetry = retryCount + 1;
     row.retry_count = nextRetry;
     row.retry_times = retryLimit;
@@ -2276,6 +2333,11 @@ async function retryApimartVideoRow(row, body, ownerId, req, cfg, error) {
   closePublicVideoByPath(row.local_video_path);
   addLog(`APIMart 视频任务最终失败：${row.error_message}`, { ownerId, level:'error' });
   return row;
+}
+
+function isPermanentApimartVideoError(error) {
+  const msg = String(error?.message || error || '').toLowerCase();
+  return /model_not_found|model not found|invalid model|unsupported|不支持|仅支持|api key|unauthorized|forbidden|无权限/.test(msg);
 }
 
 async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = null) {
@@ -2366,6 +2428,9 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
         payload.first_frame_image = imageUrls[0];
       }
     }
+    if (String(payload.model || '').toLowerCase() === 'omni-flash-ext' && imageUrls.length) {
+      payload.generation_type = (videoUrl || mode === 'multi_reference' || imageUrls.length > 1) ? 'reference' : 'frame';
+    }
     if (videoUrl) {
       await probePublicVideoUrl(videoUrl);
       if (rule.videoParam === 'video_url') payload.video_url = videoUrl;
@@ -2418,7 +2483,7 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
     row.updated_at = nowISO();
     const retryLimit = Math.max(0, Number(row.retry_times || body.retry_times || 0));
     const retryCount = Math.max(0, Number(row.retry_count || 0));
-    if (retryCount < retryLimit) {
+    if (!isPermanentApimartVideoError(e) && retryCount < retryLimit) {
       const nextRetry = retryCount + 1;
       row.retry_count = nextRetry;
       row.retry_times = retryLimit;
@@ -2550,6 +2615,47 @@ function exportSelectedVideos(ids = [], owner='') {
 function formatVideoTask(row) {
   const stream = row.file_path ? `/video-file?id=${encodeURIComponent(row.id)}` : '';
   return { ...row, progress_text: row.progress_text || (row.status === '已完成' ? '已完成' : ''), stream_url: stream, share_url: row.file_path ? `/video-share?id=${encodeURIComponent(row.id)}` : '', url: stream || row.remote_url || '', download_url: row.file_path ? `/download?path=${encodeURIComponent(row.file_path)}` : (row.remote_url || ''), filename: row.file_path ? path.basename(row.file_path) : `${row.id}.mp4` };
+}
+
+function listVideoBatchSummaries(owner = '') {
+  cleanupStaleVideoTasks(owner);
+  const st = ensureVideoStore();
+  const groups = new Map();
+  for (const row of st.video_tasks || []) {
+    if (owner && row.owner_id !== owner) continue;
+    const created = row.created_at || '';
+    const day = beijingDateKey(created) || 'unknown';
+    const minute = formatBeijingTime(created).slice(11, 16).replace(':', '') || '0000';
+    const key = row.video_batch_id || `legacy_${day}_${minute}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(row);
+  }
+  return [...groups.entries()].map(([id, rows]) => {
+    rows.sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')));
+    const first = rows[0] || {};
+    const latest = rows.reduce((acc, row) => String(row.updated_at || row.created_at || '').localeCompare(String(acc || '')) > 0 ? (row.updated_at || row.created_at || '') : acc, first.updated_at || first.created_at || '');
+    const taskCount = rows.length;
+    const successCount = rows.filter(v => String(v.status || '') === '已完成').length;
+    const failCount = rows.filter(v => String(v.status || '').includes('失败')).length;
+    const runningCount = rows.filter(v => ['等待提交','提交中','重试中','已提交','提交生成中','生成中','查询中','下载中'].includes(String(v.status || ''))).length;
+    const status = runningCount ? '生成中' : (successCount === taskCount && taskCount ? '已完成' : (failCount === taskCount && taskCount ? '失败' : (successCount ? '部分完成' : '失败')));
+    return {
+      id,
+      name: first.video_batch_name || `Video_${formatBeijingTime(first.created_at || '').replace(/[^\d]/g, '').slice(0, 14) || id}`,
+      note: '',
+      model: first.platform === 'flow2api' ? '本地 Flow2API' : (first.model || 'APIMart'),
+      size: [first.resolution, first.aspect_ratio].filter(Boolean).join(' / '),
+      status,
+      task_count: taskCount,
+      success_count: successCount,
+      fail_count: failCount,
+      running_count: runningCount,
+      created_at: first.created_at || '',
+      updated_at: latest,
+      batch_type: 'video',
+      video_ids: rows.map(v => v.id).filter(Boolean)
+    };
+  }).sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
 }
 
 function videoTodayStats(owner='') {
@@ -4930,6 +5036,11 @@ async function apiHandler(req, res, parsed) {
     if (method === 'GET' && p === '/api/announcements') return send(res, await getAnnouncements(parsed.query.force === '1'));
     if (method === 'GET' && p === '/api/status') return send(res, { ...appStats(deviceOwner), time_info: getNetworkTimeInfo(), ...hostCumulativeStats(), ...urls(cfg), is_local_client: local, is_public_client: publicHost, device_data_isolation: cfg.device_data_isolation !== false, host_status_visible: true });
     if (method === 'GET' && p === '/api/batches') return send(res, listBatches({ownerId: owner, page: 1, pageSize: 1000}).rows.map(normalizeBatch));
+    if (method === 'GET' && p === '/api/history_batches') {
+      const imageRows = listBatches({ownerId: owner, page: 1, pageSize: 1000}).rows.map(b => ({ ...normalizeBatch(b), batch_type:'image' }));
+      const videoRows = listVideoBatchSummaries(owner);
+      return send(res, [...imageRows, ...videoRows].sort((a,b)=>String(b.created_at || '').localeCompare(String(a.created_at || ''))));
+    }
     if (method === 'POST' && p === '/api/batches') {
       const body = await readBody(req);
       // V13.2：局域网/公网访问端不使用主机端保存的 API Key；必须使用当前设备自己填写的 API Key。
@@ -5010,7 +5121,7 @@ async function apiHandler(req, res, parsed) {
     }
     if (method === 'POST' && p === '/api/video_submit') { const body=await readBody(req); if(String(body.video_platform||'').toLowerCase()==='flow2api'){const ret=await createFlow2VideoBatch({...body,prompts:body.prompt||body.prompts,copies:1},deviceOwner);return send(res,{ok:true,task:ret.rows[0]||null});} const row = await createApimartVideoTask(body, deviceOwner, req, cfg); return send(res,{ok:true, task:formatVideoTask(row)}); }
     if (method === 'POST' && p === '/api/video_batch_submit') { const body=await readBody(req); return send(res, String(body.video_platform||'').toLowerCase()==='flow2api' ? await createFlow2VideoBatch(body, deviceOwner) : await createApimartVideoBatch(body, deviceOwner, req, cfg)); }
-    if (method === 'GET' && p === '/api/video_tasks') { const st=ensureVideoStore(); const rows=st.video_tasks.filter(v=>!owner || v.owner_id===owner).sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at))).slice(0,500).map(formatVideoTask); return send(res,{ok:true, rows, video_stats: videoTodayStats(owner)}); }
+    if (method === 'GET' && p === '/api/video_tasks') { cleanupStaleVideoTasks(owner); const st=ensureVideoStore(); const rows=st.video_tasks.filter(v=>!owner || v.owner_id===owner).sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at))).slice(0,500).map(formatVideoTask); return send(res,{ok:true, rows, video_stats: videoTodayStats(owner)}); }
     if (method === 'POST' && p === '/api/video_delete_selected') { const body=await readBody(req); return send(res, deleteVideoTasks(body.ids || [], owner)); }
     if (method === 'POST' && p === '/api/video_export_selected') { const body=await readBody(req); const zipPath=exportSelectedVideos(body.ids || [], owner); return send(res,{ok:true,url:`/download?path=${encodeURIComponent(zipPath)}`}); }
     if (method === 'POST' && p === '/api/video_copy_file') {

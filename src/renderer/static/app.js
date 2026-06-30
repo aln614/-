@@ -3,6 +3,7 @@ const $$ = (s) => Array.from(document.querySelectorAll(s));
 let mainImages = [];
 let refImages = [];
 let batches = [];
+let historyBatches = [];
 let selectedImages = new Set();
 let selectedHistoryBatches = new Set();
 let currentImageBatch = '';
@@ -2260,6 +2261,8 @@ async function loadStatus(){
 
 async function loadBatches(){
   const next = await api('/api/batches');
+  try { historyBatches = await api('/api/history_batches'); }
+  catch { historyBatches = next.map(b=>({...b,batch_type:'image'})); }
   const sig = stableSig(next.map(b=>[b.id,b.status,b.task_count,b.success_count,b.fail_count,b.running_count,b.note,b.updated_at]));
   batches = next;
   if(sig !== lastBatchesSignature){
@@ -2374,9 +2377,18 @@ async function exportSelectedBatchesZip(){
   const btn = $('#downloadSelectedBatchesBtn');
   if(btn){ btn.disabled = true; btn.textContent = '正在打包...'; }
   try{
-    const r = await api('/api/export_batches_zip',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({batch_ids:ids})});
-    if(r.url) window.open(withPublicAccess(r.url),'_blank');
-    toast(ids.length === 1 ? '批次图片 ZIP 已生成' : `已打包 ${ids.length} 个批次`);
+    const videoIds = ids.flatMap(id=>videoHistoryBatchById(id)?.video_ids || []);
+    const imageIds = ids.filter(id=>!videoHistoryBatchById(id));
+    if(videoIds.length && imageIds.length) toast('已选择图片批次和视频批次，将分别打包下载');
+    if(imageIds.length){
+      const r = await api('/api/export_batches_zip',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({batch_ids:imageIds})});
+      if(r.url) window.open(withPublicAccess(r.url),'_blank');
+    }
+    if(videoIds.length){
+      const r = await api('/api/video_export_selected',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:videoIds})});
+      if(r.url) window.open(withPublicAccess(r.url),'_blank');
+    }
+    toast(ids.length === 1 ? '选中批次已生成下载文件' : `已打包 ${ids.length} 个批次`);
   }catch(e){
     toast(e.message || '下载选中批次失败');
   }finally{
@@ -2478,7 +2490,41 @@ function isDescribeBatch(b={}){
     return /^MJ_describe_/i.test(String(b.name || ''));
   }
 }
+function isVideoBatch(b={}){ return String(b.batch_type || '').toLowerCase() === 'video' || String(b.id || '').startsWith('video_batch_'); }
+function videoHistoryBatchById(id){ return historyBatches.find(b=>b.id === id && isVideoBatch(b)) || null; }
+async function openVideoBatchFromHistory(id){
+  setPage('video-manage');
+  await loadVideoTasks();
+  setTimeout(()=>document.querySelector(`#videoManageGrid [data-video-batch="${CSS.escape(id)}"]`)?.scrollIntoView({behavior:'smooth', block:'start'}), 120);
+}
+async function exportVideoHistoryBatch(id){
+  const b = videoHistoryBatchById(id);
+  const ids = b?.video_ids || [];
+  if(!ids.length) return toast('该视频批次没有可导出的视频任务');
+  const r = await api('/api/video_export_selected',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids})});
+  if(r.url) window.open(withPublicAccess(r.url),'_blank');
+}
+async function deleteVideoHistoryBatch(id, btn){
+  const b = videoHistoryBatchById(id);
+  const ids = b?.video_ids || [];
+  if(!ids.length) return toast('该视频批次没有可删除的视频任务');
+  if(!confirm(`确定删除视频批次「${b.name || id}」里的 ${ids.length} 个视频任务吗？本地视频文件也会删除。`)) return;
+  const old = btn?.textContent;
+  if(btn){ btn.disabled = true; btn.textContent = '删除中'; }
+  try{
+    await api('/api/video_delete_selected',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids})});
+    selectedHistoryBatches.delete(id);
+    await refreshAll();
+    toast('视频批次已删除');
+  }catch(e){
+    if(btn){ btn.disabled = false; btn.textContent = old || '删除'; }
+    alert(e.message || '删除视频批次失败');
+  }
+}
 function historyBatchActions(b){
+  if(isVideoBatch(b)){
+    return `<button class="secondary" onclick="openVideoBatchFromHistory('${b.id}')">查看视频</button> <button class="primary" onclick="exportVideoHistoryBatch('${b.id}')">下载全部</button> <button class="danger history-video-delete" data-id="${b.id}">删除</button>`;
+  }
   if(isDescribeBatch(b)){
     return `<button class="secondary" onclick="showDescribeBatchResults('${b.id}')">查看提示词结果</button> <button class="secondary" onclick="repeatBatch('${b.id}')">重复</button> <button class="primary" onclick="exportDescribeXlsx('${b.id}')">下载表格</button> <button class="danger history-delete" data-id="${b.id}">删除</button>`;
   }
@@ -2488,19 +2534,20 @@ function historyBatchActions(b){
 function renderHistory(){
   const q = ($('#historySearch').value || '').toLowerCase();
   const filter = currentBatchFilter || 'all';
-  const list = batches.filter(b => {
+  const source = historyBatches.length ? historyBatches : batches.map(b=>({...b,batch_type:'image'}));
+  const list = source.filter(b => {
     const status = String(b.status || '');
     const okFilter = filter === 'all' || status.includes(filter) || (filter === '生成中' && ['等待中','提交生成中','生成中'].includes(status));
     return okFilter && (!q || JSON.stringify(b).toLowerCase().includes(q));
   });
-  selectedHistoryBatches.forEach(id=>{ if(!batches.some(b=>b.id === id)) selectedHistoryBatches.delete(id); });
+  selectedHistoryBatches.forEach(id=>{ if(!source.some(b=>b.id === id)) selectedHistoryBatches.delete(id); });
   const historySig = stableSig(list.map(b=>[b.id,b.status,b.task_count,b.success_count,b.fail_count,b.note,b.updated_at,selectedHistoryBatches.has(b.id)]));
   if(historySig === lastHistorySignature){ updateBatchDurationBadges(); updateHistorySelectionUi(); return; }
   lastHistorySignature = historySig;
   $('#historyRows').innerHTML = list.map(b=>`<tr data-history-batch-id="${b.id}" class="${selectedHistoryBatches.has(b.id)?'history-row-selected':''}">
     <td class="history-select-col"><input type="checkbox" class="history-batch-check" data-history-batch-id="${b.id}" ${selectedHistoryBatches.has(b.id)?'checked':''} /></td>
     <td>${formatBeijingTime(b.created_at)}</td>
-    <td class="history-batch-cell history-edit-note" data-id="${b.id}" title="双击修改备注"><div>${escapeHtml(b.name)}</div><div class="small-note">类型：${isDescribeBatch(b)?'图生文 / Midjourney Describe':'图片生成'} · 备注：${escapeHtml((b.note||'').trim() || '双击添加备注名')}</div><div class="small-note history-duration-line">${batchDurationMarkup(b)} · 状态：${escapeHtml(b.status || '-')}</div></td>
+    <td class="history-batch-cell ${isVideoBatch(b)?'':'history-edit-note'}" data-id="${b.id}" title="${isVideoBatch(b)?'视频批次':'双击修改备注'}"><div>${escapeHtml(b.name)}</div><div class="small-note">类型：${isVideoBatch(b)?'视频生成 / 视频编辑':(isDescribeBatch(b)?'图生文 / Midjourney Describe':'图片生成')} · 备注：${escapeHtml((b.note||'').trim() || (isVideoBatch(b) ? '视频批次' : '双击添加备注名'))}</div><div class="small-note history-duration-line">${isVideoBatch(b)?`${b.task_count || 0} 个视频任务`:batchDurationMarkup(b)} · 状态：${escapeHtml(b.status || '-')}</div></td>
     <td>${escapeHtml(b.model)}</td><td>${b.size}</td><td>${b.task_count}</td><td>${b.success_count}</td><td>${b.fail_count}</td>
     <td>${historyBatchActions(b)}</td>
   </tr>`).join('');
@@ -2511,6 +2558,7 @@ function renderHistory(){
   }));
   $$('.history-edit-note').forEach(el=>el.addEventListener('dblclick',()=>beginInlineNoteEdit(el, el.dataset.id)));
   $$('.history-delete').forEach(btn=>btn.addEventListener('click',()=>deleteBatch(btn.dataset.id, btn)));
+  $$('.history-video-delete').forEach(btn=>btn.addEventListener('click',()=>deleteVideoHistoryBatch(btn.dataset.id, btn)));
   updateBatchDurationBadges();
   updateHistorySelectionUi();
 }
