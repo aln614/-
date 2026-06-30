@@ -1265,11 +1265,14 @@ function optionalInt(value) {
 const APIMART_VIDEO_MODEL_RULES = {
   'omni-flash-ext': {
     label: 'Omni Flash',
+    model: 'Omni-Flash-Ext',
     endpoint: '/v1/videos/generations', taskQuery: 'batch',
     resolutions: ['720p','1080p','4k'], defaultResolution: '1080p',
     aspectRatios: ['16:9','9:16','1:1','4:3','3:4'], defaultAspectRatio: '9:16',
     durations: [4,6,8,10], defaultDuration: 6,
-    supportsImageUrls: true, supportsVideoUrls: true, supportsImageWithRoles: false
+    supportsImageUrls: true, supportsVideoUrls: true, supportsImageWithRoles: false,
+    videoParam: 'video_urls',
+    allowedImageCounts: [0,1,3]
   },
   'doubao-seedance-1-0-pro-fast': {
     label: 'Doubao Seedance 1.0 Pro Fast',
@@ -1349,8 +1352,13 @@ registerApimartVideoRules([
   { model:'viduq3-turbo', label:'Vidu Q3 Turbo', resolutions:['540p','720p','1080p'], durationRange:[1,16], supportsImageUrls:true, supportsLastFrame:true },
   { model:'grok-imagine-1.5-video-apimart', label:'Grok Imagine 1.5 Video', resolutions:['480p','720p'], defaultResolution:'480p', durationRange:[3,15], supportsImageUrls:true },
   { model:'pixverse-v6', label:'Pixverse v6', resolutions:['360p','540p','720p','1080p'], durationRange:[1,15], supportsImageUrls:true, supportsVideoUrls:true },
-  { model:'Omni-Flash-Ext', label:'Omni Flash Ext', resolutions:['720p','1080p','4k'], durations:[4,6,8,10], defaultDuration:6, supportsImageUrls:true, supportsVideoUrls:true }
+  { model:'Omni-Flash-Ext', label:'Omni Flash Ext', resolutions:['720p','1080p','4k'], aspectRatios:['16:9','9:16','1:1','4:3','3:4'], defaultAspectRatio:'9:16', durations:[4,6,8,10], defaultDuration:6, supportsImageUrls:true, supportsVideoUrls:true, videoParam:'video_urls', allowedImageCounts:[0,1,3] }
 ]);
+function canonicalApimartVideoModel(model = 'Omni-Flash-Ext') {
+  const raw = String(model || 'Omni-Flash-Ext').trim();
+  if (!raw || raw.toLowerCase() === 'omni-flash-ext') return 'Omni-Flash-Ext';
+  return raw;
+}
 function getApimartVideoRule(model = 'Omni-Flash-Ext') {
   return APIMART_VIDEO_MODEL_RULES[String(model || 'Omni-Flash-Ext').toLowerCase()] || APIMART_VIDEO_MODEL_RULES['omni-flash-ext'];
 }
@@ -2239,7 +2247,38 @@ async function createFlow2VideoBatch(body, ownerId) {
   return { ok:true, count:rows.length, video_count:sourceVideos.length, prompt_count:originalPrompts.length, success:rows.length, fail:0, rows:rows.map(formatVideoTask) };
 }
 
-async function createApimartVideoTask(body, ownerId, req, cfg) {
+async function retryApimartVideoRow(row, body, ownerId, req, cfg, error) {
+  if (!row) return null;
+  const retryLimit = Math.max(0, Number(row.retry_times ?? body.retry_times ?? 0));
+  const retryCount = Math.max(0, Number(row.retry_count || 0));
+  row.status = '失败';
+  row.progress_text = '任务失败';
+  row.error_message = error?.message || String(error || 'APIMart video task failed');
+  row.updated_at = nowISO();
+  if (retryCount < retryLimit) {
+    const nextRetry = retryCount + 1;
+    row.retry_count = nextRetry;
+    row.retry_times = retryLimit;
+    row.status = '重试中';
+    row.progress = Math.max(1, Number(row.progress || 0));
+    row.progress_text = `失败重试 ${nextRetry}/${retryLimit}`;
+    row.task_id = '';
+    row.remote_url = '';
+    row.file_path = '';
+    row.download_url = '';
+    row.finished_at = '';
+    getDB()._save();
+    addLog(`APIMart 视频任务失败，复用同一任务重试 ${nextRetry}/${retryLimit}：${row.id}`, { ownerId, level:'warn' });
+    return createApimartVideoTask({ ...body, retry_times:retryLimit }, ownerId, req, cfg, row);
+  }
+  row.finished_at = nowISO();
+  getDB()._save();
+  closePublicVideoByPath(row.local_video_path);
+  addLog(`APIMart 视频任务最终失败：${row.error_message}`, { ownerId, level:'error' });
+  return row;
+}
+
+async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = null) {
   const apiKey = String(body.api_key || '').trim();
   if (!apiKey) throw new Error('请填写 APIMart API Key');
   const prompt = String(body.prompt || '').trim();
@@ -2249,14 +2288,14 @@ async function createApimartVideoTask(body, ownerId, req, cfg) {
   const videoUrlInput = String(body.video_url || '').trim();
   const prebuiltLocalVideoPath = String(body.local_video_path || '').trim();
   const sourceVideoName = String(body.source_video_name || '').trim();
-  const localId = uuid('video_');
   const st = ensureVideoStore();
-  const videoModel = String(body.video_model || 'omni-flash-ext').trim() || 'omni-flash-ext';
+  const videoModel = canonicalApimartVideoModel(body.video_model || 'omni-flash-ext');
+  const localId = existingRow?.id || uuid('video_');
   const retryTimes = safeInt(body.retry_times, Number(cfg.retryTimes || 2), 0, 10);
   const initialImageCount = refImages.length + (Array.isArray(body.ref_image_urls) ? body.ref_image_urls.filter(Boolean).length : 0);
   const requestedMode = resolveApimartVideoMode(body.video_mode, { imageCount: initialImageCount, hasVideo: !!(videoItem || videoUrlInput || prebuiltLocalVideoPath) });
   // V12.2：任务一创建就进入视频生成库，数量立即与“视频数 × 提示词数”匹配；随后每个任务独立提交并轮询 task_id。
-  const row = {
+  const row = existingRow || {
     id:localId, owner_id:ownerId, task_id:'', status:'等待提交', progress:0, progress_text:'等待提交到 APIMart', platform:'apimart',
     prompt, model:videoModel, resolution:body.resolution || '1080p', aspect_ratio:body.aspect_ratio || '9:16', duration:'',
     mode: videoItem || videoUrlInput ? '参考视频编辑' : (refImages.length || (body.ref_image_urls||[]).length ? '图生视频' : '文生视频'),
@@ -2268,10 +2307,22 @@ async function createApimartVideoTask(body, ownerId, req, cfg) {
         retry_count: 0,
         created_at:nowISO(), updated_at:nowISO()
       };
-  st.video_tasks.unshift(row); getDB()._save();
+  if (!existingRow) st.video_tasks.unshift(row);
+  row.owner_id = row.owner_id || ownerId;
+  row.platform = 'apimart';
+  row.model = videoModel;
+  row.prompt = prompt;
+  row.retry_times = retryTimes;
+  row.task_id = '';
+  row.remote_url = '';
+  row.file_path = '';
+  row.download_url = '';
+  row.error_message = '';
+  row.finished_at = '';
+  getDB()._save();
   try {
     row.status = '提交中'; row.progress = 2; row.progress_text = '正在提交到 APIMart'; row.updated_at = nowISO(); getDB()._save();
-    const localVideoPath = prebuiltLocalVideoPath || (videoItem ? dataUrlToFile(videoItem, ownerId) : '');
+    const localVideoPath = prebuiltLocalVideoPath || row.local_video_path || (videoItem ? dataUrlToFile(videoItem, ownerId) : '');
     const videoUrl = videoUrlInput || (localVideoPath ? await buildPublicVideoUrlAuto(localVideoPath, cfg, ownerId, req) : '');
     const imageUrls = Array.isArray(body.ref_image_urls) ? body.ref_image_urls.filter(Boolean) : [];
     if (!imageUrls.length) {
@@ -2283,10 +2334,13 @@ async function createApimartVideoTask(body, ownerId, req, cfg) {
     }
     assertApimartVideoReferenceRules({ imageUrls, videoUrl, context:'视频任务' });
     const rule = getApimartVideoRule(videoModel);
+    if (Array.isArray(rule.allowedImageCounts) && !rule.allowedImageCounts.includes(imageUrls.length)) {
+      throw new Error(`${rule.label || videoModel} 参考图数量仅支持 ${rule.allowedImageCounts.join('/')} 张，当前为 ${imageUrls.length} 张。`);
+    }
     const mode = resolveApimartVideoMode(body.video_mode, { imageCount: imageUrls.length, hasVideo: !!videoUrl });
     if (videoUrl && !rule.supportsVideoUrls) throw new Error(`${rule.label || videoModel} 不支持上传视频编辑，请切换 Omni Flash。`);
     const payload = {
-      model: videoModel,
+      model: rule.model || videoModel,
       prompt,
       resolution: normalizeVideoResolution(body.resolution, videoModel),
       aspect_ratio: normalizeVideoAspectRatio(body.aspect_ratio, videoModel)
@@ -2354,7 +2408,7 @@ async function createApimartVideoTask(body, ownerId, req, cfg) {
     row.progress_text = '已提交，等待批量查询结果';
     row.updated_at = nowISO(); getDB()._save();
     addLog(`视频任务提交：${taskId}`, { ownerId });
-    pollApimartVideoTask(taskId, apiKey, localId).catch(e=>{ const t=st.video_tasks.find(x=>x.id===localId); if(t){t.status='失败';t.error_message=e.message;t.updated_at=nowISO();getDB()._save();} });
+    pollApimartVideoTask(taskId, apiKey, localId).catch(e=>retryApimartVideoRow(row, body, ownerId, req, cfg, e));
     return row;
   } catch (e) {
     row.status = '失败';
@@ -2374,7 +2428,7 @@ async function createApimartVideoTask(body, ownerId, req, cfg) {
       row.updated_at = nowISO();
       getDB()._save();
       addLog(`APIMart 视频任务失败，准备重试 ${nextRetry}/${retryLimit}：${row.id}`, { ownerId, level:'warn' });
-      return createApimartVideoTask({ ...body, retry_times:retryLimit }, ownerId, req, cfg);
+      return createApimartVideoTask({ ...body, retry_times:retryLimit }, ownerId, req, cfg, row);
     }
     closePublicVideoByPath(row.local_video_path);
     getDB()._save();
