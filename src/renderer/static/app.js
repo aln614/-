@@ -4032,8 +4032,9 @@ function updateVideoTaskEstimate(){
   const prompts = splitVideoPromptInput();
   const videoCount = videoFilesData.length || (($('#videoUrlInput')?.value || '').trim() ? 1 : 1);
   const repeats = Math.max(1, Number($('#videoRepeatCount')?.value || 1));
+  const retries = Math.max(0, Number($('#videoRetryTimes')?.value || 0));
   const total = Math.max(1, prompts.length || 1) * Math.max(1, videoCount) * repeats;
-  const el = $('#videoTaskEstimate'); if(el) el.textContent = `预计任务：提示词 ${Math.max(1,prompts.length||1)} × 主任务视频 ${Math.max(1,videoCount)} × 重复 ${repeats} = ${total}`;
+  const el = $('#videoTaskEstimate'); if(el) el.textContent = `预计任务：提示词 ${Math.max(1,prompts.length||1)} × 主任务视频 ${Math.max(1,videoCount)} × 重复 ${repeats} × 失败重试 ${retries} = ${total}`;
 }
 function renderVideoInputs(){
   const vf = $('#videoFilePreview');
@@ -4093,7 +4094,7 @@ async function submitVideoTask(){
     return toast('本地 Flow2API 上传视频编辑仅支持 Omni Flash，请切换模型后重试');
   }
   const platformCfg = loadClientConfig(platform) || {};
-  const body = { video_platform:platform, api_endpoint:platform === 'flow2api' ? (platformCfg.api_endpoint || 'http://127.0.0.1:38000') : 'https://api.apimart.ai', api_key:apiKey, video_model:$('#videoModel')?.value || '', video_mode:currentVideoModeValue(), seed:$('#videoSeed')?.value?.trim() || '', copies:Number($('#videoRepeatCount')?.value || 1), prompts:$('#videoPrompt').value, prompt_multiline_tasks: $('#videoPromptMultilineTasks') ? $('#videoPromptMultilineTasks').checked : false, resolution:$('#videoResolution').value, aspect_ratio:$('#videoAspect').value, video_url:$('#videoUrlInput').value.trim(), video_files:videoFilesData, ref_images:videoRefImages };
+  const body = { video_platform:platform, api_endpoint:platform === 'flow2api' ? (platformCfg.api_endpoint || 'http://127.0.0.1:38000') : 'https://api.apimart.ai', api_key:apiKey, video_model:$('#videoModel')?.value || '', video_mode:currentVideoModeValue(), seed:$('#videoSeed')?.value?.trim() || '', copies:Number($('#videoRepeatCount')?.value || 1), retry_times:Number($('#videoRetryTimes')?.value || 0), prompts:$('#videoPrompt').value, prompt_multiline_tasks: $('#videoPromptMultilineTasks') ? $('#videoPromptMultilineTasks').checked : false, resolution:$('#videoResolution').value, aspect_ratio:$('#videoAspect').value, video_url:$('#videoUrlInput').value.trim(), video_files:videoFilesData, ref_images:videoRefImages };
   if(!refVideoMode) body.duration = $('#videoDuration').value;
   $('#startVideoBtn').disabled = true; $('#startVideoBtn').textContent = '批量提交中...';
   try{

@@ -306,6 +306,7 @@
             <textarea id="videoPrompt" placeholder="开启：一行/一段提示词 = 一个视频任务；关闭：整个输入框作为一个完整提示词。"></textarea>
             <div class="row">
               <div><label>重复任务次数</label><input id="videoRepeatCount" type="number" value="1" min="1" max="50" /></div>
+              <div><label>失败重试（次数）</label><input id="videoRetryTimes" type="number" value="2" min="0" max="10" /></div>
               <div><label>预计视频任务</label><div class="estimate" id="videoTaskEstimate">预计任务：1</div></div>
             </div>
             <div class="actions"><button class="secondary" id="clearVideoInputsBtn">清空视频输入</button></div>

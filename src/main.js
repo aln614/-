@@ -2175,6 +2175,18 @@ async function runFlow2VideoTask(row, body, ownerId) {
       return runFlow2VideoTask(row, { ...body, video_model:'omni', duration:seconds, _flow2OmniFallback:true }, ownerId);
     }
     const message = friendlyFlow2VideoError(error);
+    const retryLimit = Math.max(0, Number(row.retry_times ?? body.retry_times ?? 0));
+    const retryCount = Math.max(0, Number(row.retry_count || 0));
+    if (retryCount < retryLimit) {
+      const nextRetry = retryCount + 1;
+      touch('重试中', Math.max(1, Number(row.progress || 0)), `失败重试 ${nextRetry}/${retryLimit}`, {
+        error_message: message,
+        retry_count: nextRetry,
+        retry_times: retryLimit
+      });
+      addLog(`Flow2API 视频任务失败，准备重试 ${nextRetry}/${retryLimit}：${row.id}`, { ownerId, level:'warn' });
+      return runFlow2VideoTask(row, { ...body, retry_times:retryLimit, _flow2OmniFallback:body._flow2OmniFallback }, ownerId);
+    }
     touch('失败', Math.max(1, Number(row.progress || 0)), '视频任务失败', { error_message:message, finished_at:nowISO() });
     addLog(`Flow2API 视频任务失败：${row.error_message}`, { ownerId, level:'error' });
   }
@@ -2188,6 +2200,7 @@ async function createFlow2VideoBatch(body, ownerId) {
   const originalPrompts = splitVideoPrompts(body.prompts || body.prompt || '', body.prompt_multiline_tasks === true);
   if (!originalPrompts.length) throw new Error('请输入视频提示词');
   const refs = Array.isArray(body.ref_images) ? body.ref_images.filter(item => item && (typeof item === 'string' || item.data)) : [];
+  const retryTimes = safeInt(body.retry_times, 2, 0, 10);
   // Preserve the exact text entered by the user. Flow2API receives Chinese
   // prompts directly and no third-party translation request is made.
   const promptEntries = originalPrompts.map(prompt => ({ original:prompt, submitted:prompt, translated:false }));
@@ -2213,7 +2226,7 @@ async function createFlow2VideoBatch(body, ownerId) {
         id:uuid('video_'), owner_id:ownerId, task_id:'', status:'等待提交', progress:0, progress_text:'等待提交到本地 Flow2API',
         platform:'flow2api', prompt:promptEntry.original, submitted_prompt:promptEntry.submitted, prompt_translated:promptEntry.translated === true, model:modelInfo.model, resolution:modelInfo.resolution, aspect_ratio:body.aspect_ratio === '9:16' ? '9:16' : '16:9', duration:modelInfo.seconds,
         mode:modelInfo.mode, image_count:refs.length, video_url:hasVideo ? (sourceFile?.data ? '' : String(body.video_url || '')) : '', local_video_path:'', source_video_index:sourceVideo.index, source_video_name:sourceFile?.name || (body.video_url ? 'external_url' : ''), remote_url:'', file_path:'', error_message:'',
-        video_batch_id:batchId, video_batch_name:batchName, copy_index:copy, created_at:nowISO(), updated_at:nowISO()
+      video_batch_id:batchId, video_batch_name:batchName, copy_index:copy, retry_times:retryTimes, retry_count:0, created_at:nowISO(), updated_at:nowISO()
       });
       }
     }
@@ -2239,6 +2252,7 @@ async function createApimartVideoTask(body, ownerId, req, cfg) {
   const localId = uuid('video_');
   const st = ensureVideoStore();
   const videoModel = String(body.video_model || 'omni-flash-ext').trim() || 'omni-flash-ext';
+  const retryTimes = safeInt(body.retry_times, Number(cfg.retryTimes || 2), 0, 10);
   const initialImageCount = refImages.length + (Array.isArray(body.ref_image_urls) ? body.ref_image_urls.filter(Boolean).length : 0);
   const requestedMode = resolveApimartVideoMode(body.video_mode, { imageCount: initialImageCount, hasVideo: !!(videoItem || videoUrlInput || prebuiltLocalVideoPath) });
   // V12.2：任务一创建就进入视频生成库，数量立即与“视频数 × 提示词数”匹配；随后每个任务独立提交并轮询 task_id。
@@ -2248,10 +2262,12 @@ async function createApimartVideoTask(body, ownerId, req, cfg) {
     mode: videoItem || videoUrlInput ? '参考视频编辑' : (refImages.length || (body.ref_image_urls||[]).length ? '图生视频' : '文生视频'),
     image_urls:Array.isArray(body.ref_image_urls) ? body.ref_image_urls.filter(Boolean) : [],
     video_url:videoUrlInput, local_video_path:'', remote_url:'', file_path:'', error_message:'',
-    video_batch_id: body.video_batch_id || '',
-    video_batch_name: body.video_batch_name || '',
-    created_at:nowISO(), updated_at:nowISO()
-  };
+        video_batch_id: body.video_batch_id || '',
+        video_batch_name: body.video_batch_name || '',
+        retry_times: retryTimes,
+        retry_count: 0,
+        created_at:nowISO(), updated_at:nowISO()
+      };
   st.video_tasks.unshift(row); getDB()._save();
   try {
     row.status = '提交中'; row.progress = 2; row.progress_text = '正在提交到 APIMart'; row.updated_at = nowISO(); getDB()._save();
@@ -2346,6 +2362,20 @@ async function createApimartVideoTask(body, ownerId, req, cfg) {
     row.error_message = e.message || String(e);
     row.finished_at = nowISO();
     row.updated_at = nowISO();
+    const retryLimit = Math.max(0, Number(row.retry_times || body.retry_times || 0));
+    const retryCount = Math.max(0, Number(row.retry_count || 0));
+    if (retryCount < retryLimit) {
+      const nextRetry = retryCount + 1;
+      row.retry_count = nextRetry;
+      row.retry_times = retryLimit;
+      row.status = '重试中';
+      row.progress_text = `失败重试 ${nextRetry}/${retryLimit}`;
+      row.error_message = e.message || String(e);
+      row.updated_at = nowISO();
+      getDB()._save();
+      addLog(`APIMart 视频任务失败，准备重试 ${nextRetry}/${retryLimit}：${row.id}`, { ownerId, level:'warn' });
+      return createApimartVideoTask({ ...body, retry_times:retryLimit }, ownerId, req, cfg);
+    }
     closePublicVideoByPath(row.local_video_path);
     getDB()._save();
     addLog(`视频任务失败：${row.error_message}`, { ownerId, level:'error' });
