@@ -200,8 +200,9 @@ function renderSoftwareUpdateModal(info = null){
   const updateBtn = $('#softwareUpdateModalInstallBtn');
   if(updateBtn){
     updateBtn.disabled = softwareUpdateBusy || !ready;
-    updateBtn.textContent = softwareUpdateBusy ? '正在更新...' : (has ? '立即更新' : '已是最新版本');
-    updateBtn.textContent = softwareUpdateBusy ? (runtime?.message || '正在更新...') : (has ? (ready ? '立即更新' : '等待安装包') : '已是最新版本');
+    const progress = Number(runtime?.progress || 0);
+    const state = runtime?.state || '';
+    updateBtn.textContent = softwareUpdateBusy ? (progress ? `下载中 ${progress}%` : (state === 'installing' ? '正在安装...' : '正在更新...')) : (has ? (ready ? '立即更新' : '等待安装包') : '已是最新版本');
     updateBtn.classList.toggle('loading', softwareUpdateBusy);
   }
 }

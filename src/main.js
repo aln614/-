@@ -484,7 +484,14 @@ function setSoftwareUpdateRuntime(patch = {}) {
 }
 function getSoftwareUpdateStatus() {
   const cfg = readConfig();
-  return { ok:true, ...(cfg.update_runtime || softwareUpdateRuntime), last_check: cfg.update_last_check || null };
+  const runtime = cfg.update_runtime || softwareUpdateRuntime;
+  if (['queued','downloading'].includes(runtime.state) && runtime.updated_at) {
+    const ts = Date.parse(runtime.updated_at);
+    if (Number.isFinite(ts) && Date.now() - ts > 10 * 60 * 1000) {
+      return { ok:true, ...setSoftwareUpdateRuntime({ state:'failed', message:'更新下载长时间无进度，已停止。请重新点击更新。', progress:0 }), last_check: cfg.update_last_check || null };
+    }
+  }
+  return { ok:true, ...runtime, last_check: cfg.update_last_check || null };
 }
 function httpJson(target, timeoutMs = 20000) {
   return new Promise((resolve, reject) => {
@@ -595,17 +602,41 @@ function downloadUrlToFileWithSystemCurl(target, dest, opts = {}) {
     ensureDir(path.dirname(dest));
     const tmp = `${dest}.part`;
     try { fs.rmSync(tmp, { force:true }); } catch {}
-    const args = ['-L', '--fail', '--retry', '3', '--retry-delay', '2', '--connect-timeout', '20', '--output', tmp, target];
+    const args = ['-L', '--fail', '--retry', '2', '--retry-delay', '1', '--connect-timeout', '12', '--max-time', String(Math.ceil(Number(opts.timeoutMs || 6 * 60 * 1000) / 1000)), '--output', tmp, target];
     const child = spawn('curl.exe', args, { windowsHide:true, stdio:['ignore', 'ignore', 'pipe'] });
     let stderr = '';
-    const timer = setTimeout(() => {
-      try { child.kill(); } catch {}
-      reject(new Error('系统下载器超过 30 分钟未完成'));
-    }, Number(opts.timeoutMs || 30 * 60 * 1000));
-    child.stderr.on('data', chunk => { stderr += chunk.toString(); });
-    child.on('error', e => { clearTimeout(timer); try { fs.rmSync(tmp, { force:true }); } catch {}; reject(e); });
-    child.on('close', code => {
+    let settled = false;
+    let lastBytes = 0;
+    let lastGrowAt = Date.now();
+    const onProgress = typeof opts.onProgress === 'function' ? opts.onProgress : null;
+    const finishReject = error => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
+      clearInterval(progressTimer);
+      try { child.kill(); } catch {}
+      try { fs.rmSync(tmp, { force:true }); } catch {}
+      reject(error);
+    };
+    const timer = setTimeout(() => {
+      finishReject(new Error('系统下载器下载超时，切换内置下载'));
+    }, Number(opts.timeoutMs || 6 * 60 * 1000));
+    const progressTimer = setInterval(() => {
+      let bytes = 0;
+      try { bytes = fs.existsSync(tmp) ? fs.statSync(tmp).size : 0; } catch {}
+      if (bytes > lastBytes) { lastBytes = bytes; lastGrowAt = Date.now(); }
+      if (onProgress) onProgress({ bytes, total:Number(opts.total || 0), source:'system' });
+      if (Date.now() - lastGrowAt > Number(opts.idleTimeoutMs || 60000)) {
+        finishReject(new Error('系统下载器长时间没有下载进度，切换内置下载'));
+      }
+    }, 1000);
+    child.stderr.on('data', chunk => { stderr += chunk.toString(); });
+    child.on('error', e => finishReject(e));
+    child.on('close', code => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      clearInterval(progressTimer);
       try {
         if (code !== 0) throw new Error((stderr || `curl exited with code ${code}`).slice(-600));
         const stat = fs.statSync(tmp);
@@ -668,9 +699,19 @@ async function downloadSoftwareUpdate(repoInput = '', cfg = readConfig()) {
   setSoftwareUpdateRuntime({ state:'downloading', message:'正在下载新版 EXE...', repo:info.repo, version:info.latest_version, asset_name:assetName, downloaded_path:'', bytes:0, total:info.asset_size || 0, progress:0, started_at:nowISO() });
   try {
     setSoftwareUpdateRuntime({ state:'downloading', message:'正在调用系统下载器下载新版 EXE...', progress:1 });
-    await downloadUrlToFileWithSystemCurl(info.asset_url, dest, { timeoutMs: 30 * 60 * 1000 });
+    await downloadUrlToFileWithSystemCurl(info.asset_url, dest, {
+      timeoutMs: 6 * 60 * 1000,
+      idleTimeoutMs: 60000,
+      total: info.asset_size || 0,
+      onProgress: p => {
+        const total = p.total || info.asset_size || 0;
+        const progress = total ? Math.max(1, Math.min(99, Math.round(p.bytes / total * 100))) : 1;
+        setSoftwareUpdateRuntime({ state:'downloading', message:`正在调用系统下载器下载新版 EXE${total ? ` ${progress}%` : ''}`, bytes:p.bytes, total, progress });
+      }
+    });
   } catch (fastError) {
     addLog(`系统下载器失败，切换到内置下载：${fastError.message || fastError}`, { level:'warn' });
+    setSoftwareUpdateRuntime({ state:'downloading', message:'系统下载器无进度，已切换到内置下载...', bytes:0, progress:1 });
     await downloadUrlToFileRobust(info.asset_url, dest, {
       onProgress: p => {
         const total = p.total || info.asset_size || 0;
