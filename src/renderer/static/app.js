@@ -2586,8 +2586,8 @@ async function loadImages(){
 function renderImages(imgs){
   imageMetaMap = new Map();
   $('#imageGrid').innerHTML = imgs.map(img=>{
-    const thumb = withPublicAccess(img.thumb_url || img.url);
-    const full = withPublicAccess(img.full_url || img.original_url || img.url);
+    const thumb = img.thumb_url || img.url || '';
+    const full = img.full_url || img.original_url || img.url || '';
     const meta = imageRowToPreviewMeta(img);
     imageMetaMap.set(img.id, meta);
     const selected = selectedImages.has(img.id) ? 'selected' : '';
@@ -2645,8 +2645,8 @@ async function loadMiniImages(activeTasks = []){
   }).join(';;');
   items.forEach(i=>{
     if(i.__kind !== 'image') return;
-    const thumb = withPublicAccess(i.thumb_url || i.url);
-    const full = withPublicAccess(i.full_url || i.original_url || i.url);
+    const thumb = i.thumb_url || i.url || '';
+    const full = i.full_url || i.original_url || i.url || '';
     const key = 'mini_' + i.id;
     imageMetaMap.set(key, imageRowToPreviewMeta(i));
   });
@@ -2670,8 +2670,8 @@ async function loadMiniImages(activeTasks = []){
         <div class="mini-task-progress"><i style="width:${p}%"></i></div>
       </div>`;
     }
-    const thumb = withPublicAccess(i.thumb_url || i.url);
-    const full = withPublicAccess(i.full_url || i.original_url || i.url);
+    const thumb = i.thumb_url || i.url || '';
+    const full = i.full_url || i.original_url || i.url || '';
     const key = 'mini_' + i.id;
     return `<img class="mini-draggable-image draggable-generated-thumb" draggable="true" loading="lazy" decoding="async" src="${thumb}" data-full-url="${full}" data-id="${key}" data-name="${escapeHtml(i.filename||'generated-image.png')}" title="拖动使用原图 / 右键复制返回 url 或提示词" onclick="showPreview('${full}', imageMetaMap.get('${key}') || {})">`;
   }).join('') || '<span class="hint">暂无图片</span>';
