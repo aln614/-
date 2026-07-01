@@ -3921,6 +3921,7 @@ function videoPlatformApiKey(platform=currentVideoPlatform()){
   const own = localStorage.getItem(`${CLIENT_CONFIG_KEY}_video_key_${p}`) || '';
   const saved = loadClientConfig(p)?.api_key || '';
   const live = currentImagePlatform() === p ? getHomeApiKey() : '';
+  if(p === 'apimart') return live || saved || own;
   return own || live || saved;
 }
 function rebuildVideoPlatformOptions(){
@@ -4049,12 +4050,26 @@ function syncVideoApiKeyFromHome(){
   const platform = currentVideoPlatform();
   const key = videoPlatformApiKey(platform);
   const input = $('#videoApiKey');
-  if(input){ input.value = key; input.placeholder = platform === 'flow2api' ? '请输入本地 Flow2API API Key' : '默认使用首页 APIMart API Key'; input.readOnly = platform === 'apimart'; }
+  if(input){
+    input.value = key;
+    input.placeholder = platform === 'flow2api' ? '请输入本地 Flow2API API Key' : '与首页 APIMart API Key 同步，可在这里填写';
+    input.readOnly = false;
+    input.disabled = false;
+  }
   const btn = $('#startVideoBtn');
   if(btn){
     btn.disabled = !key;
-    btn.title = key ? `使用${platform === 'flow2api' ? '本地 Flow2API' : '首页 APIMart'}提交视频任务` : `请先填写${platform === 'flow2api' ? ' Flow2API' : '首页 APIMart'} API Key`;
+    btn.title = key ? `使用${platform === 'flow2api' ? '本地 Flow2API' : 'APIMart'}提交视频任务` : `请先填写${platform === 'flow2api' ? ' Flow2API' : ' APIMart'} API Key`;
   }
+}
+function syncVideoApiKeyToHome(value=''){
+  const key = String(value || '');
+  if(currentVideoPlatform() !== 'apimart') return;
+  if($('#apiKey')) $('#apiKey').value = key;
+  localStorage.removeItem(`${CLIENT_CONFIG_KEY}_video_key_apimart`);
+  const cfg = { ...loadClientConfig('apimart'), image_api_platform:'apimart', api_endpoint:platformDefaultApiEndpoint('apimart'), api_key:key };
+  saveClientConfig(cfg);
+  updateApiKeyWarning();
 }
 function hasReferenceVideo(){ return !!(videoFilesData.length || ($('#videoUrlInput')?.value || '').trim()); }
 function updateVideoDurationVisibility(){
@@ -4494,6 +4509,9 @@ function setupVideoPage(){
   $('#videoApiKey')?.addEventListener('input', e=>{
     if(currentVideoPlatform() === 'flow2api'){
       localStorage.setItem(`${CLIENT_CONFIG_KEY}_video_key_flow2api`, e.target.value || '');
+      syncVideoApiKeyFromHome();
+    }else{
+      syncVideoApiKeyToHome(e.target.value || '');
       syncVideoApiKeyFromHome();
     }
   });
