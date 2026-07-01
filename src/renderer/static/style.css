@@ -3229,3 +3229,5 @@ body:not(.theme-dark) .asset-context-menu button:hover{background:rgba(20,184,16
 }
 #videoApiPlatformSwitch{flex-shrink:0}
 #videoModeHint{min-height:42px;display:flex;align-items:center}
+
+.image-card .img-fallback{display:none;position:absolute;inset:0;align-items:center;justify-content:center;padding:14px;font-size:12px;line-height:1.4;text-align:center;color:#6b7280;background:linear-gradient(180deg,rgba(248,250,252,.92),rgba(241,245,249,.98));backdrop-filter:blur(10px)}.image-card .img-fallback.active{display:flex}.image-card img.is-broken{opacity:0;pointer-events:none}.image-card.selected .img-fallback{border:0}

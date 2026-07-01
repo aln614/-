@@ -99,6 +99,60 @@ function readStoreSummary(storeFile) {
     return null;
   }
 }
+function compactOutputRootFromPath(filePath = '') {
+  const raw = String(filePath || '').trim();
+  if (!raw) return '';
+  let dir = raw;
+  try {
+    const ext = path.extname(raw);
+    dir = ext ? path.dirname(raw) : raw;
+    if (path.basename(dir).toLowerCase() === '_thumbs') dir = path.dirname(dir);
+    const base = path.basename(dir);
+    if (/^(Batch|MJ|Video)_/i.test(base)) dir = path.dirname(dir);
+    return path.resolve(dir);
+  } catch {
+    return '';
+  }
+}
+function collectOutputRootsFromStoreData(data = {}) {
+  const roots = new Set();
+  const addPath = (p) => {
+    const root = compactOutputRootFromPath(p);
+    if (root && fs.existsSync(root)) roots.add(root);
+  };
+  for (const b of Array.isArray(data.batches) ? data.batches : []) addPath(b.output_dir || '');
+  for (const img of Array.isArray(data.images) ? data.images : []) {
+    addPath(img.file_path || '');
+    addPath(img.thumb_path || '');
+  }
+  for (const t of Array.isArray(data.tasks) ? data.tasks : []) {
+    addPath(t.result_path || '');
+    addPath(t.thumb_path || '');
+    addPath(t.mj_grid_local_path || '');
+  }
+  for (const v of Array.isArray(data.video_tasks) ? data.video_tasks : []) {
+    addPath(v.file_path || '');
+    addPath(v.thumb_path || '');
+  }
+  return Array.from(roots);
+}
+function rememberHistoricalOutputRootsFromStoreData(data = {}) {
+  const roots = collectOutputRootsFromStoreData(data);
+  if (!roots.length || !configPath) return roots;
+  try {
+    const cfg = readConfig();
+    const existing = Array.isArray(cfg.legacy_output_dirs) ? cfg.legacy_output_dirs : [];
+    const merged = Array.from(new Set([...existing, ...roots].map(r => path.resolve(r)).filter(Boolean)));
+    if (merged.length !== existing.length || merged.some((r, i) => r !== existing[i])) {
+      saveConfig({ legacy_output_dirs: merged });
+    }
+  } catch {}
+  return roots;
+}
+function rememberHistoricalOutputRootsFromStoreFile(storeFile = '') {
+  const summary = readStoreSummary(storeFile);
+  return summary ? rememberHistoricalOutputRootsFromStoreData(summary.data) : [];
+}
 function restoreStoreFromLegacyIfCurrentEmpty() {
   if (fs.existsSync(LEGACY_RESTORE_BLOCK_MARKER)) return false;
   const currentStore = path.join(DATA_ROOT, 'data', 'store.json');
@@ -123,6 +177,7 @@ function restoreStoreFromLegacyIfCurrentEmpty() {
   }
   const marker = path.join(DATA_ROOT, 'data', 'store_restore_marker.json');
   fs.copyFileSync(best.file, currentStore);
+  rememberHistoricalOutputRootsFromStoreData(best.data);
   try {
     fs.writeFileSync(marker, JSON.stringify({
       restored_at: new Date().toISOString(),
@@ -181,6 +236,7 @@ const DEFAULT_CONFIG = {
   announcement_custom_items: [],
   announcement_custom_enabled: false,
   asset_library_dir: '',
+  legacy_output_dirs: [],
   update_repo: DEFAULT_UPDATE_REPO,
   update_last_check: null
 };
@@ -289,6 +345,9 @@ function readConfig() {
     if ((!Array.isArray(migrated.announcement_custom_items) || !migrated.announcement_custom_items.length) && (migrated.announcement_custom_title || migrated.announcement_custom_content)) {
       migrated.announcement_custom_items = [{ title: migrated.announcement_custom_title || '', tag: '自定义', content: migrated.announcement_custom_content || '' }];
     }
+    migrated.legacy_output_dirs = Array.isArray(migrated.legacy_output_dirs)
+      ? Array.from(new Set(migrated.legacy_output_dirs.map(r => String(r || '').trim()).filter(Boolean)))
+      : [];
     return { ...DEFAULT_CONFIG, ...migrated };
   }
   catch { return { ...DEFAULT_CONFIG }; }
@@ -305,6 +364,9 @@ function saveConfig(partial) {
     tag: String(item && item.tag || '自定义').slice(0,24),
     _id: String(item && item._id || `ann_${idx}`).slice(0,80)
   })).filter(item => item.title || item.content) : [];
+  next.legacy_output_dirs = Array.isArray(next.legacy_output_dirs)
+    ? Array.from(new Set(next.legacy_output_dirs.map(r => String(r || '').trim()).filter(Boolean)))
+    : [];
   next.announcement_custom_enabled = next.announcement_custom_enabled === true;
   if (!next.port) next.port = 7860;
   fs.writeFileSync(configPath, JSON.stringify(next, null, 2), 'utf8');
@@ -2937,6 +2999,7 @@ function allowedFileRoots(cfg = readConfig()) {
     defaultAssetLibraryDir(cfg)
   ];
   if (cfg.output_dir) roots.push(cfg.output_dir);
+  if (Array.isArray(cfg.legacy_output_dirs)) roots.push(...cfg.legacy_output_dirs);
   return Array.from(new Set(roots.map(r => path.resolve(r)).filter(Boolean)));
 }
 function isAllowedServedFile(filePath = '', cfg = readConfig()) {
@@ -5491,6 +5554,7 @@ app.whenReady().then(() => {
   hardResetDataDirsBeforeInit();
   initConfig();
   const restoredLegacyStore = restoreStoreFromLegacyIfCurrentEmpty();
+  if (!restoredLegacyStore) rememberHistoricalOutputRootsFromStoreFile(path.join(DATA_ROOT, 'data', 'store.json'));
   initDB(app.getPath('userData'));
   if (restoredLegacyStore) addLog('检测到更新后当前任务库为空，已自动从历史 RuntimeData 恢复批次、任务、图片和视频任务。', { level:'warn' });
   startNetworkTimeSync();

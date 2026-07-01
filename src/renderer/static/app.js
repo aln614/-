@@ -2590,8 +2590,9 @@ function renderImages(imgs){
     const full = withPublicAccess(img.full_url || img.original_url || img.url);
     const meta = imageRowToPreviewMeta(img);
     imageMetaMap.set(img.id, meta);
-    return `<div class="image-card ${selectedImages.has(img.id)?'selected':''}" draggable="true" data-id="${img.id}" data-url="${full}" title="左键预览原图，Ctrl/Shift 多选；可拖动原图到上传区或软件外部"><div class="check">${selectedImages.has(img.id)?'✓':''}</div><img loading="lazy" src="${thumb}" draggable="false" data-full-url="${full}" data-id="${img.id}" title="拖动卡片使用原图 / 右键复制返回 url 或提示词"><div class="cap">${escapeHtml(img.filename)}</div></div>`;
-  }).join('') || '<div class="card">暂无图片</div>';
+    const selected = selectedImages.has(img.id) ? 'selected' : '';
+    return '<div class="image-card ' + selected + '" draggable="true" data-id="' + img.id + '" data-url="' + full + '" title="???????????trl/Shift ??????????????????????????"><div class="check">' + (selectedImages.has(img.id) ? '?' : '') + '</div><img loading="lazy" src="' + thumb + '" draggable="false" data-full-url="' + full + '" data-id="' + img.id + '" alt="" title="???????????? / ????????? url ??????"><div class="img-fallback">???????</div><div class="cap">' + escapeHtml(img.filename) + '</div></div>';
+  }).join('') || '<div class="card">????</div>';
   $$('.image-card').forEach(card=>{
     card.addEventListener('click',(e)=>{
       const id = card.dataset.id;
@@ -2603,9 +2604,19 @@ function renderImages(imgs){
       const meta = imageMetaMap.get(id) || {fullUrl:card.dataset.url};
       setImageDragData(e, meta);
     });
+    const img = card.querySelector('img');
+    const fallback = card.querySelector('.img-fallback');
+    if (img && fallback) {
+      const showFallback = () => {
+        img.classList.add('is-broken');
+        fallback.classList.add('active');
+      };
+      img.addEventListener('error', showFallback, { once:true });
+      img.addEventListener('load', () => fallback.classList.remove('active'), { once:true });
+      if (img.complete && !img.naturalWidth) showFallback();
+    }
   });
 }
-
 function toggleImage(id){ if(selectedImages.has(id)) selectedImages.delete(id); else selectedImages.add(id); loadImages(); }
 $('#selectAllBtn').addEventListener('click',()=>{ $$('.image-card').forEach(c=>selectedImages.add(c.dataset.id)); loadImages(); });
 $('#clearSelectBtn').addEventListener('click',()=>{ selectedImages.clear(); loadImages(); });
