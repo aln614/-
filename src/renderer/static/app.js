@@ -170,8 +170,34 @@ function closeSoftwareUpdateModal(){
   modal?.setAttribute('aria-hidden','true');
   softwareUpdateModalVisible = false;
 }
+function softwareVersionCompare(a='', b=''){
+  const pa = String(a || '').replace(/^v/i,'').split(/[^\d]+/).filter(Boolean).map(Number);
+  const pb = String(b || '').replace(/^v/i,'').split(/[^\d]+/).filter(Boolean).map(Number);
+  for(let i = 0; i < Math.max(pa.length, pb.length); i++){
+    const da = pa[i] || 0, db = pb[i] || 0;
+    if(da > db) return 1;
+    if(da < db) return -1;
+  }
+  return 0;
+}
+function normalizeSoftwareUpdateInfo(info = null){
+  if(!info) return null;
+  const current = info.current_version || info.currentVersion || '';
+  const latest = info.latest_version || info.latestVersion || '';
+  const versionHasUpdate = current && latest ? softwareVersionCompare(latest, current) > 0 : !!info.has_update;
+  const assetUrl = info.asset_url || info.assetUrl || '';
+  return {
+    ...info,
+    current_version: current,
+    latest_version: latest,
+    has_update: versionHasUpdate,
+    update_ready: versionHasUpdate && !!assetUrl && info.update_status !== 'waiting_asset',
+    asset_url: assetUrl
+  };
+}
 function renderSoftwareUpdateModal(info = null){
   const modal = ensureSoftwareUpdateModal();
+  info = normalizeSoftwareUpdateInfo(info);
   const has = !!info?.has_update;
   const current = $('#softwareUpdateCurrentVersion');
   const latest = $('#softwareUpdateLatestVersion');
@@ -190,20 +216,19 @@ function renderSoftwareUpdateModal(info = null){
   }
   if(asset) asset.textContent = info?.asset_name || '未找到 .exe 资产';
   if(notes) notes.innerHTML = info?.notes ? escapeHtml(String(info.notes).slice(0, 3000)).replace(/\n/g, '<br>') : '暂无更新内容。';
-  if(badge) badge.textContent = info ? (has ? '发现新版本' : '当前最新') : '-';
-  if(sub) sub.textContent = info ? (has ? '检测到新版本，确认后即可直接下载并原地更新。' : '当前软件已经是最新版本。') : '检查更新后会在这里显示新版本内容。';
   const ready = !!(has && info?.asset_url && info?.update_status !== 'waiting_asset');
   const runtime = info?.update_runtime || info?.runtime || null;
+  const runtimeFailed = runtime?.state === 'failed';
   if(asset) asset.textContent = info?.asset_name || (has ? '安装包未就绪，等待 GitHub Actions 上传 EXE' : '-');
-  if(badge) badge.textContent = info ? (has ? (ready ? '发现新版本' : '构建中') : '当前最新') : '-';
+  if(badge) badge.textContent = info ? (has ? (runtimeFailed ? '更新失败' : (ready ? '发现新版本' : '构建中')) : '当前最新') : '-';
   if(sub) sub.textContent = runtime?.message || info?.message || (info ? (has ? (ready ? '检测到新版本，确认后即可直接下载并原地更新。' : '检测到新版本，但安装包还未上传完成，请稍后再检查。') : '当前软件已经是最新版本。') : '检查更新后会在这里显示新版本内容。');
   const updateBtn = $('#softwareUpdateModalInstallBtn');
   if(updateBtn){
-    updateBtn.disabled = softwareUpdateBusy || !ready;
+    updateBtn.disabled = (softwareUpdateBusy && !runtimeFailed) || !ready;
     const progress = Number(runtime?.progress || 0);
     const state = runtime?.state || '';
-    updateBtn.textContent = softwareUpdateBusy ? (progress ? `下载中 ${progress}%` : (state === 'installing' ? '正在安装...' : '正在更新...')) : (has ? (ready ? '立即更新' : '等待安装包') : '已是最新版本');
-    updateBtn.classList.toggle('loading', softwareUpdateBusy);
+    updateBtn.textContent = runtimeFailed ? '重新更新' : (softwareUpdateBusy ? (progress ? `下载中 ${progress}%` : (state === 'installing' ? '正在安装...' : '正在更新...')) : (has ? (ready ? '立即更新' : '等待安装包') : '已是最新版本'));
+    updateBtn.classList.toggle('loading', softwareUpdateBusy && !runtimeFailed);
   }
 }
 function renderSoftwareUpdateInfo(info = null){
@@ -243,39 +268,6 @@ async function checkSoftwareUpdate(){
   }
   finally{ const btn = $('#checkUpdateBtn'); if(btn) btn.disabled = false; }
 }
-async function applySoftwareUpdateOta(){
-  const repo = softwareUpdateInfo?.repo || '';
-  let failed = false;
-  let timeoutTimer = null;
-  try{
-    softwareUpdateBusy = true;
-    $('#checkUpdateBtn')?.toggleAttribute('disabled', true);
-    renderSoftwareUpdateInfo(softwareUpdateInfo);
-    timeoutTimer = setTimeout(() => {
-      if(softwareUpdateBusy){
-        softwareUpdateBusy = false;
-        renderSoftwareUpdateInfo(softwareUpdateInfo);
-        toast('更新已后台开始，若长时间没有变化请稍后再检查日志');
-      }
-    }, 60000);
-    const info = await api('/api/update/apply_latest', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({repo})});
-    softwareUpdateInfo = info;
-    renderSoftwareUpdateInfo(info);
-    openSoftwareUpdateModal();
-    toast(info.message || (info.has_update ? '更新已开始，完成后会自动替换并重启' : '当前已是最新版本'));
-  }catch(e){
-    failed = true;
-    softwareUpdateInfo = null;
-    renderSoftwareUpdateError(e.message || 'OTA 更新失败');
-    openSoftwareUpdateModal();
-    toast(e.message || 'OTA 更新失败');
-  }finally{
-    if(timeoutTimer) clearTimeout(timeoutTimer);
-    softwareUpdateBusy = false;
-    $('#checkUpdateBtn')?.toggleAttribute('disabled', false);
-    if(!failed) renderSoftwareUpdateInfo(softwareUpdateInfo);
-  }
-}
 function stopSoftwareUpdatePolling(){
   if(softwareUpdatePollTimer){
     clearInterval(softwareUpdatePollTimer);
@@ -292,7 +284,7 @@ async function pollSoftwareUpdateStatus(){
     if(status.state === 'failed'){
       stopSoftwareUpdatePolling();
       softwareUpdateBusy = false;
-      renderSoftwareUpdateError(status.message || '更新失败');
+      renderSoftwareUpdateInfo(softwareUpdateInfo);
       toast(status.message || '更新失败');
     }else if(!softwareUpdateBusy){
       stopSoftwareUpdatePolling();
@@ -311,6 +303,7 @@ function startSoftwareUpdatePolling(){
 async function applySoftwareUpdateOta(){
   const repo = softwareUpdateInfo?.repo || '';
   try{
+    softwareUpdateInfo = normalizeSoftwareUpdateInfo(softwareUpdateInfo);
     if(!softwareUpdateInfo?.has_update || !softwareUpdateInfo?.asset_url || softwareUpdateInfo?.update_status === 'waiting_asset'){
       toast('安装包还未就绪，请稍后重新检查更新');
       renderSoftwareUpdateInfo(softwareUpdateInfo);
