@@ -1005,24 +1005,24 @@ function cleanupStaleVideoTasks(owner = '') {
 function pickTaskIdFromApimart(obj={}) {
   const candidates = [];
   const push = v => { if (v !== undefined && v !== null && String(v).trim()) candidates.push(String(v).trim()); };
-  push(obj.task_id); push(obj.taskId); push(obj.taskID); push(obj.id);
+  push(obj.task_id); push(obj.taskId); push(obj.taskID); push(obj.post_id); push(obj.postId); push(obj.postID); push(obj.id);
   const data = obj && obj.data;
   if (Array.isArray(data)) {
     for (const item of data) {
-      push(item && item.task_id); push(item && item.taskId); push(item && item.taskID); push(item && item.id);
+      push(item && item.task_id); push(item && item.taskId); push(item && item.taskID); push(item && item.post_id); push(item && item.postId); push(item && item.postID); push(item && item.id);
       const nested = item && (item.task || item.result || item.data);
-      if (nested && typeof nested === 'object') { push(nested.task_id); push(nested.taskId); push(nested.taskID); push(nested.id); }
+      if (nested && typeof nested === 'object') { push(nested.task_id); push(nested.taskId); push(nested.taskID); push(nested.post_id); push(nested.postId); push(nested.postID); push(nested.id); }
     }
   } else if (data && typeof data === 'object') {
-    push(data.task_id); push(data.taskId); push(data.taskID); push(data.id);
+    push(data.task_id); push(data.taskId); push(data.taskID); push(data.post_id); push(data.postId); push(data.postID); push(data.id);
     if (Array.isArray(data.tasks)) {
-      for (const item of data.tasks) { push(item && item.task_id); push(item && item.taskId); push(item && item.taskID); push(item && item.id); }
+      for (const item of data.tasks) { push(item && item.task_id); push(item && item.taskId); push(item && item.taskID); push(item && item.post_id); push(item && item.postId); push(item && item.postID); push(item && item.id); }
     }
     const nested = data.task || data.result || data.data;
-    if (nested && typeof nested === 'object' && !Array.isArray(nested)) { push(nested.task_id); push(nested.taskId); push(nested.taskID); push(nested.id); }
+    if (nested && typeof nested === 'object' && !Array.isArray(nested)) { push(nested.task_id); push(nested.taskId); push(nested.taskID); push(nested.post_id); push(nested.postId); push(nested.postID); push(nested.id); }
   }
   // 优先使用 APIMart 标准 task_ 前缀，避免误把 request_id、trace_id 当成任务 ID。
-  return candidates.find(x => /^task[-_]/i.test(x)) || candidates.find(x => /task/i.test(x)) || candidates[0] || '';
+  return candidates.find(x => /^task[-_]/i.test(x)) || candidates.find(x => /^post[-_]/i.test(x)) || candidates.find(x => /task|post/i.test(x)) || candidates[0] || '';
 }
 function pickApimartVideoUrls(status={}) {
   const out = [];
@@ -1129,6 +1129,21 @@ function pickApimartProgress(status={}) {
   }
   const v = values.find(x => Number.isFinite(Number(x)));
   return Number.isFinite(Number(v)) ? Math.max(0, Math.min(100, Number(v))) : 0;
+}
+function pickApimartTaskErrorMessage(status = {}, fallback = '视频任务失败') {
+  const parts = [];
+  const push = v => { if (v !== undefined && v !== null && String(v).trim()) parts.push(String(v).trim()); };
+  const visit = (x) => {
+    if (!x) return;
+    if (Array.isArray(x)) { x.forEach(visit); return; }
+    if (typeof x !== 'object') { push(x); return; }
+    push(x.error_message); push(x.errorMessage); push(x.fail_reason); push(x.failure_reason); push(x.reason); push(x.message); push(x.msg); push(x.detail);
+    if (x.error && x.error !== x) visit(x.error);
+    if (x.data && x.data !== x) visit(x.data);
+    if (x.result && x.result !== x) visit(x.result);
+  };
+  visit(status);
+  return parts.find(Boolean) || fallback;
 }
 function videoProgressTextByStatus(statusText='', progress=0, phase='query') {
   const s = String(statusText || '').toLowerCase();
@@ -1544,7 +1559,7 @@ function isLikelyEmptyApimartResponse(json) {
   if (isPlainEmptyObject(json)) return true;
   if (typeof json === 'string' && !json.trim()) return true;
   if (json && typeof json === 'object') {
-    const hasKnownField = ['code','data','task_id','taskId','id','status','message','msg','error','raw','result'].some(k => Object.prototype.hasOwnProperty.call(json, k));
+    const hasKnownField = ['code','data','task_id','taskId','taskID','post_id','postId','postID','id','status','message','msg','error','raw','result'].some(k => Object.prototype.hasOwnProperty.call(json, k));
     return !hasKnownField;
   }
   return false;
@@ -1746,7 +1761,7 @@ function flattenApimartTaskItems(resp) {
     if (!x) return;
     if (Array.isArray(x)) { x.forEach(walk); return; }
     if (typeof x !== 'object') return;
-    const id = x.id || x.task_id || x.taskId || x.taskID;
+    const id = x.id || x.task_id || x.taskId || x.taskID || x.post_id || x.postId || x.postID;
     const looksTask = id || x.status || x.progress || x.result || x.error;
     if (looksTask) out.push(x);
     if (x.data && x.data !== x) walk(x.data);
@@ -1756,7 +1771,7 @@ function flattenApimartTaskItems(resp) {
   walk(resp);
   return out;
 }
-function taskItemId(item = {}) { return String(item.id || item.task_id || item.taskId || item.taskID || '').trim(); }
+function taskItemId(item = {}) { return String(item.id || item.task_id || item.taskId || item.taskID || item.post_id || item.postId || item.postID || '').trim(); }
 function normalizeSingleTaskFromBatch(resp, taskId) {
   const id = String(taskId || '').trim();
   const items = flattenApimartTaskItems(resp);
@@ -2000,12 +2015,11 @@ async function pollApimartVideoTask(taskId, apiKey, localTaskId) {
     if (sText === 'failed' || sText === 'cancelled') {
       task.status = '失败';
       task.progress_text = '任务失败';
-      task.error_message = (status.data?.error?.message || status.error?.message || '视频任务失败');
+      task.error_message = pickApimartTaskErrorMessage(status, '视频任务失败');
       task.finished_at = nowISO();
-      closePublicVideoByPath(task.local_video_path);
       getDB()._save();
       addLog(`视频任务失败：${task.error_message}`, { ownerId: task.owner_id, level:'error' });
-      return;
+      throw new Error(task.error_message);
     }
     task.status = '生成中';
     task.progress_text = videoProgressTextByStatus(sText, task.progress, 'query');
