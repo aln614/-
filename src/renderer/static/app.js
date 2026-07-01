@@ -2586,8 +2586,8 @@ async function loadImages(){
 function renderImages(imgs){
   imageMetaMap = new Map();
   $('#imageGrid').innerHTML = imgs.map(img=>{
-    const thumb = img.thumb_url || img.url || '';
-    const full = img.full_url || img.original_url || img.url || '';
+    const thumb = img.thumb_url || img.url || img.remote_url || ''; 
+    const full = img.full_url || img.original_url || img.url || img.remote_url || ''; 
     const meta = imageRowToPreviewMeta(img);
     imageMetaMap.set(img.id, meta);
     const selected = selectedImages.has(img.id) ? 'selected' : '';
@@ -2645,8 +2645,8 @@ async function loadMiniImages(activeTasks = []){
   }).join(';;');
   items.forEach(i=>{
     if(i.__kind !== 'image') return;
-    const thumb = i.thumb_url || i.url || '';
-    const full = i.full_url || i.original_url || i.url || '';
+    const thumb = i.thumb_url || i.url || i.remote_url || ''; 
+    const full = i.full_url || i.original_url || i.url || i.remote_url || ''; 
     const key = 'mini_' + i.id;
     imageMetaMap.set(key, imageRowToPreviewMeta(i));
   });
@@ -3020,7 +3020,7 @@ function mergeMjSingleButtons(buttons=[]){
   return out;
 }
 function imageRowToPreviewMeta(img={}){
-  const full = img.full_url || img.url || '';
+  const full = img.full_url || img.url || img.remote_url || ''; 
   return {id:img.id, fullUrl:full, originalUrl:img.original_url||full, remoteUrl:img.remote_url||'', prompt:img.prompt||'', model:img.model||'', size:img.size||'', imageSize:img.image_size||'', batch:img.batch_name||'', time:formatBeijingTime(img.generated_at||''), filename:img.filename||'generated-image.png', status:img.status||'', progress:img.progress||0, progress_text:img.progress_text||'', taskId:img.task_id||'', local_task_id:img.local_task_id||'', batch_id:img.batch_id||'', mj_source:img.mj_source||'', mj_action:img.mj_action||'', mj_parent_task_id:img.mj_parent_task_id||'', mj_parent_remote_task_id:img.mj_parent_remote_task_id||'', mj_is_grid:!!img.mj_is_grid, mj_variant_index:img.mj_variant_index||0, mj_images:img.mj_images||[], mj_buttons:img.mj_buttons||[], mj_executed_buttons:img.mj_executed_buttons||[], mj_grid_remote_url:img.mj_grid_remote_url||'', mj_grid_local_url:img.mj_grid_local_url||''};
 }
 function openMjJumpImage(meta={}, index=1){
