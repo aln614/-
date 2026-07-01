@@ -5231,7 +5231,7 @@ async function apiHandler(req, res, parsed) {
       await repairCompletedMidjourneyImages(owner || '');
       const pageSize = Math.max(1, Math.min(1000, Number(parsed.query.limit || parsed.query.page_size || 1000)));
       let rows = listImages({ownerId:owner, batchId: parsed.query.batch_id || '', page:1, pageSize:1000}).rows;
-      if (String(parsed.query.panel_only || '') === '1') rows = rows.filter(r => !r.hidden_in_recent);
+      if (String(parsed.query.panel_only || '') === '1') rows = rows.filter(r => !r.hidden_in_recent || (r.file_path && fs.existsSync(r.file_path)));
       if (String(parsed.query.only_mj || '') === '1') rows = rows.filter(r => (r.mj_source || '') === 'midjourney');
       const seenImageKeys = new Set();
       const gridByTask = new Map();
