@@ -39,6 +39,7 @@ try { app.setPath('userData', DATA_ROOT); } catch {}
 
 
 const RESET_MARKER = path.join(os.tmpdir(), 'LocalApiImageGenerator_full_reset_v1498.json');
+const LEGACY_RESTORE_BLOCK_MARKER = path.join(DATA_ROOT, 'data', 'skip_legacy_restore.json');
 function getLegacyDataRoots() {
   const appDataRoot = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
   const roots = [
@@ -71,7 +72,7 @@ function removePathSafe(p) {
 }
 function hardResetDataDirsBeforeInit() {
   if (!fs.existsSync(RESET_MARKER)) return false;
-  const targets = new Set([DATA_ROOT, ...getLegacyDataRoots()]);
+  const targets = new Set([DATA_ROOT]);
   targets.add(path.join(app.getPath('pictures'), OUTPUT_ROOT_NAME));
   targets.add(path.join(app.getPath('downloads'), OUTPUT_ZIP_DIR_NAME));
   targets.add(path.join(app.getPath('downloads'), OUTPUT_WORD_DIR_NAME));
@@ -80,7 +81,56 @@ function hardResetDataDirsBeforeInit() {
   targets.add(path.join(app.getPath('pictures'), 'LocalApiImageGenerator_V14_10_15'));
   targets.add(path.join(app.getPath('downloads'), 'LocalApiImageGenerator_V14_10_15_Zips'));
   for (const t of targets) removePathSafe(t);
+  try {
+    fs.mkdirSync(path.dirname(LEGACY_RESTORE_BLOCK_MARKER), { recursive:true });
+    fs.writeFileSync(LEGACY_RESTORE_BLOCK_MARKER, JSON.stringify({ at:new Date().toISOString(), reason:'manual_clear_all_data' }, null, 2), 'utf8');
+  } catch {}
   try { fs.rmSync(RESET_MARKER, { force: true }); } catch {}
+  return true;
+}
+function readStoreSummary(storeFile) {
+  try {
+    if (!storeFile || !fs.existsSync(storeFile)) return null;
+    const stat = fs.statSync(storeFile);
+    const data = JSON.parse(fs.readFileSync(storeFile, 'utf8'));
+    const count = ['batches','tasks','images','video_tasks'].reduce((sum, key) => sum + (Array.isArray(data[key]) ? data[key].length : 0), 0);
+    return { file:storeFile, data, count, size:stat.size, mtime:stat.mtimeMs };
+  } catch {
+    return null;
+  }
+}
+function restoreStoreFromLegacyIfCurrentEmpty() {
+  if (fs.existsSync(LEGACY_RESTORE_BLOCK_MARKER)) return false;
+  const currentStore = path.join(DATA_ROOT, 'data', 'store.json');
+  const current = readStoreSummary(currentStore);
+  if (current && current.count > 0) return false;
+
+  const candidates = [];
+  for (const root of getLegacyDataRoots()) {
+    const file = path.join(root, 'data', 'store.json');
+    if (path.resolve(file) === path.resolve(currentStore)) continue;
+    const summary = readStoreSummary(file);
+    if (summary && summary.count > 0) candidates.push(summary);
+  }
+  candidates.sort((a, b) => (b.count - a.count) || (b.mtime - a.mtime) || (b.size - a.size));
+  const best = candidates[0];
+  if (!best) return false;
+
+  fs.mkdirSync(path.dirname(currentStore), { recursive:true });
+  if (fs.existsSync(currentStore)) {
+    const backup = path.join(path.dirname(currentStore), `store.empty-before-restore-${Date.now()}.json`);
+    try { fs.copyFileSync(currentStore, backup); } catch {}
+  }
+  const marker = path.join(DATA_ROOT, 'data', 'store_restore_marker.json');
+  fs.copyFileSync(best.file, currentStore);
+  try {
+    fs.writeFileSync(marker, JSON.stringify({
+      restored_at: new Date().toISOString(),
+      source: best.file,
+      restored_count: best.count,
+      reason: 'current_store_empty_after_update'
+    }, null, 2), 'utf8');
+  } catch {}
   return true;
 }
 
@@ -5440,7 +5490,9 @@ function createWindow() {
 app.whenReady().then(() => {
   hardResetDataDirsBeforeInit();
   initConfig();
+  const restoredLegacyStore = restoreStoreFromLegacyIfCurrentEmpty();
   initDB(app.getPath('userData'));
+  if (restoredLegacyStore) addLog('检测到更新后当前任务库为空，已自动从历史 RuntimeData 恢复批次、任务、图片和视频任务。', { level:'warn' });
   startNetworkTimeSync();
   queue = new TaskQueue();
   queue.recoverInterruptedBatches();
