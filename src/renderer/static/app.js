@@ -2241,10 +2241,11 @@ async function loadStatus(){
   $('#runningState').textContent = `运行：${s.running}`;
   $('#apiMetricStatus').textContent = s.api.status;
   const hc = s.host_cumulative || {};
-  $('#apiMetricRunning').textContent = typeof hc.running_tasks !== 'undefined' ? hc.running_tasks : s.running;
-  $('#apiMetricDone').textContent = typeof hc.completed_tasks !== 'undefined' ? hc.completed_tasks : s.done;
-  if($('#apiMetricImages')) $('#apiMetricImages').textContent = typeof hc.total_tasks !== 'undefined' ? hc.total_tasks : 0;
-  $('#apiMetricFail').textContent = typeof hc.failed_tasks !== 'undefined' ? hc.failed_tasks : s.fail;
+  const hostStats = s.is_local_client !== false && typeof hc.total_tasks !== 'undefined';
+  $('#apiMetricRunning').textContent = hostStats ? hc.running_tasks : s.running;
+  $('#apiMetricDone').textContent = hostStats ? hc.completed_tasks : s.done;
+  if($('#apiMetricImages')) $('#apiMetricImages').textContent = hostStats ? hc.total_tasks : (s.total || 0);
+  $('#apiMetricFail').textContent = hostStats ? hc.failed_tasks : s.fail;
   if(typeof s.is_local_client !== 'undefined'){ isLocalClient = s.is_local_client !== false; isPublicClient = s.is_public_client === true; applyPermissionUI(); }
   if(s.local_url || s.lan_url) updateLanDisplay({lan_enabled: $('#lanEnabled').checked, ...s});
   // V9.1: API监控中心保持简化；右侧实时任务面板保留最近图片和最近批次。

@@ -938,6 +938,11 @@ function beijingDateKey(input = new Date()) {
   const d = input instanceof Date ? input : (parseUTCDateLike(input) || new Date(input));
   return new Date(d.getTime() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
+function formatBeijingTime(input = new Date()) {
+  const d = input instanceof Date ? input : (parseUTCDateLike(input) || new Date(input));
+  const bj = new Date(d.getTime() + 8 * 60 * 60 * 1000);
+  return bj.toISOString().replace('T', ' ').slice(0, 19);
+}
 function uniqueExistingPaths(items = []) {
   const out = [];
   const seen = new Set();
@@ -5305,6 +5310,7 @@ async function apiHandler(req, res, parsed) {
   const deviceOwner = getDeviceOwner(req, parsed);
   const accessOwner = getOwner(req, parsed, cfg);
   const owner = cfg.device_data_isolation === false ? '' : accessOwner;
+  const dataOwner = local ? '' : owner;
   // 公网访问已通过密码后，按局域网逻辑使用；不再用只读模式阻止上传/生成。
   try {
     if (method === 'GET' && p === '/api/health') return send(res, {ok:true, time: nowISO(), app: cfg.app_name, ...urls(cfg)});
@@ -5390,10 +5396,10 @@ async function apiHandler(req, res, parsed) {
     if (method === 'POST' && p === '/api/assets/export_zip') { const body=await readBody(req); const zipPath=assetExportZip(body, local, cfg, deviceOwner); return send(res,{ok:true,url:`/download?path=${encodeURIComponent(zipPath)}`}); }
     if (method === 'GET' && p === '/api/announcements') return send(res, await getAnnouncements(parsed.query.force === '1'));
     if (method === 'GET' && p === '/api/status') return send(res, { ...appStats(deviceOwner), time_info: getNetworkTimeInfo(), ...hostCumulativeStats(), ...urls(cfg), is_local_client: local, is_public_client: publicHost, device_data_isolation: cfg.device_data_isolation !== false, host_status_visible: true });
-    if (method === 'GET' && p === '/api/batches') return send(res, listBatches({ownerId: owner, page: 1, pageSize: 1000}).rows.map(normalizeBatch));
+    if (method === 'GET' && p === '/api/batches') return send(res, listBatches({ownerId: dataOwner, page: 1, pageSize: local ? 6000 : 1000}).rows.map(normalizeBatch));
     if (method === 'GET' && p === '/api/history_batches') {
-      const imageRows = listBatches({ownerId: owner, page: 1, pageSize: 1000}).rows.map(b => ({ ...normalizeBatch(b), batch_type:'image' }));
-      const videoRows = listVideoBatchSummaries(owner);
+      const imageRows = listBatches({ownerId: dataOwner, page: 1, pageSize: local ? 6000 : 1000}).rows.map(b => ({ ...normalizeBatch(b), batch_type:'image' }));
+      const videoRows = listVideoBatchSummaries(dataOwner);
       return send(res, [...imageRows, ...videoRows].sort((a,b)=>String(b.created_at || '').localeCompare(String(a.created_at || ''))));
     }
     if (method === 'POST' && p === '/api/batches') {
@@ -5408,9 +5414,9 @@ async function apiHandler(req, res, parsed) {
     if (method === 'POST' && p === '/api/repeat_batch') { const body=await readBody(req); const ret=await repeatBatch(body.batch_id, owner, deviceOwner, body); return send(res,{ok:true, id:ret.id, task_count:ret.taskCount}); }
     if (method === 'POST' && p === '/api/update_batch_note') { const body=await readBody(req); const b=getDB()._store.batches.find(x=>x.id===body.batch_id && (!owner || x.owner_id===owner)); if(!b) throw new Error('无权限或批次不存在'); b.note=body.note||''; b.updated_at=nowISO(); getDB()._save(); return send(res,{ok:true}); }
     if (method === 'GET' && p === '/api/images') {
-      await repairCompletedMidjourneyImages(owner || '');
-      const pageSize = Math.max(1, Math.min(1000, Number(parsed.query.limit || parsed.query.page_size || 1000)));
-      let rows = listImages({ownerId:owner, batchId: parsed.query.batch_id || '', page:1, pageSize:1000}).rows;
+      if (dataOwner || String(parsed.query.repair || '') === '1') await repairCompletedMidjourneyImages(dataOwner || '');
+      const pageSize = Math.max(1, Math.min(local ? 6000 : 1000, Number(parsed.query.limit || parsed.query.page_size || (local ? 6000 : 1000))));
+      let rows = listImages({ownerId:dataOwner, batchId: parsed.query.batch_id || '', page:1, pageSize:local ? 6000 : 1000}).rows;
       if (String(parsed.query.panel_only || '') === '1') rows = rows.filter(r => !r.hidden_in_recent || (r.file_path && fs.existsSync(r.file_path)));
       if (String(parsed.query.only_mj || '') === '1') rows = rows.filter(r => (r.mj_source || '') === 'midjourney');
       const seenImageKeys = new Set();
@@ -5435,7 +5441,7 @@ async function apiHandler(req, res, parsed) {
     }
     if (method === 'GET' && p === '/api/logs') {
       const pageSize = Math.max(20, Math.min(300, Number(parsed.query.limit || parsed.query.page_size || 120)));
-      return send(res, listLogs({ownerId:owner, page:1, pageSize}));
+      return send(res, listLogs({ownerId:dataOwner, page:1, pageSize}));
     }
     if (method === 'GET' && p === '/api/export_zip') { const zipPath=exportZip(parsed.query.batch_id, owner); return send(res,{ok:true,url:`/download?path=${encodeURIComponent(zipPath)}`}); }
     if (method === 'POST' && p === '/api/export_selected_zip') { const body=await readBody(req); const zipPath=exportZip(body.batch_id, owner, body.image_ids||[]); return send(res,{ok:true,url:`/download?path=${encodeURIComponent(zipPath)}`}); }
@@ -5476,7 +5482,7 @@ async function apiHandler(req, res, parsed) {
     }
     if (method === 'POST' && p === '/api/video_submit') { const body=await readBody(req); if(String(body.video_platform||'').toLowerCase()==='flow2api'){const ret=await createFlow2VideoBatch({...body,prompts:body.prompt||body.prompts,copies:1},deviceOwner);return send(res,{ok:true,task:ret.rows[0]||null});} const row = await createApimartVideoTask(body, deviceOwner, req, cfg); return send(res,{ok:true, task:formatVideoTask(row)}); }
     if (method === 'POST' && p === '/api/video_batch_submit') { const body=await readBody(req); return send(res, String(body.video_platform||'').toLowerCase()==='flow2api' ? await createFlow2VideoBatch(body, deviceOwner) : await createApimartVideoBatch(body, deviceOwner, req, cfg)); }
-    if (method === 'GET' && p === '/api/video_tasks') { cleanupStaleVideoTasks(owner); const st=ensureVideoStore(); const rows=st.video_tasks.filter(v=>!owner || v.owner_id===owner).sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at))).slice(0,500).map(row=>formatVideoTask(row)); return send(res,{ok:true, rows, video_stats: videoTodayStats(owner)}); }
+    if (method === 'GET' && p === '/api/video_tasks') { cleanupStaleVideoTasks(dataOwner); const st=ensureVideoStore(); const rows=st.video_tasks.filter(v=>!dataOwner || v.owner_id===dataOwner).sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at))).slice(0,local ? 2000 : 500).map(row=>formatVideoTask(row)); return send(res,{ok:true, rows, video_stats: videoTodayStats(dataOwner)}); }
     if (method === 'POST' && p === '/api/video_delete_selected') { const body=await readBody(req); return send(res, deleteVideoTasks(body.ids || [], owner)); }
     if (method === 'POST' && p === '/api/video_export_selected') { const body=await readBody(req); const zipPath=exportSelectedVideos(body.ids || [], owner); return send(res,{ok:true,url:`/download?path=${encodeURIComponent(zipPath)}`}); }
     if (method === 'POST' && p === '/api/video_copy_file') {
@@ -5492,7 +5498,7 @@ async function apiHandler(req, res, parsed) {
       const limit = Math.max(1, Math.min(30, Number(parsed.query.limit || 30)));
       const st = getDB()._store;
       const tasks = st.tasks
-        .filter(t => t.owner_id === owner && t.mj_source === 'midjourney' && t.mj_action === 'describe')
+        .filter(t => (!dataOwner || t.owner_id === dataOwner) && t.mj_source === 'midjourney' && t.mj_action === 'describe')
         .sort((a,b)=>String(b.created_at||'').localeCompare(String(a.created_at||'')))
         .slice(0, limit)
         .map(t => {
