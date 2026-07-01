@@ -1,6 +1,7 @@
 """Load balancing module for Flow2API"""
 import asyncio
 import random
+import time
 from typing import Optional, Dict
 from ..core.models import Token
 from ..core.config import config
@@ -25,6 +26,44 @@ class LoadBalancer:
         self._pending_lock = asyncio.Lock()
         self._round_robin_state: Dict[str, Optional[int]] = {"image": None, "video": None, "default": None}
         self._rr_lock = asyncio.Lock()
+        self._risk_cooldowns: Dict[int, Dict[str, object]] = {}
+        self._risk_cooldown_lock = asyncio.Lock()
+
+    async def cooldown_token(self, token_id: Optional[int], seconds: int = 300, reason: str = ""):
+        """Temporarily avoid a token after Flow risk-control rejection."""
+        if token_id is None:
+            return
+
+        try:
+            normalized_seconds = max(30, min(1800, int(seconds)))
+        except Exception:
+            normalized_seconds = 300
+
+        async with self._risk_cooldown_lock:
+            until = time.time() + normalized_seconds
+            self._risk_cooldowns[int(token_id)] = {
+                "until": until,
+                "reason": reason or "flow_risk_control",
+            }
+        debug_logger.log_warning(
+            f"[LOAD_BALANCER] Token {token_id} 已进入 Flow 风控冷却 "
+            f"{normalized_seconds}s, reason={reason or 'flow_risk_control'}"
+        )
+
+    async def _get_risk_cooldown_remaining(self, token_id: Optional[int]) -> int:
+        if token_id is None:
+            return 0
+
+        async with self._risk_cooldown_lock:
+            state = self._risk_cooldowns.get(int(token_id))
+            if not state:
+                return 0
+            until = float(state.get("until") or 0)
+            remaining = int(max(0, until - time.time()))
+            if remaining <= 0:
+                self._risk_cooldowns.pop(int(token_id), None)
+                return 0
+            return remaining
 
     async def _get_pending_count(self, token_id: int, for_image_generation: bool, for_video_generation: bool) -> int:
         async with self._pending_lock:
@@ -186,6 +225,11 @@ class LoadBalancer:
             if model and not supports_model_for_tier(model, normalized_tier):
                 filtered_reasons[token.id] = '账号等级不足，需要 ' + get_paygate_tier_label(required_tier)
                 continue
+            if for_image_generation or for_video_generation:
+                cooldown_remaining = await self._get_risk_cooldown_remaining(token.id)
+                if cooldown_remaining > 0:
+                    filtered_reasons[token.id] = f"Flow 风控冷却中，还剩 {cooldown_remaining}s"
+                    continue
             if for_image_generation:
                 if not token.image_enabled:
                     filtered_reasons[token.id] = "图片生成已禁用"
@@ -339,12 +383,19 @@ class LoadBalancer:
             return f"当前模型需要 {tier_label} 账号，但没有可用的 {tier_label} 账号: {model}"
 
         capability_tokens = []
+        cooled_tokens = 0
         for token in supported_tokens:
             if for_image_generation and not token.image_enabled:
                 continue
             if for_video_generation and not token.video_enabled:
                 continue
+            if (for_image_generation or for_video_generation) and await self._get_risk_cooldown_remaining(token.id) > 0:
+                cooled_tokens += 1
+                continue
             capability_tokens.append(token)
+
+        if supported_tokens and not capability_tokens and cooled_tokens:
+            return "当前账号刚触发 Google Flow reCAPTCHA 风控，已临时冷却。请稍后重试，或换账号/网络后再生成。"
 
         if supported_tokens and not capability_tokens:
             if for_image_generation:

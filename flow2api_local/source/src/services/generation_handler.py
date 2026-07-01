@@ -1299,6 +1299,9 @@ class GenerationHandler:
             # 6. 记录使用
             if not generation_result.get("success"):
                 error_msg = generation_result.get("error_message") or "生成未成功完成"
+                await self._cooldown_flow_risk_token(token, error_msg)
+                if self._is_flow_risk_control_error(error_msg):
+                    error_msg = self._format_flow_risk_control_error(error_msg)
                 debug_logger.log_warning(f"[GENERATION] 生成未成功，不扣次数: {error_msg}")
                 if token:
                     await self.token_manager.record_error(token.id, error_msg)
@@ -1403,6 +1406,9 @@ class GenerationHandler:
             raise
         except Exception as e:
             error_msg = f"生成失败: {str(e)}"
+            await self._cooldown_flow_risk_token(token, error_msg)
+            if self._is_flow_risk_control_error(error_msg):
+                error_msg = self._format_flow_risk_control_error(error_msg)
             debug_logger.log_error(f"[GENERATION] ❌ {error_msg}")
             if token:
                 # 记录错误（所有错误统一处理，不再特殊处理429）
@@ -1451,6 +1457,38 @@ class GenerationHandler:
             return "没有可用的Token进行图片生成。所有Token都处于禁用、冷却、锁定或已过期状态。"
         else:
             return "没有可用的Token进行视频生成。所有Token都处于禁用、冷却、配额耗尽或已过期状态。"
+
+    def _is_flow_risk_control_error(self, error_message: str) -> bool:
+        """Detect Google Flow reCAPTCHA risk-control rejections."""
+        message = str(error_message or "").lower()
+        return any(marker in message for marker in (
+            "public_error_unusual_activity",
+            "unusual_activity_too_much_traffic",
+            "recaptcha evaluation failed",
+            "flow api request failed",
+        )) and ("recaptcha" in message or "unusual_activity" in message)
+
+    def _format_flow_risk_control_error(self, error_message: str) -> str:
+        original = self._normalize_error_message(error_message, max_length=260)
+        return (
+            "Google Flow 风控评估失败：当前账号、网络或浏览器会话的 reCAPTCHA 风险评分过低，"
+            "本次生成已停止并临时冷却该账号。请稍后重试，或在 Flow 网页端手动打开项目确认账号状态后再生成。"
+            f"原始原因：{original}"
+        )
+
+    async def _cooldown_flow_risk_token(self, token, error_message: str):
+        if not token or not self.load_balancer:
+            return
+        if not self._is_flow_risk_control_error(error_message):
+            return
+        try:
+            await self.load_balancer.cooldown_token(
+                token.id,
+                seconds=300,
+                reason="recaptcha_evaluation_failed",
+            )
+        except Exception as exc:
+            debug_logger.log_warning(f"[GENERATION] 标记 Flow 风控冷却失败: {exc}")
 
     async def _handle_image_generation(
         self,
