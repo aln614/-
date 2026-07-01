@@ -2980,6 +2980,12 @@ function pathKey(p) {
   const resolved = path.resolve(String(p || ''));
   return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
 }
+function currentStoreFilePath() {
+  return path.join(DATA_ROOT, 'data', 'store.json');
+}
+function historicalOutputRootsFromCurrentStore() {
+  return collectOutputRootsFromStoreFile(currentStoreFilePath());
+}
 function isPathInside(base, target) {
   const b = pathKey(base);
   const t = pathKey(target);
@@ -2998,6 +3004,7 @@ function allowedFileRoots(cfg = readConfig()) {
     updateCacheDir(),
     defaultAssetLibraryDir(cfg)
   ];
+  roots.push(...historicalOutputRootsFromCurrentStore());
   if (cfg.output_dir) roots.push(cfg.output_dir);
   if (Array.isArray(cfg.legacy_output_dirs)) roots.push(...cfg.legacy_output_dirs);
   return Array.from(new Set(roots.map(r => path.resolve(r)).filter(Boolean)));

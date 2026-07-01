@@ -1,6 +1,6 @@
 {
   "name": "local-api-image-generator-webui",
-  "version": "1.0.19",
+  "version": "1.0.20",
   "description": "Local APIMart and Flow2API image generator with batch management",
   "main": "src/main.js",
   "scripts": {
