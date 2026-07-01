@@ -136,6 +136,10 @@ function collectOutputRootsFromStoreData(data = {}) {
   }
   return Array.from(roots);
 }
+function collectOutputRootsFromStoreFile(storeFile = '') {
+  const summary = readStoreSummary(storeFile);
+  return summary ? collectOutputRootsFromStoreData(summary.data) : [];
+}
 function rememberHistoricalOutputRootsFromStoreData(data = {}) {
   const roots = collectOutputRootsFromStoreData(data);
   if (!roots.length || !configPath) return roots;
@@ -934,7 +938,90 @@ function beijingDateKey(input = new Date()) {
   const d = input instanceof Date ? input : (parseUTCDateLike(input) || new Date(input));
   return new Date(d.getTime() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
+function uniqueExistingPaths(items = []) {
+  const out = [];
+  const seen = new Set();
+  for (const item of items) {
+    const p = String(item || '').trim();
+    if (!p) continue;
+    let key = '';
+    try { key = pathKey(p); } catch { key = p.toLowerCase(); }
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(p);
+  }
+  return out;
+}
+function mediaSearchRootsForRow(row = {}, batch = {}) {
+  const cfg = readConfig();
+  const roots = [];
+  const add = (p) => { if (p) roots.push(p); };
+  add(batch.output_dir);
+  add(cfg.output_dir);
+  add(path.join(app.getPath('pictures'), OUTPUT_ROOT_NAME));
+  add(path.join(app.getPath('pictures'), OUTPUT_MJ_DIR_NAME));
+  if (Array.isArray(cfg.legacy_output_dirs)) cfg.legacy_output_dirs.forEach(add);
+  try { historicalOutputRootsFromCurrentStore().forEach(add); } catch {}
+  const filePath = String(row.file_path || row.thumb_path || '').trim();
+  if (filePath) {
+    add(path.dirname(filePath));
+    add(path.dirname(path.dirname(filePath)));
+  }
+  return uniqueExistingPaths(roots).filter(p => {
+    try { return fs.existsSync(p); } catch { return false; }
+  });
+}
+function findMediaPathByName(fileName = '', roots = [], thumb = false) {
+  const name = String(fileName || '').trim();
+  if (!name) return '';
+  const candidates = [];
+  for (const root of roots) {
+    candidates.push(path.join(root, name));
+    candidates.push(path.join(root, '_thumbs', name));
+    if (thumb && path.extname(name).toLowerCase() !== '.png') {
+      candidates.push(path.join(root, '_thumbs', path.basename(name, path.extname(name)) + '.png'));
+    }
+  }
+  for (const fp of candidates) {
+    try { if (fp && fs.existsSync(fp)) return fp; } catch {}
+  }
+  return '';
+}
+function repairImageRowPaths(row = {}) {
+  if (!row) return row;
+  const st = getDB()._store;
+  const batch = st.batches.find(b => b.id === row.batch_id) || {};
+  const roots = mediaSearchRootsForRow(row, batch);
+  const originalFile = String(row.file_path || '').trim();
+  const originalThumb = String(row.thumb_path || '').trim();
+  let filePath = originalFile && fs.existsSync(originalFile) ? originalFile : '';
+  let thumbPath = originalThumb && fs.existsSync(originalThumb) ? originalThumb : '';
+  if (!filePath) {
+    const fileName = path.basename(originalFile || row.filename || row.remote_url || '');
+    filePath = findMediaPathByName(fileName, roots, false);
+  }
+  if (!thumbPath) {
+    const thumbName = path.basename(originalThumb || filePath || row.filename || '');
+    thumbPath = findMediaPathByName(thumbName, roots, true);
+  }
+  if (!thumbPath && filePath) {
+    const desired = path.join(path.dirname(filePath), '_thumbs', path.basename(filePath, path.extname(filePath)) + '.png');
+    try {
+      ensureDir(path.dirname(desired));
+      createThumb(filePath, desired, 300);
+      if (fs.existsSync(desired)) thumbPath = desired;
+    } catch {}
+  }
+  let changed = false;
+  if (filePath && filePath !== row.file_path) { row.file_path = filePath; changed = true; }
+  if (thumbPath && thumbPath !== row.thumb_path) { row.thumb_path = thumbPath; changed = true; }
+  if (changed) {
+    try { getDB()._save(); } catch {}
+  }
+  return row;
+}
 function formatImage(row) {
+  row = repairImageRowPaths(row);
   const remote = row.remote_url || row.result_url || '';
   const localFull = row.file_path && fs.existsSync(row.file_path) ? `/file?path=${encodeURIComponent(row.file_path)}` : '';
   const localThumb = row.thumb_path && fs.existsSync(row.thumb_path) ? `/file?path=${encodeURIComponent(row.thumb_path)}` : localFull;
@@ -2091,9 +2178,20 @@ async function downloadVideoResult(urlValue, destPath) {
 
 function videoOutputBaseDir() {
   const cfg = readConfig();
-  // V11.4：视频保存目录和图片输出目录保持一致，不再额外放到 videos 子目录。
-  return cfg.output_dir || path.join(app.getPath('pictures'), OUTPUT_ROOT_NAME);
+  const configured = String(cfg.output_dir || '').trim();
+  if (configured) {
+    try {
+      fs.mkdirSync(configured, { recursive: true });
+      return configured;
+    } catch (e) {
+      addLog(`video output directory unavailable, falling back: ${configured} / ${e.message || e}`, { ownerId: 'local', level: 'warn' });
+    }
+  }
+  const fallback = path.join(app.getPath('pictures'), OUTPUT_ROOT_NAME);
+  fs.mkdirSync(fallback, { recursive: true });
+  return fallback;
 }
+
 
 async function pollApimartVideoTask(taskId, apiKey, localTaskId) {
   const st = ensureVideoStore();
@@ -2780,8 +2878,9 @@ function exportSelectedVideos(ids = [], owner='') {
   return zipPath;
 }
 function formatVideoTask(row) {
+  row = repairVideoTaskFilePath(row);
   const stream = row.file_path ? `/video-file?id=${encodeURIComponent(row.id)}` : '';
-  return { ...row, progress_text: row.progress_text || (row.status === '已完成' ? '已完成' : ''), stream_url: stream, share_url: row.file_path ? `/video-share?id=${encodeURIComponent(row.id)}` : '', url: stream || row.remote_url || '', download_url: row.file_path ? `/download?path=${encodeURIComponent(row.file_path)}` : (row.remote_url || ''), filename: row.file_path ? path.basename(row.file_path) : `${row.id}.mp4` };
+  return { ...row, progress_text: row.progress_text || (row.status === '\u5df2\u5b8c\u6210' ? '\u5df2\u5b8c\u6210' : ''), stream_url: stream, share_url: row.file_path ? `/video-share?id=${encodeURIComponent(row.id)}` : '', url: stream || row.remote_url || '', download_url: row.file_path ? `/download?path=${encodeURIComponent(row.file_path)}` : (row.remote_url || ''), filename: row.file_path ? path.basename(row.file_path) : `${row.id}.mp4` };
 }
 
 function listVideoBatchSummaries(owner = '') {
@@ -2841,6 +2940,34 @@ function findVideoTaskById(id, owner='') {
   const st = ensureVideoStore();
   return (st.video_tasks || []).find(v => v.id === id && (!owner || v.owner_id === owner));
 }
+
+function resolveVideoTaskFilePath(row = {}) {
+  const cfg = readConfig();
+  const owner = String(row.owner_id || '').trim() || 'local';
+  const bases = [];
+  const currentBase = String(videoOutputBaseDir() || '').trim();
+  if (currentBase) bases.push(currentBase);
+  const fallbackBase = path.join(app.getPath('pictures'), OUTPUT_ROOT_NAME);
+  if (fallbackBase && !bases.includes(fallbackBase)) bases.push(fallbackBase);
+  if (cfg.output_dir && !bases.includes(cfg.output_dir)) bases.push(cfg.output_dir);
+  if (Array.isArray(cfg.legacy_output_dirs)) bases.push(...cfg.legacy_output_dirs.filter(Boolean));
+  const candidates = [];
+  if (row.file_path) candidates.push(String(row.file_path));
+  for (const base of bases) {
+    candidates.push(path.join(base, owner, `${row.id}.mp4`));
+    candidates.push(path.join(base, `${row.id}.mp4`));
+  }
+  for (const fp of candidates) {
+    try { if (fp && fs.existsSync(fp)) return fp; } catch {}
+  }
+  return row.file_path || '';
+}
+function repairVideoTaskFilePath(row = {}) {
+  const filePath = resolveVideoTaskFilePath(row);
+  if (filePath && filePath !== row.file_path) row.file_path = filePath;
+  return row;
+}
+
 
 function quotePowerShellLiteralPath(filePath) {
   return "'" + String(filePath || '').replace(/'/g, "''") + "'";
@@ -2991,6 +3118,59 @@ function isPathInside(base, target) {
   const t = pathKey(target);
   return !!b && !!t && (t === b || t.startsWith(b + path.sep));
 }
+function normalizeServedPathInput(filePath = '') {
+  let raw = String(filePath || '').trim();
+  if (/%[0-9a-f]{2}/i.test(raw)) {
+    try { raw = decodeURIComponent(raw); } catch {}
+  }
+  return path.resolve(raw);
+}
+function referencedServedPathKeys(cfg = readConfig()) {
+  const keys = new Set();
+  const add = (p) => {
+    if (!p) return;
+    try { keys.add(pathKey(p)); } catch {}
+  };
+  try {
+    const st = getDB()._store || {};
+    for (const img of Array.isArray(st.images) ? st.images : []) {
+      add(img.file_path);
+      add(img.thumb_path);
+    }
+    for (const task of Array.isArray(st.tasks) ? st.tasks : []) {
+      add(task.result_path);
+      add(task.thumb_path);
+      add(task.main_image_path);
+      add(task.mj_grid_local_path);
+      try {
+        const refs = JSON.parse(task.ref_images_json || '[]') || [];
+        refs.forEach(r => { add(r && (r.file_path || r.local_path)); add(r && r.thumb_path); });
+      } catch {}
+      try {
+        const imgs = JSON.parse(task.mj_images_json || '[]') || [];
+        imgs.forEach(r => { add(r && (r.local_path || r.file_path)); add(r && r.thumb_path); });
+      } catch {}
+    }
+    for (const video of Array.isArray(st.video_tasks) ? st.video_tasks : []) {
+      add(video.file_path);
+      add(video.thumb_path);
+      add(video.local_video_path);
+    }
+    for (const video of Array.isArray(st.public_videos) ? st.public_videos : []) add(video.path);
+  } catch {}
+  try {
+    const adb = readAssetDb(cfg);
+    for (const asset of Array.isArray(adb.assets) ? adb.assets : []) {
+      add(asset.local_path);
+      add(asset.thumb_path);
+    }
+  } catch {}
+  return keys;
+}
+function isReferencedServedFile(filePath = '', cfg = readConfig()) {
+  const key = pathKey(filePath);
+  return !!key && referencedServedPathKeys(cfg).has(key);
+}
 function allowedFileRoots(cfg = readConfig()) {
   const roots = [
     path.join(DATA_ROOT, 'uploads'),
@@ -3010,11 +3190,11 @@ function allowedFileRoots(cfg = readConfig()) {
   return Array.from(new Set(roots.map(r => path.resolve(r)).filter(Boolean)));
 }
 function isAllowedServedFile(filePath = '', cfg = readConfig()) {
-  const resolved = path.resolve(String(filePath || ''));
-  return allowedFileRoots(cfg).some(root => isPathInside(root, resolved));
+  const resolved = normalizeServedPathInput(filePath);
+  return allowedFileRoots(cfg).some(root => isPathInside(root, resolved)) || isReferencedServedFile(resolved, cfg);
 }
 function resolveServedFilePath(filePath = '', cfg = readConfig()) {
-  const resolved = path.resolve(String(filePath || ''));
+  const resolved = normalizeServedPathInput(filePath);
   if (!isAllowedServedFile(resolved, cfg)) throw new Error('文件路径不在允许访问的程序目录内');
   return resolved;
 }
@@ -5296,7 +5476,7 @@ async function apiHandler(req, res, parsed) {
     }
     if (method === 'POST' && p === '/api/video_submit') { const body=await readBody(req); if(String(body.video_platform||'').toLowerCase()==='flow2api'){const ret=await createFlow2VideoBatch({...body,prompts:body.prompt||body.prompts,copies:1},deviceOwner);return send(res,{ok:true,task:ret.rows[0]||null});} const row = await createApimartVideoTask(body, deviceOwner, req, cfg); return send(res,{ok:true, task:formatVideoTask(row)}); }
     if (method === 'POST' && p === '/api/video_batch_submit') { const body=await readBody(req); return send(res, String(body.video_platform||'').toLowerCase()==='flow2api' ? await createFlow2VideoBatch(body, deviceOwner) : await createApimartVideoBatch(body, deviceOwner, req, cfg)); }
-    if (method === 'GET' && p === '/api/video_tasks') { cleanupStaleVideoTasks(owner); const st=ensureVideoStore(); const rows=st.video_tasks.filter(v=>!owner || v.owner_id===owner).sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at))).slice(0,500).map(formatVideoTask); return send(res,{ok:true, rows, video_stats: videoTodayStats(owner)}); }
+    if (method === 'GET' && p === '/api/video_tasks') { cleanupStaleVideoTasks(owner); const st=ensureVideoStore(); const rows=st.video_tasks.filter(v=>!owner || v.owner_id===owner).sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at))).slice(0,500).map(row=>formatVideoTask(row)); return send(res,{ok:true, rows, video_stats: videoTodayStats(owner)}); }
     if (method === 'POST' && p === '/api/video_delete_selected') { const body=await readBody(req); return send(res, deleteVideoTasks(body.ids || [], owner)); }
     if (method === 'POST' && p === '/api/video_export_selected') { const body=await readBody(req); const zipPath=exportSelectedVideos(body.ids || [], owner); return send(res,{ok:true,url:`/download?path=${encodeURIComponent(zipPath)}`}); }
     if (method === 'POST' && p === '/api/video_copy_file') {
