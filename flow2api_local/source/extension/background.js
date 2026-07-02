@@ -5,7 +5,7 @@ let lastSessionRefreshAt = 0;
 
 const DEFAULT_SETTINGS = {
     serverUrl: "ws://127.0.0.1:38000/captcha_ws",
-    apiKey: "",
+    apiKey: "tengying",
     routeKey: "",
     clientLabel: ""
 };

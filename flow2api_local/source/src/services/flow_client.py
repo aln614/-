@@ -54,6 +54,11 @@ class FlowClient:
         }
         # 发车策略改为“请求到就发”：
         # 不在 flow2api 本地对提交做批次整形或排队，避免把同批请求打成阶梯。
+        self._image_launch_locks: Dict[int, asyncio.Lock] = {}
+        self._image_launch_locks_guard = asyncio.Lock()
+        self._flow_risk_until = 0.0
+        self._flow_risk_reason = ""
+        self._flow_risk_lock = asyncio.Lock()
 
     def _generate_user_agent(self, account_id: str = None) -> str:
         """基于账号ID生成固定的 User-Agent
@@ -286,6 +291,7 @@ class FlowClient:
                     debug_logger.log_error(f"[API FAILED] URL: {url}")
                     debug_logger.log_error(f"[API FAILED] Request Body: {json_data}")
                     debug_logger.log_error(f"[API FAILED] Response: {response.text}")
+                    await self._activate_flow_risk_pause(error_reason)
                     
                     raise Exception(error_reason)
 
@@ -294,6 +300,7 @@ class FlowClient:
         except Exception as e:
             duration_ms = (time.time() - start_time) * 1000
             error_msg = str(e)
+            await self._activate_flow_risk_pause(error_msg)
 
             # 如果不是我们自己抛出的异常，记录日志
             if "HTTP Error" not in error_msg and not any(x in error_msg for x in ["PUBLIC_ERROR", "INVALID_ARGUMENT"]):
@@ -490,17 +497,64 @@ class FlowClient:
         except asyncio.TimeoutError as exc:
             raise Exception(f"Flow video API request timed out after {timeout}s") from exc
 
+    def _is_flow_risk_error_text(self, error_message: str) -> bool:
+        error_lower = str(error_message or "").lower()
+        return (
+            "public_error_unusual_activity" in error_lower
+            or "unusual_activity_too_much_traffic" in error_lower
+            or "recaptcha evaluation failed" in error_lower
+        )
+
+    async def _activate_flow_risk_pause(self, error_message: str, seconds: int = 180):
+        if not self._is_flow_risk_error_text(error_message):
+            return
+        pause_seconds = max(30, min(600, int(seconds or 180)))
+        async with self._flow_risk_lock:
+            self._flow_risk_until = max(self._flow_risk_until, time.time() + pause_seconds)
+            self._flow_risk_reason = str(error_message or "flow_risk_control")[:240]
+        debug_logger.log_warning(
+            f"[FLOW RISK] Google Flow reCAPTCHA risk pause {pause_seconds}s: {self._flow_risk_reason}"
+        )
+
+    async def _wait_flow_risk_pause(self) -> int:
+        async with self._flow_risk_lock:
+            remaining = int(max(0, self._flow_risk_until - time.time()))
+            reason = self._flow_risk_reason
+        if remaining <= 0:
+            return 0
+        debug_logger.log_warning(f"[FLOW RISK] Waiting {remaining}s before next Flow submit: {reason}")
+        await asyncio.sleep(remaining)
+        return remaining
+
+    async def _get_image_launch_lock(self, token_id: Optional[int]) -> asyncio.Lock:
+        key = int(token_id or 0)
+        async with self._image_launch_locks_guard:
+            lock = self._image_launch_locks.get(key)
+            if lock is None:
+                lock = asyncio.Lock()
+                self._image_launch_locks[key] = lock
+            return lock
+
     async def _acquire_image_launch_gate(
         self,
         token_id: Optional[int],
         token_image_concurrency: Optional[int],
     ) -> tuple[bool, int, int]:
         """图片请求不再做本地发车排队，直接进入取 token 并提交上游。"""
-        return True, 0, 0
+        started = time.time()
+        await self._wait_flow_risk_pause()
+        lock = await self._get_image_launch_lock(token_id)
+        try:
+            await asyncio.wait_for(lock.acquire(), timeout=config.flow_image_launch_wait_timeout)
+        except asyncio.TimeoutError:
+            return False, int((time.time() - started) * 1000), 0
+        return True, int((time.time() - started) * 1000), 0
 
     async def _release_image_launch_gate(self, token_id: Optional[int]):
         """保留接口形状，当前无需释放任何本地发车状态。"""
-        return
+        lock = await self._get_image_launch_lock(token_id)
+        if lock.locked():
+            lock.release()
 
     async def _acquire_video_launch_gate(
         self,
@@ -1103,12 +1157,25 @@ class FlowClient:
             }
 
             try:
-                result = await self._make_image_generation_request(
-                    url=url,
-                    json_data=json_data,
-                    at=at,
-                    attempt_trace=attempt_trace,
+                submit_gate_acquired = False
+                submit_ok, submit_queue_ms, _ = await self._acquire_image_launch_gate(
+                    token_id=token_id,
+                    token_image_concurrency=token_image_concurrency,
                 )
+                attempt_trace["submit_queue_ms"] = submit_queue_ms
+                if not submit_ok:
+                    raise Exception("Image submit queue wait timeout")
+                submit_gate_acquired = True
+                try:
+                    result = await self._make_image_generation_request(
+                        url=url,
+                        json_data=json_data,
+                        at=at,
+                        attempt_trace=attempt_trace,
+                    )
+                finally:
+                    if submit_gate_acquired:
+                        await self._release_image_launch_gate(token_id)
                 attempt_trace["success"] = True
                 attempt_trace["duration_ms"] = int((time.time() - attempt_started_at) * 1000)
                 perf_trace["generation_attempts"].append(attempt_trace)
@@ -2744,6 +2811,12 @@ class FlowClient:
             "unusual_activity_too_much_traffic",
             "recaptcha evaluation failed",
         ))
+        if unusual_activity:
+            await self._activate_flow_risk_pause(error_str)
+            debug_logger.log_warning(
+                f"{log_prefix} hit Google Flow reCAPTCHA risk control; stop retrying this request and cool down."
+            )
+            return False
         retry_delay = min(45, 12 * (retry_attempt + 1)) if unusual_activity else 1
         debug_logger.log_warning(
             f"{log_prefix}遇到{retry_reason}，{retry_delay}秒后使用新验证码重试 "
