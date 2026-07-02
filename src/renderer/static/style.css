@@ -1331,6 +1331,8 @@ body.mobile-ui .video-manage-grid{grid-template-columns:1fr;}
 .video-first-frame::after{content:'点击预览 · 左右键查看信息';position:absolute;left:8px;right:8px;bottom:8px;padding:5px 8px;border-radius:999px;background:rgba(0,0,0,.48);color:#fff;font-size:11px;text-align:center;opacity:0;transform:translateY(4px);transition:.18s ease;pointer-events:none;}
 .video-first-frame:hover::after{opacity:1;transform:translateY(0);}
 .video-first-frame.loaded::after{background:rgba(0,0,0,.42);}
+.video-first-frame.queued .video-lazy-icon,.video-first-frame.loading .video-lazy-icon{opacity:.82}
+.video-first-frame.loading small::after{content:'...'}
 .video-first-frame.load-error{background:linear-gradient(135deg,#1f2937,#111827);}
 .video-click-zone{user-select:none;}
 

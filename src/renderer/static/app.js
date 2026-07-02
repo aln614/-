@@ -4378,6 +4378,15 @@ function renderVideoRecentBatches(batches = []){
 }
 
 let videoFirstFrameObserver = null;
+const videoFirstFrameQueue = [];
+const videoFirstFrameQueued = new Set();
+const videoFirstFrameCache = new Map();
+let videoFirstFrameActive = 0;
+let videoFirstFramePumpTimer = 0;
+const VIDEO_FIRST_FRAME_MAX_ACTIVE = 1;
+const VIDEO_FIRST_FRAME_DELAY_MS = 110;
+const VIDEO_FIRST_FRAME_TIMEOUT_MS = 6500;
+const VIDEO_FIRST_FRAME_CACHE_LIMIT = 64;
 function videoFirstFrameUrl(raw){
   if(!raw) return '';
   let u = withPublicAccess(raw);
@@ -4385,16 +4394,173 @@ function videoFirstFrameUrl(raw){
   if(/#t=/.test(u)) return u;
   return u + (u.includes('#') ? '' : '#t=0.1');
 }
+function isVideoFirstFrameNearViewport(el, margin = 90){
+  if(!el || !el.isConnected) return false;
+  const rect = el.getBoundingClientRect();
+  return rect.bottom >= -margin && rect.top <= window.innerHeight + margin && rect.right >= -margin && rect.left <= window.innerWidth + margin;
+}
+function rememberVideoFirstFrame(src, dataUrl){
+  if(!src || !dataUrl) return;
+  if(videoFirstFrameCache.has(src)) videoFirstFrameCache.delete(src);
+  videoFirstFrameCache.set(src, dataUrl);
+  while(videoFirstFrameCache.size > VIDEO_FIRST_FRAME_CACHE_LIMIT){
+    videoFirstFrameCache.delete(videoFirstFrameCache.keys().next().value);
+  }
+}
+function renderVideoFirstFrameImage(el, dataUrl){
+  if(!el || !el.isConnected || !dataUrl) return;
+  const img = document.createElement('img');
+  img.className = 'video-first-frame-media video-first-frame-img';
+  img.decoding = 'async';
+  img.loading = 'lazy';
+  img.alt = '';
+  img.src = dataUrl;
+  el.innerHTML = '';
+  el.appendChild(img);
+  el.classList.remove('loading','queued','load-error');
+  el.classList.add('loaded');
+  try { videoFirstFrameObserver?.unobserve(el); } catch {}
+}
+function renderVideoFirstFrameFallback(el){
+  if(!el || !el.isConnected || el.classList.contains('loaded')) return;
+  el.classList.remove('loading','queued');
+  el.classList.add('load-error');
+  el.innerHTML = '<div class="video-lazy-icon">▶</div><small>点击预览视频</small>';
+  try { videoFirstFrameObserver?.unobserve(el); } catch {}
+}
+function captureVideoFirstFrame(src){
+  return new Promise(resolve=>{
+    const v = document.createElement('video');
+    let done = false;
+    const finish = (dataUrl='')=>{
+      if(done) return;
+      done = true;
+      clearTimeout(timer);
+      try { v.pause(); } catch {}
+      try { v.removeAttribute('src'); v.load(); } catch {}
+      resolve(dataUrl || '');
+    };
+    const capture = ()=>{
+      if(done) return;
+      const w = Number(v.videoWidth || 0);
+      const h = Number(v.videoHeight || 0);
+      if(!w || !h) return;
+      try{
+        const scale = Math.min(1, 420 / w);
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(w * scale));
+        canvas.height = Math.max(1, Math.round(h * scale));
+        const ctx = canvas.getContext('2d', { alpha:false });
+        ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
+        finish(canvas.toDataURL('image/jpeg', 0.72));
+      }catch{
+        finish('');
+      }
+    };
+    const timer = setTimeout(()=>finish(''), VIDEO_FIRST_FRAME_TIMEOUT_MS);
+    v.muted = true;
+    v.playsInline = true;
+    v.preload = 'metadata';
+    v.controls = false;
+    v.disablePictureInPicture = true;
+    v.addEventListener('loadedmetadata', ()=>{
+      try{
+        const duration = Number(v.duration || 0);
+        const t = Number.isFinite(duration) && duration > 0.2 ? 0.1 : 0;
+        if(Math.abs(Number(v.currentTime || 0) - t) > 0.02) v.currentTime = t;
+        else setTimeout(capture, 40);
+      }catch{
+        setTimeout(capture, 40);
+      }
+    }, { once:true });
+    v.addEventListener('loadeddata', ()=>setTimeout(capture, 50), { once:true });
+    v.addEventListener('seeked', ()=>setTimeout(capture, 20), { once:true });
+    v.addEventListener('canplay', ()=>setTimeout(capture, 80), { once:true });
+    v.addEventListener('error', ()=>finish(''), { once:true });
+    v.src = src;
+    try { v.load(); } catch {}
+  });
+}
+function pumpVideoFirstFrameQueue(){
+  videoFirstFramePumpTimer = 0;
+  if(document.hidden){
+    scheduleVideoFirstFramePump(500);
+    return;
+  }
+  while(videoFirstFrameActive < VIDEO_FIRST_FRAME_MAX_ACTIVE && videoFirstFrameQueue.length){
+    const el = videoFirstFrameQueue.shift();
+    videoFirstFrameQueued.delete(el);
+    if(!el || !el.isConnected || el.classList.contains('loaded')) continue;
+    if(!isVideoFirstFrameNearViewport(el)){
+      el.classList.remove('queued','loading');
+      continue;
+    }
+    const src = videoFirstFrameUrl(el.dataset.src || '');
+    if(videoFirstFrameCache.has(src)){
+      renderVideoFirstFrameImage(el, videoFirstFrameCache.get(src));
+      continue;
+    }
+    videoFirstFrameActive++;
+    el.classList.add('loading');
+    const run = async()=>{
+      try{
+        if(!el.isConnected || !isVideoFirstFrameNearViewport(el)) return;
+        const dataUrl = await captureVideoFirstFrame(src);
+        if(dataUrl){
+          rememberVideoFirstFrame(src, dataUrl);
+          renderVideoFirstFrameImage(el, dataUrl);
+        } else {
+          renderVideoFirstFrameFallback(el);
+        }
+      }finally{
+        videoFirstFrameActive = Math.max(0, videoFirstFrameActive - 1);
+        scheduleVideoFirstFramePump(VIDEO_FIRST_FRAME_DELAY_MS);
+      }
+    };
+    if(window.requestIdleCallback) window.requestIdleCallback(run, { timeout:900 });
+    else setTimeout(run, 45);
+    break;
+  }
+}
+function scheduleVideoFirstFramePump(delay = VIDEO_FIRST_FRAME_DELAY_MS){
+  if(videoFirstFramePumpTimer) return;
+  videoFirstFramePumpTimer = setTimeout(pumpVideoFirstFrameQueue, delay);
+}
+function enqueueVideoFirstFrame(el){
+  if(!el || !el.isConnected || el.classList.contains('loaded') || el.classList.contains('load-error') || videoFirstFrameQueued.has(el)) return;
+  const src = videoFirstFrameUrl(el.dataset.src || '');
+  if(!src) return;
+  if(videoFirstFrameCache.has(src)){
+    renderVideoFirstFrameImage(el, videoFirstFrameCache.get(src));
+    return;
+  }
+  el.classList.add('queued');
+  videoFirstFrameQueued.add(el);
+  videoFirstFrameQueue.push(el);
+  scheduleVideoFirstFramePump(40);
+}
+function cleanupVideoFirstFrameRoot(root){
+  root?.querySelectorAll?.('.video-first-frame.video-first-observed').forEach(el=>{
+    try { videoFirstFrameObserver?.unobserve(el); } catch {}
+    videoFirstFrameQueued.delete(el);
+  });
+  for(let i = videoFirstFrameQueue.length - 1; i >= 0; i--){
+    const el = videoFirstFrameQueue[i];
+    if(!el || !el.isConnected || root?.contains?.(el)) {
+      videoFirstFrameQueued.delete(el);
+      videoFirstFrameQueue.splice(i, 1);
+    }
+  }
+}
 function ensureVideoFirstFrameObserver(){
   if(videoFirstFrameObserver) return videoFirstFrameObserver;
   videoFirstFrameObserver = new IntersectionObserver(entries=>{
     entries.forEach(entry=>{
       if(!entry.isIntersecting) return;
       const el = entry.target;
-      videoFirstFrameObserver.unobserve(el);
-      loadVideoFirstFrame(el);
+      enqueueVideoFirstFrame(el);
     });
-  }, { root:null, rootMargin:'260px', threshold:0.01 });
+  }, { root:null, rootMargin:'70px', threshold:0.01 });
   return videoFirstFrameObserver;
 }
 function initLazyVideoFirstFrames(root=document){
@@ -4405,26 +4571,7 @@ function initLazyVideoFirstFrames(root=document){
   });
 }
 function loadVideoFirstFrame(el){
-  if(!el || el.classList.contains('loaded')) return;
-  const src = el.dataset.src || '';
-  if(!src) return;
-  const v = document.createElement('video');
-  v.muted = true;
-  v.playsInline = true;
-  v.preload = 'metadata';
-  v.controls = false;
-  v.disablePictureInPicture = true;
-  v.tabIndex = -1;
-  v.className = 'video-first-frame-media';
-  const done = ()=>{
-    el.innerHTML = '';
-    el.appendChild(v);
-    el.classList.add('loaded');
-  };
-  v.addEventListener('loadeddata', done, {once:true});
-  v.addEventListener('loadedmetadata', ()=>{ try{ if(v.currentTime < 0.05) v.currentTime = Math.min(0.1, Math.max(0, (v.duration||1)-0.05)); }catch{}; setTimeout(()=>{ if(!el.classList.contains('loaded')) done(); }, 350); }, {once:true});
-  v.addEventListener('error', ()=>{ el.classList.add('load-error'); el.innerHTML = '<div class="video-lazy-icon">▶</div><small>点击预览视频</small>'; }, {once:true});
-  v.src = videoFirstFrameUrl(src);
+  enqueueVideoFirstFrame(el);
 }
 function showVideoInfoById(id){
   const v = videoTaskById(id);
@@ -4464,7 +4611,7 @@ function renderVideoLibrary(){
   if(rightBox){
     const rightRows = videoTasksCache.slice(0,6);
     const rightSig = stableSig(rightRows.map(v=>[v.id,v.status,v.progress,v.progress_text,v.url,v.stream_url,v.download_url,v.remote_url,v.error_message,v.updated_at]));
-    if(rightSig !== lastVideoRightSignature){ lastVideoRightSignature = rightSig; rightBox.innerHTML = rightRows.map(v=>renderVideoCard(v,{compact:true,selectable:false})).join(''); initLazyVideoFirstFrames(rightBox); }
+    if(rightSig !== lastVideoRightSignature){ lastVideoRightSignature = rightSig; cleanupVideoFirstFrameRoot(rightBox); rightBox.innerHTML = rightRows.map(v=>renderVideoCard(v,{compact:true,selectable:false})).join(''); initLazyVideoFirstFrames(rightBox); }
   }
   const batchSig = stableSig(batches.map(b=>[b.key,b.rows.length,b.done,b.fail,b.progress,b.title]));
   if(batchSig !== lastVideoBatchSignature){ lastVideoBatchSignature = batchSig; renderVideoRecentBatches(batches); }
@@ -4475,6 +4622,7 @@ function renderVideoLibrary(){
     if(manageSig !== lastVideoManageSignature){
       lastVideoManageSignature = manageSig;
       const groups = groupVideosByBatch(manageRows);
+      cleanupVideoFirstFrameRoot(manageBox);
       manageBox.innerHTML = groups.map(g=>`<section class="video-day-group video-batch-group" data-video-batch="${escapeHtml(g.key)}">${videoBatchHeadHtml(g)}<div class="video-batch-progress"><i style="width:${g.progress}%"></i></div><div class="video-day-grid">${g.rows.map(v=>renderVideoCard(v,{selectable:true})).join('')}</div></section>`).join('');
       initLazyVideoFirstFrames(manageBox);
       manageBox.querySelectorAll('[data-video-batch-select]').forEach(btn=>btn.addEventListener('click', e=>{ e.stopPropagation(); toggleVideoBatchSelection(btn.dataset.videoBatchSelect || ''); }));
