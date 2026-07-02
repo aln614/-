@@ -4381,12 +4381,17 @@ let videoFirstFrameObserver = null;
 const videoFirstFrameQueue = [];
 const videoFirstFrameQueued = new Set();
 const videoFirstFrameCache = new Map();
+const videoFirstFrameActiveJobs = new Map();
 let videoFirstFrameActive = 0;
 let videoFirstFramePumpTimer = 0;
+let videoFirstFrameRefreshRaf = 0;
+let videoFirstFrameScrollBound = false;
+let videoFirstFramePendingRoot = null;
 const VIDEO_FIRST_FRAME_MAX_ACTIVE = 1;
 const VIDEO_FIRST_FRAME_DELAY_MS = 110;
 const VIDEO_FIRST_FRAME_TIMEOUT_MS = 6500;
 const VIDEO_FIRST_FRAME_CACHE_LIMIT = 64;
+const VIDEO_FIRST_FRAME_VISIBLE_MARGIN = 18;
 function videoFirstFrameUrl(raw){
   if(!raw) return '';
   let u = withPublicAccess(raw);
@@ -4394,10 +4399,57 @@ function videoFirstFrameUrl(raw){
   if(/#t=/.test(u)) return u;
   return u + (u.includes('#') ? '' : '#t=0.1');
 }
-function isVideoFirstFrameNearViewport(el, margin = 90){
+function isVideoFirstFrameNearViewport(el, margin = VIDEO_FIRST_FRAME_VISIBLE_MARGIN){
   if(!el || !el.isConnected) return false;
   const rect = el.getBoundingClientRect();
-  return rect.bottom >= -margin && rect.top <= window.innerHeight + margin && rect.right >= -margin && rect.left <= window.innerWidth + margin;
+  if(rect.width < 1 || rect.height < 1) return false;
+  let clipTop = -margin;
+  let clipLeft = -margin;
+  let clipRight = window.innerWidth + margin;
+  let clipBottom = window.innerHeight + margin;
+  for(let parent = el.parentElement; parent && parent !== document.documentElement; parent = parent.parentElement){
+    const style = window.getComputedStyle(parent);
+    const overflow = `${style.overflow || ''} ${style.overflowX || ''} ${style.overflowY || ''}`;
+    if(!/(auto|scroll|hidden|clip)/.test(overflow)) continue;
+    const pr = parent.getBoundingClientRect();
+    clipTop = Math.max(clipTop, pr.top - margin);
+    clipLeft = Math.max(clipLeft, pr.left - margin);
+    clipRight = Math.min(clipRight, pr.right + margin);
+    clipBottom = Math.min(clipBottom, pr.bottom + margin);
+  }
+  return rect.bottom >= clipTop && rect.top <= clipBottom && rect.right >= clipLeft && rect.left <= clipRight;
+}
+function videoFirstFrameDistance(el){
+  const rect = el.getBoundingClientRect();
+  const y = Math.max(0, Math.min(window.innerHeight, rect.top + rect.height / 2));
+  return Math.abs(y - window.innerHeight / 2);
+}
+function dropQueuedVideoFirstFrame(el, clearState = true){
+  if(!el) return;
+  videoFirstFrameQueued.delete(el);
+  for(let i = videoFirstFrameQueue.length - 1; i >= 0; i--){
+    if(videoFirstFrameQueue[i] === el) videoFirstFrameQueue.splice(i, 1);
+  }
+  if(clearState) el.classList?.remove('queued');
+}
+function pruneVideoFirstFrameQueue(){
+  for(let i = videoFirstFrameQueue.length - 1; i >= 0; i--){
+    const el = videoFirstFrameQueue[i];
+    if(!el || !el.isConnected || el.classList.contains('loaded') || el.classList.contains('load-error') || !isVideoFirstFrameNearViewport(el)){
+      if(el) el.classList.remove('queued','loading');
+      videoFirstFrameQueued.delete(el);
+      videoFirstFrameQueue.splice(i, 1);
+    }
+  }
+  videoFirstFrameQueue.sort((a, b)=>videoFirstFrameDistance(a) - videoFirstFrameDistance(b));
+}
+function abortOffscreenVideoFirstFrameJobs(){
+  videoFirstFrameActiveJobs.forEach((job, el)=>{
+    if(!el || !el.isConnected || el.classList.contains('loaded') || !isVideoFirstFrameNearViewport(el)){
+      try { job.abort(); } catch {}
+      el?.classList?.remove('loading','queued');
+    }
+  });
 }
 function rememberVideoFirstFrame(src, dataUrl){
   if(!src || !dataUrl) return;
@@ -4428,7 +4480,7 @@ function renderVideoFirstFrameFallback(el){
   el.innerHTML = '<div class="video-lazy-icon">▶</div><small>点击预览视频</small>';
   try { videoFirstFrameObserver?.unobserve(el); } catch {}
 }
-function captureVideoFirstFrame(src){
+function captureVideoFirstFrame(src, signal){
   return new Promise(resolve=>{
     const v = document.createElement('video');
     let done = false;
@@ -4440,8 +4492,11 @@ function captureVideoFirstFrame(src){
       try { v.removeAttribute('src'); v.load(); } catch {}
       resolve(dataUrl || '');
     };
+    if(signal?.aborted){ finish(''); return; }
+    signal?.addEventListener('abort', ()=>finish(''), { once:true });
     const capture = ()=>{
       if(done) return;
+      if(signal?.aborted) return finish('');
       const w = Number(v.videoWidth || 0);
       const h = Number(v.videoHeight || 0);
       if(!w || !h) return;
@@ -4487,6 +4542,8 @@ function pumpVideoFirstFrameQueue(){
     scheduleVideoFirstFramePump(500);
     return;
   }
+  pruneVideoFirstFrameQueue();
+  abortOffscreenVideoFirstFrameJobs();
   while(videoFirstFrameActive < VIDEO_FIRST_FRAME_MAX_ACTIVE && videoFirstFrameQueue.length){
     const el = videoFirstFrameQueue.shift();
     videoFirstFrameQueued.delete(el);
@@ -4502,10 +4559,16 @@ function pumpVideoFirstFrameQueue(){
     }
     videoFirstFrameActive++;
     el.classList.add('loading');
+    const controller = new AbortController();
+    videoFirstFrameActiveJobs.set(el, controller);
     const run = async()=>{
       try{
         if(!el.isConnected || !isVideoFirstFrameNearViewport(el)) return;
-        const dataUrl = await captureVideoFirstFrame(src);
+        const dataUrl = await captureVideoFirstFrame(src, controller.signal);
+        if(controller.signal.aborted || !el.isConnected || !isVideoFirstFrameNearViewport(el)){
+          el.classList.remove('loading','queued');
+          return;
+        }
         if(dataUrl){
           rememberVideoFirstFrame(src, dataUrl);
           renderVideoFirstFrameImage(el, dataUrl);
@@ -4513,6 +4576,7 @@ function pumpVideoFirstFrameQueue(){
           renderVideoFirstFrameFallback(el);
         }
       }finally{
+        videoFirstFrameActiveJobs.delete(el);
         videoFirstFrameActive = Math.max(0, videoFirstFrameActive - 1);
         scheduleVideoFirstFramePump(VIDEO_FIRST_FRAME_DELAY_MS);
       }
@@ -4534,10 +4598,12 @@ function enqueueVideoFirstFrame(el){
     renderVideoFirstFrameImage(el, videoFirstFrameCache.get(src));
     return;
   }
+  if(!isVideoFirstFrameNearViewport(el)) return;
   el.classList.add('queued');
   videoFirstFrameQueued.add(el);
   videoFirstFrameQueue.push(el);
-  scheduleVideoFirstFramePump(40);
+  pruneVideoFirstFrameQueue();
+  scheduleVideoFirstFramePump(18);
 }
 function cleanupVideoFirstFrameRoot(root){
   root?.querySelectorAll?.('.video-first-frame.video-first-observed').forEach(el=>{
@@ -4551,27 +4617,73 @@ function cleanupVideoFirstFrameRoot(root){
       videoFirstFrameQueue.splice(i, 1);
     }
   }
+  videoFirstFrameActiveJobs.forEach((job, el)=>{
+    if(!el || !el.isConnected || root?.contains?.(el)){
+      try { job.abort(); } catch {}
+      el?.classList?.remove('loading','queued');
+    }
+  });
+}
+function videoFirstFrameCandidates(root=document){
+  if(root?.matches?.('.video-first-frame[data-src]')) return [root];
+  return Array.from(root?.querySelectorAll?.('.video-first-frame[data-src]:not(.loaded):not(.load-error)') || []);
+}
+function refreshVisibleVideoFirstFrames(root=document){
+  if(document.hidden) return;
+  abortOffscreenVideoFirstFrameJobs();
+  pruneVideoFirstFrameQueue();
+  const visible = videoFirstFrameCandidates(root)
+    .filter(el=>el.isConnected && !el.classList.contains('loading') && isVideoFirstFrameNearViewport(el))
+    .sort((a, b)=>videoFirstFrameDistance(a) - videoFirstFrameDistance(b));
+  visible.forEach(el=>enqueueVideoFirstFrame(el));
+  pruneVideoFirstFrameQueue();
+  scheduleVideoFirstFramePump(0);
+}
+function scheduleVisibleVideoFirstFrameRefresh(root=document){
+  if(!videoFirstFramePendingRoot || root === document){
+    videoFirstFramePendingRoot = root || document;
+  }else if(root?.contains?.(videoFirstFramePendingRoot)){
+    videoFirstFramePendingRoot = root;
+  }
+  if(videoFirstFrameRefreshRaf) return;
+  videoFirstFrameRefreshRaf = requestAnimationFrame(()=>{
+    videoFirstFrameRefreshRaf = 0;
+    const pendingRoot = videoFirstFramePendingRoot || document;
+    videoFirstFramePendingRoot = null;
+    refreshVisibleVideoFirstFrames(pendingRoot);
+  });
+}
+function bindVideoFirstFrameScrollRefresh(){
+  if(videoFirstFrameScrollBound) return;
+  videoFirstFrameScrollBound = true;
+  const onMove = ()=>scheduleVisibleVideoFirstFrameRefresh(document);
+  window.addEventListener('scroll', onMove, { passive:true, capture:true });
+  document.addEventListener('scroll', onMove, { passive:true, capture:true });
+  window.addEventListener('resize', onMove, { passive:true });
+  document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) scheduleVisibleVideoFirstFrameRefresh(document); });
 }
 function ensureVideoFirstFrameObserver(){
   if(videoFirstFrameObserver) return videoFirstFrameObserver;
   videoFirstFrameObserver = new IntersectionObserver(entries=>{
     entries.forEach(entry=>{
-      if(!entry.isIntersecting) return;
       const el = entry.target;
-      enqueueVideoFirstFrame(el);
+      if(entry.isIntersecting) scheduleVisibleVideoFirstFrameRefresh(el);
+      else dropQueuedVideoFirstFrame(el);
     });
-  }, { root:null, rootMargin:'70px', threshold:0.01 });
+  }, { root:null, rootMargin:'0px', threshold:0.01 });
   return videoFirstFrameObserver;
 }
 function initLazyVideoFirstFrames(root=document){
+  bindVideoFirstFrameScrollRefresh();
   const obs = ensureVideoFirstFrameObserver();
   root.querySelectorAll?.('.video-first-frame[data-src]:not(.video-first-observed):not(.loaded)').forEach(el=>{
     el.classList.add('video-first-observed');
     obs.observe(el);
   });
+  scheduleVisibleVideoFirstFrameRefresh(root);
 }
 function loadVideoFirstFrame(el){
-  enqueueVideoFirstFrame(el);
+  scheduleVisibleVideoFirstFrameRefresh(el);
 }
 function showVideoInfoById(id){
   const v = videoTaskById(id);
