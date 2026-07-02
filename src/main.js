@@ -16,6 +16,7 @@ let server = null;
 let queue = null;
 let configPath = null;
 let currentPort = 7860;
+let lastMidjourneyImageRepairAt = 0;
 let tunnelProcess = null;
 let tunnelState = { running: false, provider: '', url: '', logs: [], last_error: '' };
 const staticDir = path.join(__dirname, 'renderer');
@@ -1031,10 +1032,11 @@ function repairImageRowPaths(row = {}) {
   return row;
 }
 function formatImage(row, opts = {}) {
-  row = opts.fast ? row : repairImageRowPaths(row);
+  const fast = !!opts.fast;
+  row = fast ? row : repairImageRowPaths(row);
   const remote = row.remote_url || row.result_url || '';
-  const localFull = row.file_path && fs.existsSync(row.file_path) ? `/file?path=${encodeURIComponent(row.file_path)}` : '';
-  const localThumb = row.thumb_path && fs.existsSync(row.thumb_path) ? `/file?path=${encodeURIComponent(row.thumb_path)}` : localFull;
+  const localFull = row.file_path && (fast || fs.existsSync(row.file_path)) ? `/file?path=${encodeURIComponent(row.file_path)}` : '';
+  const localThumb = row.thumb_path && (fast || fs.existsSync(row.thumb_path)) ? `/file?path=${encodeURIComponent(row.thumb_path)}` : localFull;
   const st = getDB()._store;
   const task = st.tasks.find(t => t.id === row.task_id) || {};
   const batch = st.batches.find(b => b.id === row.batch_id) || {};
@@ -1070,11 +1072,11 @@ function formatImage(row, opts = {}) {
     mj_is_grid: !!row.mj_is_grid,
     mj_variant_index: Number(task.mj_variant_index || row.mj_variant_index || 0),
     mj_images: mjImages.map(item=>{
-      const local = item.local_path && fs.existsSync(item.local_path) ? `/file?path=${encodeURIComponent(item.local_path)}` : '';
+      const local = item.local_path && (!fast && fs.existsSync(item.local_path)) ? `/file?path=${encodeURIComponent(item.local_path)}` : '';
       return { ...item, full_url: local || item.remote_url || '', remote_url: item.remote_url || '' };
     }),
     mj_grid_remote_url: task.mj_grid_remote_url || '',
-    mj_grid_local_url: task.mj_grid_local_path && fs.existsSync(task.mj_grid_local_path) ? `/file?path=${encodeURIComponent(task.mj_grid_local_path)}` : (task.mj_grid_remote_url || ''),
+    mj_grid_local_url: !fast && task.mj_grid_local_path && fs.existsSync(task.mj_grid_local_path) ? `/file?path=${encodeURIComponent(task.mj_grid_local_path)}` : (task.mj_grid_remote_url || ''),
     mj_buttons: mjButtons,
     mj_executed_buttons: mjExecutedButtons,
     hidden_in_recent: !!row.hidden_in_recent
@@ -2889,8 +2891,8 @@ function exportSelectedVideos(ids = [], owner='') {
   return zipPath;
 }
 function formatVideoTask(row, opts = {}) {
-  row = repairVideoTaskFilePath(row);
-  const hasFile = !!(row.file_path && fs.existsSync(row.file_path));
+  row = opts.fast ? row : repairVideoTaskFilePath(row);
+  const hasFile = opts.fast ? !!row.file_path : !!(row.file_path && fs.existsSync(row.file_path));
   const stream = hasFile ? `/video-file?id=${encodeURIComponent(row.id)}${opts.allOwners ? '&all_owners=1' : ''}` : '';
   return { ...row, file_exists: hasFile, progress_text: row.progress_text || (row.status === '\u5df2\u5b8c\u6210' ? '\u5df2\u5b8c\u6210' : ''), stream_url: stream, share_url: hasFile ? `/video-share?id=${encodeURIComponent(row.id)}` : '', url: stream || row.remote_url || '', download_url: hasFile ? `/download?path=${encodeURIComponent(row.file_path)}` : (row.remote_url || ''), filename: hasFile ? path.basename(row.file_path) : `${row.id}.mp4` };
 }
@@ -3011,7 +3013,7 @@ function streamVideoFile(file, req, res, download=false) {
     'Content-Type': type,
     'Accept-Ranges': 'bytes',
     'Access-Control-Allow-Origin': '*',
-    'Cache-Control': 'no-store',
+    'Cache-Control': 'public, max-age=86400',
     'Content-Disposition': `${download ? 'attachment' : 'inline'}; filename*=UTF-8''${encodeURIComponent(filename)}`
   };
   const range = req.headers.range;
@@ -5521,12 +5523,16 @@ async function apiHandler(req, res, parsed) {
     if (method === 'POST' && p === '/api/repeat_batch') { const body=await readBody(req); const ret=await repeatBatch(body.batch_id, owner, deviceOwner, body); return send(res,{ok:true, id:ret.id, task_count:ret.taskCount}); }
     if (method === 'POST' && p === '/api/update_batch_note') { const body=await readBody(req); const b=getDB()._store.batches.find(x=>x.id===body.batch_id && (!owner || x.owner_id===owner)); if(!b) throw new Error('无权限或批次不存在'); b.note=body.note||''; b.updated_at=nowISO(); getDB()._save(); return send(res,{ok:true}); }
     if (method === 'GET' && p === '/api/images') {
-      if (dataOwner || String(parsed.query.repair || '') === '1') await repairCompletedMidjourneyImages(dataOwner || '');
       const hasBatchFilter = !!String(parsed.query.batch_id || '');
+      const fastRequested = String(parsed.query.fast || '') === '1';
+      const forceRepair = String(parsed.query.repair || '') === '1';
+      const shouldRepair = forceRepair || (!fastRequested && dataOwner && Date.now() - lastMidjourneyImageRepairAt > 5 * 60 * 1000);
+      if (shouldRepair) { lastMidjourneyImageRepairAt = Date.now(); await repairCompletedMidjourneyImages(dataOwner || ''); }
       const defaultImageLimit = hasBatchFilter ? (local ? 6000 : 1000) : 300;
+      const page = Math.max(1, Number(parsed.query.page || 1));
       const pageSize = Math.max(1, Math.min(local ? 6000 : 1000, Number(parsed.query.limit || parsed.query.page_size || defaultImageLimit)));
-      let rows = listImages({ownerId:dataOwner, batchId: parsed.query.batch_id || '', page:1, pageSize}).rows;
-      if (String(parsed.query.panel_only || '') === '1') rows = rows.filter(r => !r.hidden_in_recent || (r.file_path && fs.existsSync(r.file_path)));
+      let rows = listImages({ownerId:dataOwner, batchId: parsed.query.batch_id || '', page, pageSize}).rows;
+      if (String(parsed.query.panel_only || '') === '1') rows = rows.filter(r => !r.hidden_in_recent || (!fastRequested && r.file_path && fs.existsSync(r.file_path)));
       if (String(parsed.query.only_mj || '') === '1') rows = rows.filter(r => (r.mj_source || '') === 'midjourney');
       const seenImageKeys = new Set();
       const gridByTask = new Map();
@@ -5540,7 +5546,7 @@ async function apiHandler(req, res, parsed) {
         return true;
       });
       rows = rows.slice(0, pageSize);
-      const fastFormat = String(parsed.query.panel_only || '') === '1' && !String(parsed.query.batch_id || '');
+      const fastFormat = fastRequested || (String(parsed.query.panel_only || '') === '1' && !String(parsed.query.batch_id || ''));
       return send(res, rows.map(row => formatImage(row, { fast: fastFormat })));
     }
     if (method === 'POST' && p === '/api/delete_images') { const body=await readBody(req); return send(res, deleteImages(body.image_ids || [], owner)); }
@@ -5592,7 +5598,7 @@ async function apiHandler(req, res, parsed) {
     }
     if (method === 'POST' && p === '/api/video_submit') { const body=await readBody(req); if(String(body.video_platform||'').toLowerCase()==='flow2api'){const ret=await createFlow2VideoBatch({...body,prompts:body.prompt||body.prompts,copies:1},deviceOwner);return send(res,{ok:true,task:ret.rows[0]||null});} const row = await createApimartVideoTask(body, deviceOwner, req, cfg); return send(res,{ok:true, task:formatVideoTask(row)}); }
     if (method === 'POST' && p === '/api/video_batch_submit') { const body=await readBody(req); return send(res, String(body.video_platform||'').toLowerCase()==='flow2api' ? await createFlow2VideoBatch(body, deviceOwner) : await createApimartVideoBatch(body, deviceOwner, req, cfg)); }
-    if (method === 'GET' && p === '/api/video_tasks') { const scopedOwner = local && parsed.query.all_owners === '1' ? '' : dataOwner; cleanupStaleVideoTasks(scopedOwner); const st=ensureVideoStore(); const allOwners = !scopedOwner; const rows=st.video_tasks.filter(v=>!scopedOwner || v.owner_id===scopedOwner).sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at))).slice(0,local ? 5000 : 500).map(row=>formatVideoTask(row, { allOwners })); return send(res,{ok:true, rows, video_stats: videoTodayStats(scopedOwner), scope: scopedOwner ? 'device' : 'all_owners'}); }
+    if (method === 'GET' && p === '/api/video_tasks') { const scopedOwner = local && parsed.query.all_owners === '1' ? '' : dataOwner; cleanupStaleVideoTasks(scopedOwner); const st=ensureVideoStore(); const allOwners = !scopedOwner; const pageSize = Math.max(1, Math.min(local ? 5000 : 500, Number(parsed.query.limit || parsed.query.page_size || (local ? 1200 : 500)))); const rows=st.video_tasks.filter(v=>!scopedOwner || v.owner_id===scopedOwner).sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at))).slice(0,pageSize).map(row=>formatVideoTask(row, { allOwners, fast:true })); return send(res,{ok:true, rows, video_stats: videoTodayStats(scopedOwner), scope: scopedOwner ? 'device' : 'all_owners'}); }
     if (method === 'POST' && p === '/api/video_delete_selected') { const body=await readBody(req); const scopedOwner = local && body.all_owners === true ? '' : owner; return send(res, deleteVideoTasks(body.ids || [], scopedOwner)); }
     if (method === 'POST' && p === '/api/video_export_selected') { const body=await readBody(req); const scopedOwner = local && body.all_owners === true ? '' : owner; const zipPath=exportSelectedVideos(body.ids || [], scopedOwner); return send(res,{ok:true,url:`/download?path=${encodeURIComponent(zipPath)}`}); }
     if (method === 'POST' && p === '/api/video_copy_file') {
@@ -5718,7 +5724,7 @@ function requestHandler(req, res) {
     catch { return sendText(res, 'file access denied', 'text/plain', 403); }
     if (!file || !fs.existsSync(file)) return sendText(res, 'not found', 'text/plain', 404);
     if (/^video\//i.test(contentType(file))) return streamVideoFile(file, req, res, parsed.pathname === '/download');
-    const headers = {'Content-Type': contentType(file), 'Access-Control-Allow-Origin':'*'};
+    const headers = {'Content-Type': contentType(file), 'Access-Control-Allow-Origin':'*', 'Cache-Control':'public, max-age=86400'};
     if (parsed.pathname === '/download') headers['Content-Disposition'] = `attachment; filename*=UTF-8''${encodeURIComponent(path.basename(file))}`;
     res.writeHead(200, headers); return fs.createReadStream(file).pipe(res);
   }

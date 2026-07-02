@@ -537,17 +537,17 @@ body.remote-client #publicReadonlyCard{max-width:760px;}
   #imageGrid .image-card{min-height:176px!important;}
 }
 
-/* 细小滚动条：不再出现大白边，默认弱化，鼠标悬停时才明显显示。 */
-*{scrollbar-width:thin;scrollbar-color:transparent transparent;}
-*:hover{scrollbar-color:rgba(120,130,150,.38) transparent;}
+/* 细小滚动条：避免全局 *:hover 触发大范围重绘，鼠标移动时优先保持流畅。 */
+html,body,.main,.right-panel,.logs,.table-wrap,.chat-messages,.preview-info,.asset-grid,.asset-tree-scroll,#videoManageGrid{scrollbar-width:thin;scrollbar-color:rgba(120,130,150,.28) transparent;}
 ::-webkit-scrollbar{width:6px;height:6px;background:transparent!important;}
 ::-webkit-scrollbar-track{background:transparent!important;border:0!important;}
-::-webkit-scrollbar-thumb{background:transparent!important;border-radius:999px;border:0!important;}
-*:hover::-webkit-scrollbar-thumb{background:rgba(120,130,150,.38)!important;}
+::-webkit-scrollbar-thumb{background:rgba(120,130,150,.28)!important;border-radius:999px;border:0!important;}
 ::-webkit-scrollbar-thumb:hover{background:rgba(120,130,150,.62)!important;}
 ::-webkit-scrollbar-corner{background:transparent!important;}
-.theme-dark *:hover::-webkit-scrollbar-thumb{background:rgba(180,190,210,.32)!important;}
+.theme-dark ::-webkit-scrollbar-thumb{background:rgba(180,190,210,.26)!important;}
 .theme-dark ::-webkit-scrollbar-thumb:hover{background:rgba(210,220,240,.52)!important;}
+.image-card,.video-card,.asset-card{content-visibility:auto;contain-intrinsic-size:190px 240px;}
+.image-load-more-hint{grid-column:1/-1;text-align:center;color:var(--muted);font-size:13px;padding:14px;border-radius:16px;background:rgba(255,255,255,.62);border:1px solid rgba(148,163,184,.22);}
 
 /* AI聊天：聊天记录区和系统提示词区允许自由纵向调整，列表/记录可滚动，输入区固定可用。 */
 #page-chat.page.active{

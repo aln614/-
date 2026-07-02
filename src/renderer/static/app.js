@@ -30,8 +30,19 @@ let keepAliveTimer = null;
 let chatMessages = [];
 let chatImages = [];
 let imageMetaMap = new Map();
+let imageRowsCache = [];
+let imagePage = 1;
+let imageHasMore = false;
+let imageLoading = false;
+let imageGridEventsBound = false;
+let imageGridScrollBound = false;
+let imageGridScrollTimer = 0;
+let miniImagesCache = [];
+let miniImagesFetchedAt = 0;
+let miniImagesFetchPromise = null;
 let chatCardPlaceholder = null;
 let currentPreviewMeta = {};
+let previewLoadToken = 0;
 const PREVIEW_BG_STORAGE_KEY = 'LAIG_PREVIEW_BG_SETTINGS';
 let previewBgSettings = { color:'black', opacity:0 };
 let softwareUpdateInfo = null;
@@ -2231,7 +2242,7 @@ async function refreshAll(){
     if(needLogs){ lastLogsLoadAt = Date.now(); jobs.push(loadLogs()); }
     await Promise.all(jobs);
     const imagesActive = $('#page-images')?.classList.contains('active');
-    if(imagesActive && !document.body.classList.contains('mobile-ui')) await loadImages();
+    if(imagesActive && !document.body.classList.contains('mobile-ui') && !imageRowsCache.length) await loadImages();
     if($('#page-history')?.classList.contains('active')) renderHistory();
     if($('#page-video')?.classList.contains('active')) await loadVideoTasks();
   } finally {
@@ -2600,54 +2611,100 @@ function fillBatchSelect(){
 }
 $('#imageBatchSelect').addEventListener('change',()=>{ currentImageBatch = $('#imageBatchSelect').value; selectedImages.clear(); loadImages(); });
 
-async function loadImages(){
+const IMAGE_PAGE_SIZE = 96;
+function bindImageGridEvents(){
+  const grid = $('#imageGrid');
+  if(!grid || imageGridEventsBound) return;
+  imageGridEventsBound = true;
+  grid.addEventListener('click', e=>{
+    const card = e.target.closest('.image-card');
+    if(!card) return;
+    const id = card.dataset.id;
+    if(e.ctrlKey || e.metaKey || e.shiftKey){ toggleImage(id); return; }
+    if(!card.dataset.url){ toast('原图文件不存在，无法预览'); return; }
+    showPreview(card.dataset.url, imageMetaMap.get(id) || {});
+  });
+  grid.addEventListener('dragstart', e=>{
+    const card = e.target.closest('.image-card');
+    if(!card) return;
+    const id = card.dataset.id;
+    const meta = imageMetaMap.get(id) || {fullUrl:card.dataset.url, thumbUrl:card.dataset.thumbUrl};
+    setImageDragData(e, meta);
+  });
+  grid.addEventListener('error', e=>{
+    const img = e.target.closest?.('.image-card img');
+    if(!img) return;
+    img.classList.add('is-broken');
+    img.parentElement?.querySelector?.('.img-fallback')?.classList.add('active');
+  }, true);
+  grid.addEventListener('load', e=>{
+    const img = e.target.closest?.('.image-card img');
+    if(!img) return;
+    img.parentElement?.querySelector?.('.img-fallback')?.classList.remove('active');
+  }, true);
+}
+function bindImageInfiniteScroll(){
+  if(imageGridScrollBound) return;
+  imageGridScrollBound = true;
+  const root = document.querySelector('.main') || window;
+  const onScroll = ()=>{
+    if(imageGridScrollTimer) return;
+    imageGridScrollTimer = window.setTimeout(()=>{
+      imageGridScrollTimer = 0;
+      if(!$('#page-images')?.classList.contains('active') || !imageHasMore || imageLoading) return;
+      const el = root === window ? document.documentElement : root;
+      const remain = el.scrollHeight - el.scrollTop - el.clientHeight;
+      if(remain < 900) loadImages({append:true});
+    }, 120);
+  };
+  root.addEventListener('scroll', onScroll, {passive:true});
+}
+async function loadImages(opts = {}){
+  const append = opts.append === true;
+  if(imageLoading) return;
   fillBatchSelect();
   if(currentImageBatch) $('#imageBatchSelect').value = currentImageBatch;
-  const url = currentImageBatch ? ('/api/images?batch_id=' + encodeURIComponent(currentImageBatch)) : '/api/images?panel_only=1';
-  const imgs = await api(url);
-  renderImages(imgs);
+  bindImageGridEvents();
+  bindImageInfiniteScroll();
+  if(!append){
+    imageRowsCache = [];
+    imagePage = 1;
+    imageHasMore = false;
+    if($('#imageGrid')) $('#imageGrid').innerHTML = '<div class="card">正在加载图片...</div>';
+  }
+  imageLoading = true;
+  try{
+    const params = new URLSearchParams({fast:'1', limit:String(IMAGE_PAGE_SIZE), page:String(imagePage)});
+    if(currentImageBatch) params.set('batch_id', currentImageBatch);
+    else params.set('panel_only', '1');
+    const imgs = await api('/api/images?' + params.toString());
+    imageRowsCache = append ? imageRowsCache.concat(imgs) : imgs;
+    imageHasMore = Array.isArray(imgs) && imgs.length >= IMAGE_PAGE_SIZE;
+    if(imageHasMore) imagePage += 1;
+    renderImages(imageRowsCache);
+  }finally{
+    imageLoading = false;
+  }
 }
 function renderImages(imgs){
   imageMetaMap = new Map();
-  $('#imageGrid').innerHTML = imgs.map(img=>{
+  const rows = Array.isArray(imgs) ? imgs : [];
+  $('#imageGrid').innerHTML = rows.map(img=>{
     const thumb = img.thumb_url || img.url || img.remote_url || ''; 
     const full = img.full_url || img.original_url || img.url || img.remote_url || ''; 
     const meta = imageRowToPreviewMeta(img);
     imageMetaMap.set(img.id, meta);
     const selected = selectedImages.has(img.id) ? 'selected' : '';
     const missing = img.missing || !(thumb || full);
-    const media = missing ? '<div class="img-fallback active">文件缺失</div>' : '<img loading="lazy" src="' + thumb + '" draggable="false" data-full-url="' + full + '" data-id="' + img.id + '" alt="" title="点击预览原图 / 右键复制 url 或提示词"><div class="img-fallback">图片加载失败</div>';
-    return '<div class="image-card ' + selected + (missing ? ' missing' : '') + '" draggable="' + (!missing) + '" data-id="' + img.id + '" data-url="' + full + '" title="点击预览原图，Ctrl/Shift 多选"><div class="check">' + (selectedImages.has(img.id) ? '✓' : '') + '</div>' + media + '<div class="cap">' + escapeHtml(img.filename) + '</div></div>';
-  }).join('') || '<div class="card">????</div>';
-  $$('.image-card').forEach(card=>{
-    card.addEventListener('click',(e)=>{
-      const id = card.dataset.id;
-      if(e.ctrlKey || e.metaKey || e.shiftKey){ toggleImage(id); }
-      else if(!card.dataset.url){ toast('原图文件不存在，无法预览'); }
-      else showPreview(card.dataset.url, imageMetaMap.get(id) || {});
-    });
-    card.addEventListener('dragstart', (e)=>{
-      const id = card.dataset.id;
-      const meta = imageMetaMap.get(id) || {fullUrl:card.dataset.url};
-      setImageDragData(e, meta);
-    });
-    const img = card.querySelector('img');
-    const fallback = card.querySelector('.img-fallback');
-    if (img && fallback) {
-      const showFallback = () => {
-        img.classList.add('is-broken');
-        fallback.classList.add('active');
-      };
-      img.addEventListener('error', showFallback, { once:true });
-      img.addEventListener('load', () => fallback.classList.remove('active'), { once:true });
-      if (img.complete && !img.naturalWidth) showFallback();
-    }
-  });
+    const media = missing ? '<div class="img-fallback active">文件缺失</div>' : '<img loading="lazy" decoding="async" src="' + thumb + '" draggable="false" data-full-url="' + full + '" data-id="' + img.id + '" alt="" title="点击预览原图 / 右键复制 url 或提示词"><div class="img-fallback">图片加载失败</div>';
+    return '<div class="image-card ' + selected + (missing ? ' missing' : '') + '" draggable="' + (!missing) + '" data-id="' + img.id + '" data-url="' + full + '" data-thumb-url="' + thumb + '" title="点击预览原图，Ctrl/Shift 多选"><div class="check">' + (selectedImages.has(img.id) ? '✓' : '') + '</div>' + media + '<div class="cap">' + escapeHtml(img.filename) + '</div></div>';
+  }).join('') || '<div class="card">暂无图片</div>';
+  if(imageHasMore) $('#imageGrid').insertAdjacentHTML('beforeend', '<div class="image-load-more-hint">继续向下滚动加载更多图片...</div>');
 }
-function toggleImage(id){ if(selectedImages.has(id)) selectedImages.delete(id); else selectedImages.add(id); loadImages(); }
-$('#selectAllBtn').addEventListener('click',()=>{ $$('.image-card').forEach(c=>selectedImages.add(c.dataset.id)); loadImages(); });
-$('#clearSelectBtn').addEventListener('click',()=>{ selectedImages.clear(); loadImages(); });
-$('#invertSelectBtn').addEventListener('click',()=>{ $$('.image-card').forEach(c=> selectedImages.has(c.dataset.id) ? selectedImages.delete(c.dataset.id) : selectedImages.add(c.dataset.id)); loadImages(); });
+function toggleImage(id){ if(selectedImages.has(id)) selectedImages.delete(id); else selectedImages.add(id); renderImages(imageRowsCache); }
+$('#selectAllBtn').addEventListener('click',()=>{ imageRowsCache.forEach(i=>selectedImages.add(i.id)); renderImages(imageRowsCache); });
+$('#clearSelectBtn').addEventListener('click',()=>{ selectedImages.clear(); renderImages(imageRowsCache); });
+$('#invertSelectBtn').addEventListener('click',()=>{ imageRowsCache.forEach(i=> selectedImages.has(i.id) ? selectedImages.delete(i.id) : selectedImages.add(i.id)); renderImages(imageRowsCache); });
 $('#exportSelectedBtn').addEventListener('click',async()=>{
   if(!selectedImages.size) return alert('先选择图片');
   const r = await api('/api/export_selected_zip',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({batch_id:currentImageBatch || '',image_ids:[...selectedImages]})});
@@ -2661,7 +2718,14 @@ $('#deleteSelectedBtn').addEventListener('click',async()=>{
 });
 
 async function loadMiniImages(activeTasks = []){
-  const imgs = await api('/api/images?limit=6&panel_only=1');
+  const now = Date.now();
+  let imgs = miniImagesCache;
+  if(now - miniImagesFetchedAt > 12000 || !miniImagesCache.length){
+    miniImagesFetchPromise = miniImagesFetchPromise || api('/api/images?limit=6&panel_only=1&fast=1')
+      .then(rows=>{ miniImagesCache = Array.isArray(rows) ? rows : []; miniImagesFetchedAt = Date.now(); return miniImagesCache; })
+      .finally(()=>{ miniImagesFetchPromise = null; });
+    imgs = await miniImagesFetchPromise;
+  }
   const active = (activeTasks || []).filter(shouldShowInRecentImages).slice(0, 6).map(t=>({ ...t, __kind:'task' }));
   const completed = imgs.slice(0, Math.max(0, 6 - active.length)).map(i=>({ ...i, __kind:'image' }));
   const items = [...active, ...completed].slice(0, 6);
@@ -3048,7 +3112,8 @@ function mergeMjSingleButtons(buttons=[]){
 }
 function imageRowToPreviewMeta(img={}){
   const full = img.full_url || img.url || img.remote_url || ''; 
-  return {id:img.id, fullUrl:full, originalUrl:img.original_url||full, remoteUrl:img.remote_url||'', prompt:img.prompt||'', model:img.model||'', size:img.size||'', imageSize:img.image_size||'', batch:img.batch_name||'', time:formatBeijingTime(img.generated_at||''), filename:img.filename||'generated-image.png', status:img.status||'', progress:img.progress||0, progress_text:img.progress_text||'', taskId:img.task_id||'', local_task_id:img.local_task_id||'', batch_id:img.batch_id||'', mj_source:img.mj_source||'', mj_action:img.mj_action||'', mj_parent_task_id:img.mj_parent_task_id||'', mj_parent_remote_task_id:img.mj_parent_remote_task_id||'', mj_is_grid:!!img.mj_is_grid, mj_variant_index:img.mj_variant_index||0, mj_images:img.mj_images||[], mj_buttons:img.mj_buttons||[], mj_executed_buttons:img.mj_executed_buttons||[], mj_grid_remote_url:img.mj_grid_remote_url||'', mj_grid_local_url:img.mj_grid_local_url||''};
+  const thumb = img.thumb_url || img.url || full;
+  return {id:img.id, fullUrl:full, originalUrl:img.original_url||full, thumbUrl:thumb, remoteUrl:img.remote_url||'', prompt:img.prompt||'', model:img.model||'', size:img.size||'', imageSize:img.image_size||'', batch:img.batch_name||'', time:formatBeijingTime(img.generated_at||''), filename:img.filename||'generated-image.png', status:img.status||'', progress:img.progress||0, progress_text:img.progress_text||'', taskId:img.task_id||'', local_task_id:img.local_task_id||'', batch_id:img.batch_id||'', mj_source:img.mj_source||'', mj_action:img.mj_action||'', mj_parent_task_id:img.mj_parent_task_id||'', mj_parent_remote_task_id:img.mj_parent_remote_task_id||'', mj_is_grid:!!img.mj_is_grid, mj_variant_index:img.mj_variant_index||0, mj_images:img.mj_images||[], mj_buttons:img.mj_buttons||[], mj_executed_buttons:img.mj_executed_buttons||[], mj_grid_remote_url:img.mj_grid_remote_url||'', mj_grid_local_url:img.mj_grid_local_url||''};
 }
 function openMjJumpImage(meta={}, index=1){
   const idx = Number(index || 1);
@@ -3576,16 +3641,31 @@ function showPreview(src, meta = {}){
   const img = $('#previewImg');
   const empty = $('#previewEmptyNote');
   const finalSrc = src || meta.fullUrl || '';
+  const thumbSrc = meta.thumbUrl || meta.thumb_url || '';
+  const displaySrc = thumbSrc && finalSrc && thumbSrc !== finalSrc ? thumbSrc : finalSrc;
+  const token = ++previewLoadToken;
+  const fitLoadedImage = ()=>{
+    if(token !== previewLoadToken) return;
+    previewNaturalWidth = img.naturalWidth || previewNaturalWidth || 1;
+    previewNaturalHeight = img.naturalHeight || previewNaturalHeight || 1;
+    requestAnimationFrame(fitPreviewToViewport);
+  };
   if(img){
     img.onload = null;
     if(finalSrc){
-      img.onload = ()=>{
-        previewNaturalWidth = img.naturalWidth || previewNaturalWidth || 1;
-        previewNaturalHeight = img.naturalHeight || previewNaturalHeight || 1;
-        requestAnimationFrame(fitPreviewToViewport);
-      };
-      img.src = withPublicAccess(finalSrc);
+      img.onload = fitLoadedImage;
+      img.src = withPublicAccess(displaySrc || finalSrc);
       img.classList.remove('hidden');
+      if(displaySrc && displaySrc !== finalSrc){
+        const hi = new Image();
+        hi.decoding = 'async';
+        hi.onload = ()=>{
+          if(token !== previewLoadToken || !$('#previewModal')?.classList.contains('active')) return;
+          img.onload = fitLoadedImage;
+          img.src = withPublicAccess(finalSrc);
+        };
+        hi.src = withPublicAccess(finalSrc);
+      }
     }else{
       img.removeAttribute('src');
       img.classList.add('hidden');
@@ -3605,7 +3685,7 @@ function showPreview(src, meta = {}){
   }
   setPreviewInfo({...meta, fullUrl:finalSrc});
   $('#previewModal').classList.add('active');
-  if(finalSrc && img?.complete && img.naturalWidth){
+  if((displaySrc || finalSrc) && img?.complete && img.naturalWidth){
     previewNaturalWidth = img.naturalWidth;
     previewNaturalHeight = img.naturalHeight;
     requestAnimationFrame(fitPreviewToViewport);
@@ -3613,7 +3693,7 @@ function showPreview(src, meta = {}){
     applyPreviewTransform();
   }
 }
-function closePreview(){ const img=$('#previewImg'); if(img){ img.classList.remove('hidden'); } $('#previewEmptyNote')?.classList.add('hidden'); $('#previewModal').classList.remove('active'); }
+function closePreview(){ previewLoadToken++; const img=$('#previewImg'); if(img){ img.classList.remove('hidden'); } $('#previewEmptyNote')?.classList.add('hidden'); $('#previewModal').classList.remove('active'); }
 function zoomPreview(delta){
   const factor = delta > 0 ? 1.25 : 0.8;
   const rect = getPreviewViewportRect();
@@ -3832,6 +3912,8 @@ let lastVideoTasksSignature = '';
 let lastVideoRightSignature = '';
 let lastVideoManageSignature = '';
 let lastVideoBatchSignature = '';
+let videoManageVisibleCount = 160;
+let videoManageScrollBound = false;
 function stableSig(obj){ try{return JSON.stringify(obj);}catch{return String(Date.now());} }
 let currentVideoPreviewMeta = null;
 const imageTaskPreviewMap = new Map();
@@ -4386,6 +4468,7 @@ let videoFirstFrameActive = 0;
 let videoFirstFramePumpTimer = 0;
 let videoFirstFrameRefreshRaf = 0;
 let videoFirstFrameScrollBound = false;
+let videoFirstFrameScrollTimer = 0;
 let videoFirstFramePendingRoot = null;
 const VIDEO_FIRST_FRAME_MAX_ACTIVE = 1;
 const VIDEO_FIRST_FRAME_DELAY_MS = 110;
@@ -4656,7 +4739,13 @@ function scheduleVisibleVideoFirstFrameRefresh(root=document){
 function bindVideoFirstFrameScrollRefresh(){
   if(videoFirstFrameScrollBound) return;
   videoFirstFrameScrollBound = true;
-  const onMove = ()=>scheduleVisibleVideoFirstFrameRefresh(document);
+  const onMove = ()=>{
+    if(videoFirstFrameScrollTimer) return;
+    videoFirstFrameScrollTimer = window.setTimeout(()=>{
+      videoFirstFrameScrollTimer = 0;
+      scheduleVisibleVideoFirstFrameRefresh(document);
+    }, 140);
+  };
   window.addEventListener('scroll', onMove, { passive:true, capture:true });
   document.addEventListener('scroll', onMove, { passive:true, capture:true });
   window.addEventListener('resize', onMove, { passive:true });
@@ -4709,6 +4798,21 @@ function openUploadedVideoPip(index){
   return true;
 }
 
+function bindVideoManageIncrementalScroll(){
+  if(videoManageScrollBound) return;
+  videoManageScrollBound = true;
+  const root = document.querySelector('.main') || window;
+  root.addEventListener('scroll', ()=>{
+    if(!$('#page-video-manage')?.classList.contains('active')) return;
+    const el = root === window ? document.documentElement : root;
+    const remain = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if(remain > 1000 || videoManageVisibleCount >= videoTasksCache.length) return;
+    videoManageVisibleCount = Math.min(videoTasksCache.length, videoManageVisibleCount + 120);
+    lastVideoManageSignature = '';
+    renderVideoLibrary();
+  }, {passive:true});
+}
+
 function renderVideoLibrary(){
   const rightBox = $('#videoLibraryPanel');
   const manageBox = $('#videoManageGrid');
@@ -4729,13 +4833,15 @@ function renderVideoLibrary(){
   if(batchSig !== lastVideoBatchSignature){ lastVideoBatchSignature = batchSig; renderVideoRecentBatches(batches); }
   // 视频管理页按视频批次分组；选择方式和图片管理保持一致：Shift + 鼠标右键选择。
   if(manageBox){
-    const manageRows = videoTasksCache.slice(0,500);
+    bindVideoManageIncrementalScroll();
+    const manageRows = videoTasksCache.slice(0, videoManageVisibleCount);
     const manageSig = stableSig(manageRows.map(v=>[v.id,v.video_batch_id,v.video_batch_name,v.status,v.progress,v.progress_text,v.url,v.stream_url,v.download_url,v.remote_url,v.error_message,v.created_at,v.updated_at,videoSelectedIds.has(v.id)]));
     if(manageSig !== lastVideoManageSignature){
       lastVideoManageSignature = manageSig;
       const groups = groupVideosByBatch(manageRows);
       cleanupVideoFirstFrameRoot(manageBox);
-      manageBox.innerHTML = groups.map(g=>`<section class="video-day-group video-batch-group" data-video-batch="${escapeHtml(g.key)}">${videoBatchHeadHtml(g)}<div class="video-batch-progress"><i style="width:${g.progress}%"></i></div><div class="video-day-grid">${g.rows.map(v=>renderVideoCard(v,{selectable:true})).join('')}</div></section>`).join('');
+      const more = videoManageVisibleCount < videoTasksCache.length ? `<div class="image-load-more-hint">已显示 ${videoManageVisibleCount} / ${videoTasksCache.length} 个视频，继续向下滚动加载更多...</div>` : '';
+      manageBox.innerHTML = groups.map(g=>`<section class="video-day-group video-batch-group" data-video-batch="${escapeHtml(g.key)}">${videoBatchHeadHtml(g)}<div class="video-batch-progress"><i style="width:${g.progress}%"></i></div><div class="video-day-grid">${g.rows.map(v=>renderVideoCard(v,{selectable:true})).join('')}</div></section>`).join('') + more;
       initLazyVideoFirstFrames(manageBox);
       manageBox.querySelectorAll('[data-video-batch-select]').forEach(btn=>btn.addEventListener('click', e=>{ e.stopPropagation(); toggleVideoBatchSelection(btn.dataset.videoBatchSelect || ''); }));
     }
