@@ -2888,10 +2888,10 @@ function exportSelectedVideos(ids = [], owner='') {
   zipFiles(rows.map(v=>v.file_path), zipPath, 'selected_videos');
   return zipPath;
 }
-function formatVideoTask(row) {
+function formatVideoTask(row, opts = {}) {
   row = repairVideoTaskFilePath(row);
   const hasFile = !!(row.file_path && fs.existsSync(row.file_path));
-  const stream = hasFile ? `/video-file?id=${encodeURIComponent(row.id)}` : '';
+  const stream = hasFile ? `/video-file?id=${encodeURIComponent(row.id)}${opts.allOwners ? '&all_owners=1' : ''}` : '';
   return { ...row, file_exists: hasFile, progress_text: row.progress_text || (row.status === '\u5df2\u5b8c\u6210' ? '\u5df2\u5b8c\u6210' : ''), stream_url: stream, share_url: hasFile ? `/video-share?id=${encodeURIComponent(row.id)}` : '', url: stream || row.remote_url || '', download_url: hasFile ? `/download?path=${encodeURIComponent(row.file_path)}` : (row.remote_url || ''), filename: hasFile ? path.basename(row.file_path) : `${row.id}.mp4` };
 }
 
@@ -5504,8 +5504,9 @@ async function apiHandler(req, res, parsed) {
     if (method === 'GET' && p === '/api/status') { cleanupStaleImageTasks(deviceOwner); return send(res, { ...appStats(deviceOwner), time_info: getNetworkTimeInfo(), ...hostCumulativeStats(), ...urls(cfg), is_local_client: local, is_public_client: publicHost, device_data_isolation: cfg.device_data_isolation !== false, host_status_visible: true }); }
     if (method === 'GET' && p === '/api/batches') return send(res, listBatches({ownerId: dataOwner, page: 1, pageSize: local ? 6000 : 1000}).rows.map(normalizeBatch));
     if (method === 'GET' && p === '/api/history_batches') {
-      const imageRows = listBatches({ownerId: dataOwner, page: 1, pageSize: local ? 6000 : 1000}).rows.map(b => ({ ...normalizeBatch(b), batch_type:'image' }));
-      const videoRows = listVideoBatchSummaries(dataOwner);
+      const scopedOwner = local && parsed.query.all_owners === '1' ? '' : dataOwner;
+      const imageRows = listBatches({ownerId: scopedOwner, page: 1, pageSize: local ? 6000 : 1000}).rows.map(b => ({ ...normalizeBatch(b), batch_type:'image' }));
+      const videoRows = listVideoBatchSummaries(scopedOwner);
       return send(res, [...imageRows, ...videoRows].sort((a,b)=>String(b.created_at || '').localeCompare(String(a.created_at || ''))));
     }
     if (method === 'POST' && p === '/api/batches') {
@@ -5591,13 +5592,13 @@ async function apiHandler(req, res, parsed) {
     }
     if (method === 'POST' && p === '/api/video_submit') { const body=await readBody(req); if(String(body.video_platform||'').toLowerCase()==='flow2api'){const ret=await createFlow2VideoBatch({...body,prompts:body.prompt||body.prompts,copies:1},deviceOwner);return send(res,{ok:true,task:ret.rows[0]||null});} const row = await createApimartVideoTask(body, deviceOwner, req, cfg); return send(res,{ok:true, task:formatVideoTask(row)}); }
     if (method === 'POST' && p === '/api/video_batch_submit') { const body=await readBody(req); return send(res, String(body.video_platform||'').toLowerCase()==='flow2api' ? await createFlow2VideoBatch(body, deviceOwner) : await createApimartVideoBatch(body, deviceOwner, req, cfg)); }
-    if (method === 'GET' && p === '/api/video_tasks') { cleanupStaleVideoTasks(dataOwner); const st=ensureVideoStore(); const rows=st.video_tasks.filter(v=>!dataOwner || v.owner_id===dataOwner).sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at))).slice(0,local ? 2000 : 500).map(row=>formatVideoTask(row)); return send(res,{ok:true, rows, video_stats: videoTodayStats(dataOwner)}); }
-    if (method === 'POST' && p === '/api/video_delete_selected') { const body=await readBody(req); return send(res, deleteVideoTasks(body.ids || [], owner)); }
-    if (method === 'POST' && p === '/api/video_export_selected') { const body=await readBody(req); const zipPath=exportSelectedVideos(body.ids || [], owner); return send(res,{ok:true,url:`/download?path=${encodeURIComponent(zipPath)}`}); }
+    if (method === 'GET' && p === '/api/video_tasks') { const scopedOwner = local && parsed.query.all_owners === '1' ? '' : dataOwner; cleanupStaleVideoTasks(scopedOwner); const st=ensureVideoStore(); const allOwners = !scopedOwner; const rows=st.video_tasks.filter(v=>!scopedOwner || v.owner_id===scopedOwner).sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at))).slice(0,local ? 5000 : 500).map(row=>formatVideoTask(row, { allOwners })); return send(res,{ok:true, rows, video_stats: videoTodayStats(scopedOwner), scope: scopedOwner ? 'device' : 'all_owners'}); }
+    if (method === 'POST' && p === '/api/video_delete_selected') { const body=await readBody(req); const scopedOwner = local && body.all_owners === true ? '' : owner; return send(res, deleteVideoTasks(body.ids || [], scopedOwner)); }
+    if (method === 'POST' && p === '/api/video_export_selected') { const body=await readBody(req); const scopedOwner = local && body.all_owners === true ? '' : owner; const zipPath=exportSelectedVideos(body.ids || [], scopedOwner); return send(res,{ok:true,url:`/download?path=${encodeURIComponent(zipPath)}`}); }
     if (method === 'POST' && p === '/api/video_copy_file') {
       if (!local) return send(res,{ok:false,error:'远程访问端无法直接复制主机上的视频文件，请使用下载按钮。'},403);
       const body = await readBody(req);
-      const t = findVideoTaskById(body.id || '', owner);
+      const t = findVideoTaskById(body.id || '', local && body.all_owners === true ? '' : owner);
       if (!t) throw new Error('视频任务不存在或无权限');
       if (!t.file_path) throw new Error('视频还没有保存到本地，无法复制文件。');
       await copyVideoFileToSystemClipboard(t.file_path);
@@ -5663,7 +5664,7 @@ function requestHandler(req, res) {
     if (!local && publicHost && !cfg.public_enabled) return sendText(res, 'public access disabled', 'text/plain', 403);
     if (!local && !publicHost && !cfg.lan_enabled) return sendText(res, 'lan access disabled', 'text/plain', 403);
     const accessOwner = getOwner(req, parsed, cfg);
-    const owner = cfg.device_data_isolation === false ? '' : accessOwner;
+    const owner = (local && parsed.query.all_owners === '1') || cfg.device_data_isolation === false ? '' : accessOwner;
     const id = parsed.query.id || '';
     const t = findVideoTaskById(id, owner);
     if (!t || !t.file_path) return sendText(res, 'video task not found', 'text/plain', 404);

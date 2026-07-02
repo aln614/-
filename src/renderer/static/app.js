@@ -1550,6 +1550,7 @@ function applyPermissionUI(){
   $('#publicHelpCard')?.classList.toggle('hidden', !isLocalClient);
   $('#publicAdminGrid')?.classList.toggle('hidden', !isLocalClient);
   $('#publicReadonlyCard')?.classList.toggle('hidden', isLocalClient);
+  updateVideoOwnerScopeUi();
   if(!isLocalClient && ($('#page-lan')?.classList.contains('active') || $('#page-settings')?.classList.contains('active'))){
     setPage('home');
   }
@@ -1560,6 +1561,7 @@ function setPage(name){
   $$('.page').forEach(p => p.classList.toggle('active', p.id === 'page-' + name));
   repairMobileBottomNav();
   setRealtimePanelMode((name === 'video' || name === 'video-manage') ? 'video' : 'image');
+  updateVideoOwnerScopeUi();
   if(name === 'images') loadImages();
   if(name === 'video'){ syncVideoApiKeyFromHome(); loadVideoTasks(); }
   if(name === 'video-manage') loadVideoTasks();
@@ -3835,7 +3837,25 @@ let currentVideoPreviewMeta = null;
 const imageTaskPreviewMap = new Map();
 function getHomeApiKey(){ return ($('#apiKey')?.value || '').trim(); }
 const VIDEO_PLATFORM_KEY = CLIENT_CONFIG_KEY + '_active_video_platform';
+const VIDEO_OWNER_SCOPE_KEY = CLIENT_CONFIG_KEY + '_video_owner_scope_all';
+let videoAllOwnersMode = localStorage.getItem(VIDEO_OWNER_SCOPE_KEY) === '1';
 function currentVideoPlatform(){ return ($('#videoApiPlatformSwitch .platform-btn.active')?.dataset?.platform || localStorage.getItem(VIDEO_PLATFORM_KEY) || 'apimart') === 'flow2api' ? 'flow2api' : 'apimart'; }
+function isVideoAllOwnersScope(){
+  return isLocalClient && videoAllOwnersMode && $('#page-video-manage')?.classList.contains('active');
+}
+function updateVideoOwnerScopeUi(){
+  const btn = $('#videoOwnerScopeToggle');
+  if(!btn) return;
+  if(!isLocalClient){
+    videoAllOwnersMode = false;
+    btn.classList.add('hidden');
+    return;
+  }
+  btn.classList.remove('hidden');
+  btn.classList.toggle('active', !!videoAllOwnersMode);
+  btn.textContent = videoAllOwnersMode ? '全部设备视频' : '我的视频';
+  btn.title = videoAllOwnersMode ? '当前主机端正在查看全部访问设备的视频' : '当前只查看本机视频';
+}
 const APIMART_VIDEO_MODEL_RULES_UI = {
   'omni-flash-ext': {
     label:'Omni Flash（视频编辑）',
@@ -4202,10 +4222,10 @@ async function submitVideoTask(){
 }
 async function loadVideoTasks(){
   try{
-    const r = await api('/api/video_tasks');
+    const r = await api(isVideoAllOwnersScope() ? '/api/video_tasks?all_owners=1' : '/api/video_tasks');
     const rows = r.rows || [];
     if(isVideoRealtimeMode()) updateRightPanelStats(r.video_stats || {total:rows.length, done:rows.filter(v=>v.status==='已完成').length, fail:rows.filter(v=>v.status==='失败').length, running:rows.filter(v=>['等待中','提交中','提交生成中','生成中','查询中','下载中'].includes(v.status)).length}, true);
-    const sig = stableSig(rows.map(v=>[v.id,v.status,v.progress,v.progress_text,v.url,v.stream_url,v.download_url,v.remote_url,v.error_message,v.updated_at]));
+    const sig = stableSig([r.scope || '', rows.map(v=>[v.id,v.status,v.progress,v.progress_text,v.url,v.stream_url,v.download_url,v.remote_url,v.error_message,v.updated_at])]);
     videoTasksCache = rows;
     if(sig !== lastVideoTasksSignature){
       lastVideoTasksSignature = sig;
@@ -4493,7 +4513,7 @@ async function copyVideoFileOrLink(meta = {}){
   if(!meta) return;
   try{
     if(meta.id && !String(meta.id).startsWith('upload_')){
-      await api('/api/video_copy_file',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:meta.id})});
+      await api('/api/video_copy_file',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:meta.id, all_owners:isVideoAllOwnersScope()})});
       toast('视频文件已复制到剪贴板，可以直接粘贴');
       return;
     }
@@ -4668,11 +4688,24 @@ function setupVideoPage(){
     e.preventDefault(); e.stopPropagation(); showVideoContextMenu(e, card.dataset.videoId);
   });
   $('#refreshVideoManageBtn')?.addEventListener('click', loadVideoTasks);
+  $('#videoOwnerScopeToggle')?.addEventListener('click', async ()=>{
+    if(!isLocalClient) return;
+    videoAllOwnersMode = !videoAllOwnersMode;
+    localStorage.setItem(VIDEO_OWNER_SCOPE_KEY, videoAllOwnersMode ? '1' : '0');
+    videoSelectedIds.clear();
+    lastVideoTasksSignature = '';
+    lastVideoRightSignature = '';
+    lastVideoManageSignature = '';
+    lastVideoBatchSignature = '';
+    updateVideoOwnerScopeUi();
+    await loadVideoTasks();
+    toast(videoAllOwnersMode ? '已切换为全部设备视频' : '已切换为我的视频');
+  });
   $('#selectAllVideosBtn')?.addEventListener('click', ()=>{ videoTasksCache.forEach(v=>videoSelectedIds.add(v.id)); renderVideoLibrary(); });
   $('#invertVideoSelectBtn')?.addEventListener('click', ()=>{ videoTasksCache.forEach(v=> videoSelectedIds.has(v.id) ? videoSelectedIds.delete(v.id) : videoSelectedIds.add(v.id)); renderVideoLibrary(); });
   $('#clearVideoSelectBtn')?.addEventListener('click', ()=>{ videoSelectedIds.clear(); renderVideoLibrary(); });
-  $('#exportSelectedVideosBtn')?.addEventListener('click', async()=>{ const ids=[...videoSelectedIds]; if(!ids.length) return toast('请先选择要导出的视频'); try{ const r=await api('/api/video_export_selected',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids})}); if(r.url) window.open(withPublicAccess(r.url),'_blank'); }catch(e){ toast(e.message||'导出视频失败'); } });
-  $('#deleteSelectedVideosBtn')?.addEventListener('click', async()=>{ const ids=[...videoSelectedIds]; if(!ids.length) return toast('请先选择要删除的视频'); if(!confirm(`确定删除选中的 ${ids.length} 个视频吗？本地视频文件也会删除。`)) return; try{ await api('/api/video_delete_selected',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids})}); videoSelectedIds.clear(); await loadVideoTasks(); toast('已删除选中视频'); }catch(e){ toast(e.message||'删除视频失败'); } });
+  $('#exportSelectedVideosBtn')?.addEventListener('click', async()=>{ const ids=[...videoSelectedIds]; if(!ids.length) return toast('请先选择要导出的视频'); try{ const r=await api('/api/video_export_selected',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids, all_owners:isVideoAllOwnersScope()})}); if(r.url) window.open(withPublicAccess(r.url),'_blank'); }catch(e){ toast(e.message||'导出视频失败'); } });
+  $('#deleteSelectedVideosBtn')?.addEventListener('click', async()=>{ const ids=[...videoSelectedIds]; if(!ids.length) return toast('请先选择要删除的视频'); if(!confirm(`确定删除选中的 ${ids.length} 个视频吗？本地视频文件也会删除。`)) return; try{ await api('/api/video_delete_selected',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids, all_owners:isVideoAllOwnersScope()})}); videoSelectedIds.clear(); await loadVideoTasks(); toast('已删除选中视频'); }catch(e){ toast(e.message||'删除视频失败'); } });
   $('#copySelectedVideoLinksBtn')?.addEventListener('click', async()=>{ const links=videoTasksCache.map(v=>v.remote_url || publicCopyUrl(v.share_url||v.stream_url||v.url||v.download_url||'')).filter(Boolean).join('\n'); if(!links) return toast('暂无可复制的视频链接'); await copyTextSmart(links,'全部视频链接'); });
   $('#openVideoOutputDirBtn')?.addEventListener('click', ()=>toast('视频文件保存在设置中心的输出目录，与图片输出目录一致'));
   $('#closeVideoPreview')?.addEventListener('click', closeVideoPreview);
