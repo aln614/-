@@ -15,6 +15,10 @@ let lastMiniImagesSignature = '';
 let refreshAllInFlight = false;
 let refreshAllQueued = false;
 let lastLogsLoadAt = 0;
+let lastBatchesLoadAt = 0;
+let lastUserInputAt = 0;
+let refreshLoopTimer = null;
+let refreshDeferredTimer = null;
 let previewX = 0;
 let previewY = 0;
 let previewFitScale = 1;
@@ -88,6 +92,9 @@ const CLIENT_CONFIG_KEY = 'local_api_image_generator_client_config_v1498';
 const CURRENT_SETTINGS_KEY = 'LAIG_CLIENT_SETTINGS_V1';
 const PUBLIC_ACCESS_KEY = 'local_api_image_generator_public_access_v1498';
 const urlParams = new URLSearchParams(location.search);
+['pointerdown','pointermove','wheel','keydown','touchstart','touchmove','scroll'].forEach(type=>{
+  window.addEventListener(type, ()=>{ lastUserInputAt = Date.now(); }, {passive:true, capture:true});
+});
 function rememberPublicAccess(token, days = 7){
   const expiresAt = Date.now() + Number(days || 7) * 24 * 60 * 60 * 1000;
   localStorage.setItem(PUBLIC_ACCESS_KEY, JSON.stringify({token, expiresAt}));
@@ -1576,7 +1583,7 @@ function setPage(name){
   if(name === 'images') loadImages();
   if(name === 'video'){ syncVideoApiKeyFromHome(); loadVideoTasks(); }
   if(name === 'video-manage') loadVideoTasks();
-  if(name === 'history') { currentBatchFilter = currentBatchFilter || 'all'; loadBatches().finally(forceRenderHistory); }
+  if(name === 'history') { currentBatchFilter = currentBatchFilter || 'all'; loadBatches({history:true}).finally(forceRenderHistory); }
   if(name === 'api') loadLogs();
   if(name === 'logs') loadLogs();
   if(name === 'tools') syncToolConfigFromHome();
@@ -2234,11 +2241,22 @@ $('#startBatchBtn').addEventListener('click', async()=>{
 async function refreshAll(){
   // V14.5.6：防止 3 秒定时刷新发生重入。网络慢/下载多时，旧版会堆叠多个 refreshAll，导致界面无响应。
   if(refreshAllInFlight){ refreshAllQueued = true; return; }
+  const busyWithUser = Date.now() - lastUserInputAt < 900;
+  if(busyWithUser && !$('#page-api')?.classList.contains('active') && !$('#page-logs')?.classList.contains('active')){
+    refreshAllQueued = true;
+    clearTimeout(refreshDeferredTimer);
+    refreshDeferredTimer = setTimeout(refreshAll, 1100);
+    return;
+  }
   refreshAllInFlight = true;
   try{
     const logsActive = $('#page-api')?.classList.contains('active') || $('#page-logs')?.classList.contains('active');
     const needLogs = logsActive || Date.now() - lastLogsLoadAt > 9000;
-    const jobs = isInlineNoteEditing ? [loadStatus()] : [loadStatus(), loadBatches()];
+    const historyActive = $('#page-history')?.classList.contains('active');
+    const batchesPanelActive = $('#batchList')?.closest('.page')?.classList.contains('active');
+    const needBatches = !isInlineNoteEditing && (historyActive || batchesPanelActive || (!batches.length && Date.now() - lastBatchesLoadAt > 30000));
+    const jobs = [loadStatus()];
+    if(needBatches) jobs.push(loadBatches({history:historyActive}));
     if(needLogs){ lastLogsLoadAt = Date.now(); jobs.push(loadLogs()); }
     await Promise.all(jobs);
     const imagesActive = $('#page-images')?.classList.contains('active');
@@ -2288,10 +2306,13 @@ async function loadStatus(){
   loadMiniImages(s.image_task_progress || []);
 }
 
-async function loadBatches(){
+async function loadBatches(opts = {}){
+  lastBatchesLoadAt = Date.now();
   const next = await api('/api/batches');
-  try { historyBatches = await api('/api/history_batches'); }
-  catch { historyBatches = next.map(b=>({...b,batch_type:'image'})); }
+  if(opts.history === true){
+    try { historyBatches = await api('/api/history_batches'); }
+    catch { historyBatches = next.map(b=>({...b,batch_type:'image'})); }
+  }
   const sig = stableSig(next.map(b=>[b.id,b.status,b.task_count,b.success_count,b.fail_count,b.running_count,b.note,b.updated_at]));
   batches = next;
   if(sig !== lastBatchesSignature){
@@ -2634,6 +2655,12 @@ function bindImageGridEvents(){
   grid.addEventListener('error', e=>{
     const img = e.target.closest?.('.image-card img');
     if(!img) return;
+    const remote = img.dataset.remoteUrl || img.closest('.image-card')?.dataset.remoteUrl || '';
+    if(remote && img.dataset.remoteFallback !== '1' && img.src !== remote){
+      img.dataset.remoteFallback = '1';
+      img.src = withPublicAccess(remote);
+      return;
+    }
     img.classList.add('is-broken');
     img.parentElement?.querySelector?.('.img-fallback')?.classList.add('active');
   }, true);
@@ -2692,12 +2719,13 @@ function renderImages(imgs){
   $('#imageGrid').innerHTML = rows.map(img=>{
     const thumb = img.thumb_url || img.url || img.remote_url || ''; 
     const full = img.full_url || img.original_url || img.url || img.remote_url || ''; 
+    const remote = img.remote_url || '';
     const meta = imageRowToPreviewMeta(img);
     imageMetaMap.set(img.id, meta);
     const selected = selectedImages.has(img.id) ? 'selected' : '';
     const missing = img.missing || !(thumb || full);
-    const media = missing ? '<div class="img-fallback active">文件缺失</div>' : '<img loading="lazy" decoding="async" src="' + thumb + '" draggable="false" data-full-url="' + full + '" data-id="' + img.id + '" alt="" title="点击预览原图 / 右键复制 url 或提示词"><div class="img-fallback">图片加载失败</div>';
-    return '<div class="image-card ' + selected + (missing ? ' missing' : '') + '" draggable="' + (!missing) + '" data-id="' + img.id + '" data-url="' + full + '" data-thumb-url="' + thumb + '" title="点击预览原图，Ctrl/Shift 多选"><div class="check">' + (selectedImages.has(img.id) ? '✓' : '') + '</div>' + media + '<div class="cap">' + escapeHtml(img.filename) + '</div></div>';
+    const media = missing ? '<div class="img-fallback active">文件缺失</div>' : '<img loading="lazy" decoding="async" src="' + thumb + '" draggable="false" data-full-url="' + full + '" data-remote-url="' + remote + '" data-id="' + img.id + '" alt="" title="点击预览原图 / 右键复制 url 或提示词"><div class="img-fallback">图片加载失败</div>';
+    return '<div class="image-card ' + selected + (missing ? ' missing' : '') + '" draggable="' + (!missing) + '" data-id="' + img.id + '" data-url="' + full + '" data-thumb-url="' + thumb + '" data-remote-url="' + remote + '" title="点击预览原图，Ctrl/Shift 多选"><div class="check">' + (selectedImages.has(img.id) ? '✓' : '') + '</div>' + media + '<div class="cap">' + escapeHtml(img.filename) + '</div></div>';
   }).join('') || '<div class="card">暂无图片</div>';
   if(imageHasMore) $('#imageGrid').insertAdjacentHTML('beforeend', '<div class="image-load-more-hint">继续向下滚动加载更多图片...</div>');
 }
@@ -3642,6 +3670,7 @@ function showPreview(src, meta = {}){
   const empty = $('#previewEmptyNote');
   const finalSrc = src || meta.fullUrl || '';
   const thumbSrc = meta.thumbUrl || meta.thumb_url || '';
+  const remoteSrc = meta.remoteUrl || meta.remote_url || '';
   const displaySrc = thumbSrc && finalSrc && thumbSrc !== finalSrc ? thumbSrc : finalSrc;
   const token = ++previewLoadToken;
   const fitLoadedImage = ()=>{
@@ -3652,8 +3681,18 @@ function showPreview(src, meta = {}){
   };
   if(img){
     img.onload = null;
+    img.onerror = null;
     if(finalSrc){
       img.onload = fitLoadedImage;
+      img.onerror = ()=>{
+        if(token !== previewLoadToken) return;
+        if(remoteSrc && img.dataset.previewRemoteFallback !== '1'){
+          img.dataset.previewRemoteFallback = '1';
+          img.src = withPublicAccess(remoteSrc);
+          return;
+        }
+      };
+      img.dataset.previewRemoteFallback = '0';
       img.src = withPublicAccess(displaySrc || finalSrc);
       img.classList.remove('hidden');
       if(displaySrc && displaySrc !== finalSrc){
@@ -6628,5 +6667,13 @@ async function startup(){
   }
 }
 startup();
-setInterval(()=>{ if(!isInlineNoteEditing && !$('#publicLoginOverlay')?.classList.contains('active')) refreshAll(); }, 5000);
+function scheduleRefreshLoop(delay = 6500){
+  clearTimeout(refreshLoopTimer);
+  refreshLoopTimer = setTimeout(async()=>{
+    if(!isInlineNoteEditing && !$('#publicLoginOverlay')?.classList.contains('active')) await refreshAll();
+    const activeWork = document.querySelector('.mini-task-card,.status.run,.video-pending:not(.failed)');
+    scheduleRefreshLoop(activeWork ? 6500 : 12000);
+  }, delay);
+}
+scheduleRefreshLoop(1800);
 
