@@ -2592,12 +2592,15 @@ function renderImages(imgs){
     const meta = imageRowToPreviewMeta(img);
     imageMetaMap.set(img.id, meta);
     const selected = selectedImages.has(img.id) ? 'selected' : '';
-    return '<div class="image-card ' + selected + '" draggable="true" data-id="' + img.id + '" data-url="' + full + '" title="???????????trl/Shift ??????????????????????????"><div class="check">' + (selectedImages.has(img.id) ? '?' : '') + '</div><img loading="lazy" src="' + thumb + '" draggable="false" data-full-url="' + full + '" data-id="' + img.id + '" alt="" title="???????????? / ????????? url ??????"><div class="img-fallback">???????</div><div class="cap">' + escapeHtml(img.filename) + '</div></div>';
+    const missing = img.missing || !(thumb || full);
+    const media = missing ? '<div class="img-fallback active">文件缺失</div>' : '<img loading="lazy" src="' + thumb + '" draggable="false" data-full-url="' + full + '" data-id="' + img.id + '" alt="" title="点击预览原图 / 右键复制 url 或提示词"><div class="img-fallback">图片加载失败</div>';
+    return '<div class="image-card ' + selected + (missing ? ' missing' : '') + '" draggable="' + (!missing) + '" data-id="' + img.id + '" data-url="' + full + '" title="点击预览原图，Ctrl/Shift 多选"><div class="check">' + (selectedImages.has(img.id) ? '✓' : '') + '</div>' + media + '<div class="cap">' + escapeHtml(img.filename) + '</div></div>';
   }).join('') || '<div class="card">????</div>';
   $$('.image-card').forEach(card=>{
     card.addEventListener('click',(e)=>{
       const id = card.dataset.id;
       if(e.ctrlKey || e.metaKey || e.shiftKey){ toggleImage(id); }
+      else if(!card.dataset.url){ toast('原图文件不存在，无法预览'); }
       else showPreview(card.dataset.url, imageMetaMap.get(id) || {});
     });
     card.addEventListener('dragstart', (e)=>{

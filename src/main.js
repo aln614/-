@@ -1039,6 +1039,7 @@ function formatImage(row) {
   try { mjExecutedButtons = JSON.parse(task.mj_executed_buttons_json || '[]') || []; } catch {}
   return {
     ...row,
+    missing: !(localFull || remote),
     url: localThumb || remote,
     thumb_url: localThumb || remote,
     full_url: localFull || remote,
@@ -2884,8 +2885,9 @@ function exportSelectedVideos(ids = [], owner='') {
 }
 function formatVideoTask(row) {
   row = repairVideoTaskFilePath(row);
-  const stream = row.file_path ? `/video-file?id=${encodeURIComponent(row.id)}` : '';
-  return { ...row, progress_text: row.progress_text || (row.status === '\u5df2\u5b8c\u6210' ? '\u5df2\u5b8c\u6210' : ''), stream_url: stream, share_url: row.file_path ? `/video-share?id=${encodeURIComponent(row.id)}` : '', url: stream || row.remote_url || '', download_url: row.file_path ? `/download?path=${encodeURIComponent(row.file_path)}` : (row.remote_url || ''), filename: row.file_path ? path.basename(row.file_path) : `${row.id}.mp4` };
+  const hasFile = !!(row.file_path && fs.existsSync(row.file_path));
+  const stream = hasFile ? `/video-file?id=${encodeURIComponent(row.id)}` : '';
+  return { ...row, file_exists: hasFile, progress_text: row.progress_text || (row.status === '\u5df2\u5b8c\u6210' ? '\u5df2\u5b8c\u6210' : ''), stream_url: stream, share_url: hasFile ? `/video-share?id=${encodeURIComponent(row.id)}` : '', url: stream || row.remote_url || '', download_url: hasFile ? `/download?path=${encodeURIComponent(row.file_path)}` : (row.remote_url || ''), filename: hasFile ? path.basename(row.file_path) : `${row.id}.mp4` };
 }
 
 function listVideoBatchSummaries(owner = '') {
@@ -3115,8 +3117,23 @@ function pathKey(p) {
 function currentStoreFilePath() {
   return path.join(DATA_ROOT, 'data', 'store.json');
 }
+const historicalOutputRootsCache = { file: '', size: 0, mtime: 0, roots: [] };
 function historicalOutputRootsFromCurrentStore() {
-  return collectOutputRootsFromStoreFile(currentStoreFilePath());
+  const file = currentStoreFilePath();
+  try {
+    const stat = fs.statSync(file);
+    if (historicalOutputRootsCache.file === file && historicalOutputRootsCache.size === stat.size && historicalOutputRootsCache.mtime === stat.mtimeMs) {
+      return historicalOutputRootsCache.roots;
+    }
+    const roots = collectOutputRootsFromStoreFile(file);
+    historicalOutputRootsCache.file = file;
+    historicalOutputRootsCache.size = stat.size;
+    historicalOutputRootsCache.mtime = stat.mtimeMs;
+    historicalOutputRootsCache.roots = roots;
+    return roots;
+  } catch {
+    return historicalOutputRootsCache.roots || [];
+  }
 }
 function isPathInside(base, target) {
   const b = pathKey(base);
@@ -5415,8 +5432,10 @@ async function apiHandler(req, res, parsed) {
     if (method === 'POST' && p === '/api/update_batch_note') { const body=await readBody(req); const b=getDB()._store.batches.find(x=>x.id===body.batch_id && (!owner || x.owner_id===owner)); if(!b) throw new Error('无权限或批次不存在'); b.note=body.note||''; b.updated_at=nowISO(); getDB()._save(); return send(res,{ok:true}); }
     if (method === 'GET' && p === '/api/images') {
       if (dataOwner || String(parsed.query.repair || '') === '1') await repairCompletedMidjourneyImages(dataOwner || '');
-      const pageSize = Math.max(1, Math.min(local ? 6000 : 1000, Number(parsed.query.limit || parsed.query.page_size || (local ? 6000 : 1000))));
-      let rows = listImages({ownerId:dataOwner, batchId: parsed.query.batch_id || '', page:1, pageSize:local ? 6000 : 1000}).rows;
+      const hasBatchFilter = !!String(parsed.query.batch_id || '');
+      const defaultImageLimit = hasBatchFilter ? (local ? 6000 : 1000) : 300;
+      const pageSize = Math.max(1, Math.min(local ? 6000 : 1000, Number(parsed.query.limit || parsed.query.page_size || defaultImageLimit)));
+      let rows = listImages({ownerId:dataOwner, batchId: parsed.query.batch_id || '', page:1, pageSize}).rows;
       if (String(parsed.query.panel_only || '') === '1') rows = rows.filter(r => !r.hidden_in_recent || (r.file_path && fs.existsSync(r.file_path)));
       if (String(parsed.query.only_mj || '') === '1') rows = rows.filter(r => (r.mj_source || '') === 'midjourney');
       const seenImageKeys = new Set();
@@ -5554,7 +5573,7 @@ function requestHandler(req, res) {
     if (!local && publicHost && !cfg.public_enabled) return sendText(res, 'public access disabled', 'text/plain', 403);
     if (!local && !publicHost && !cfg.lan_enabled) return sendText(res, 'lan access disabled', 'text/plain', 403);
     const accessOwner = getOwner(req, parsed, cfg);
-    const owner = cfg.device_data_isolation === false ? '' : accessOwner;
+    const owner = local || cfg.device_data_isolation === false ? '' : accessOwner;
     const id = parsed.query.id || '';
     const t = findVideoTaskById(id, owner);
     if (!t || !t.file_path) return sendText(res, 'video task not found', 'text/plain', 404);
