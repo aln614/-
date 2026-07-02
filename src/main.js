@@ -25,6 +25,8 @@ const OUTPUT_ZIP_DIR_NAME = 'TENYING_AI_1_0_Zips';
 const OUTPUT_WORD_DIR_NAME = 'TENYING_AI_1_0_Word';
 const OUTPUT_EXCEL_DIR_NAME = 'TENYING_AI_1_0_Excel';
 const OUTPUT_MJ_DIR_NAME = 'TENYING_AI_1_0_Midjourney';
+const OUTPUT_RUNTIME_DATA_DIR_NAME = '运行数据目录';
+const LEGACY_OUTPUT_RUNTIME_DATA_DIR_NAME = '.TENYING_AI_RuntimeData';
 const DEFAULT_UPDATE_REPO = 'aln614/-';
 try { app.setAppUserModelId('com.local.api.image.generator.webui.v14_9_8'); } catch {}
 
@@ -483,6 +485,8 @@ function configForClient(cfg, local, publicHost) {
   out.is_public_client = !!publicHost;
   out.device_data_isolation = cfg.device_data_isolation !== false;
   out.app_version = getAppVersion();
+  out.local_runtime_data_dir = local ? DATA_ROOT : '';
+  out.output_runtime_data_dir = local ? runtimeMirrorDir(cfg) : '';
   return out;
 }
 function getLocalIP() {
@@ -3120,7 +3124,14 @@ function currentStoreFilePath() {
 }
 function runtimeMirrorDir(cfg = readConfig()) {
   const base = String(cfg.output_dir || '').trim();
-  return base ? path.join(base, '.TENYING_AI_RuntimeData') : '';
+  return base ? path.join(base, OUTPUT_RUNTIME_DATA_DIR_NAME) : '';
+}
+function legacyRuntimeMirrorDir(cfg = readConfig()) {
+  const base = String(cfg.output_dir || '').trim();
+  return base ? path.join(base, LEGACY_OUTPUT_RUNTIME_DATA_DIR_NAME) : '';
+}
+function runtimeMirrorCandidateDirs(cfg = readConfig()) {
+  return Array.from(new Set([runtimeMirrorDir(cfg), legacyRuntimeMirrorDir(cfg)].filter(Boolean)));
 }
 function mirrorRuntimeDataToOutputDir(cfg = readConfig(), opts = {}) {
   const dir = runtimeMirrorDir(cfg);
@@ -3145,15 +3156,16 @@ function mirrorRuntimeDataToOutputDir(cfg = readConfig(), opts = {}) {
 function restoreStoreFromOutputMirrorIfCurrentEmpty() {
   try {
     const cfg = readConfig();
-    const mirror = runtimeMirrorDir(cfg);
-    if (!mirror) return false;
     const current = readStoreSummary(currentStoreFilePath());
     if (current && current.count > 0) return false;
-    const mirrorStore = path.join(mirror, 'data', 'store.json');
-    const summary = readStoreSummary(mirrorStore);
+    const candidates = runtimeMirrorCandidateDirs(cfg)
+      .map(dir => readStoreSummary(path.join(dir, 'data', 'store.json')))
+      .filter(summary => summary && summary.count > 0)
+      .sort((a, b) => (b.count - a.count) || (b.mtime - a.mtime) || (b.size - a.size));
+    const summary = candidates[0];
     if (!summary || summary.count <= 0) return false;
     ensureDir(path.dirname(currentStoreFilePath()));
-    fs.copyFileSync(mirrorStore, currentStoreFilePath());
+    fs.copyFileSync(summary.file, currentStoreFilePath());
     rememberHistoricalOutputRootsFromStoreData(summary.data);
     return true;
   } catch {
@@ -5422,7 +5434,7 @@ async function apiHandler(req, res, parsed) {
       const oldPort = Number(cfg.port || 7861); const next = saveConfig(body); const newPort = Number(next.port || 7861);
       const runtime = { port_changed: oldPort !== newPort };
       if (runtime.port_changed) setTimeout(()=>startServer(newPort), 900);
-      return send(res, {ok:true, config:{...next, ...urls(next)}, runtime});
+      return send(res, {ok:true, config:{...next, ...urls(next), local_runtime_data_dir:DATA_ROOT, output_runtime_data_dir:runtimeMirrorDir(next)}, runtime});
     }
     if (method === 'POST' && p === '/api/update/check') {
       if (!local) return send(res, {ok:false,error:'只有主机端可以检查软件更新'}, 403);
@@ -5851,7 +5863,7 @@ app.whenReady().then(() => {
   mirrorRuntimeDataToOutputDir();
   const mirrorTimer = setInterval(() => mirrorRuntimeDataToOutputDir(), 60 * 1000);
   if (typeof mirrorTimer.unref === 'function') mirrorTimer.unref();
-  if (restoredOutputMirror) addLog('检测到当前任务库为空，已自动从输出目录 .TENYING_AI_RuntimeData 恢复程序缓存。', { level:'warn' });
+  if (restoredOutputMirror) addLog(`检测到当前任务库为空，已自动从输出目录 ${OUTPUT_RUNTIME_DATA_DIR_NAME} 恢复程序缓存。`, { level:'warn' });
   if (restoredLegacyStore) addLog('检测到更新后当前任务库为空，已自动从历史 RuntimeData 恢复批次、任务、图片和视频任务。', { level:'warn' });
   startNetworkTimeSync();
   queue = new TaskQueue();

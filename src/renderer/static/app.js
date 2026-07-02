@@ -1647,6 +1647,7 @@ async function loadConfig(){
   $('#lanEnabled').checked = !!c.lan_enabled;
   if($('#appName')) $('#appName').value = c.app_name || 'TENYING_AI 1.0';
   $('#outputDir').value = c.output_dir || '';
+  updateRuntimeDataDirHint(c);
   $('#logKeepDays').value = c.log_keep_days || 3;
   $('#pollInterval').value = c.poll_interval_ms || 800;
   $('#timeoutSeconds').value = c.timeout_seconds || 1200;
@@ -1685,6 +1686,24 @@ function fileToData(file){
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
+}
+function updateRuntimeDataDirHint(cfgOrDir){
+  const input = $('#outputDir');
+  if(!input) return;
+  let hint = $('#runtimeDataDirHint');
+  if(!hint){
+    hint = document.createElement('div');
+    hint.id = 'runtimeDataDirHint';
+    hint.className = 'field-help runtime-data-dir-hint';
+    input.insertAdjacentElement('afterend', hint);
+  }
+  const isObj = cfgOrDir && typeof cfgOrDir === 'object';
+  const outDir = String(isObj ? (cfgOrDir.output_dir || '') : (cfgOrDir || input.value || '')).trim();
+  const runtimeDir = String(isObj ? (cfgOrDir.output_runtime_data_dir || '') : '').trim()
+    || (outDir ? `${outDir.replace(/[\\\/]+$/, '')}\\运行数据目录` : '');
+  hint.textContent = runtimeDir
+    ? `运行数据目录：${runtimeDir}`
+    : '设置输出目录后，程序运行数据会同步到输出目录里的“运行数据目录”文件夹。';
 }
 function getVideoDurationSeconds(file){
   return new Promise((resolve)=>{
@@ -1832,6 +1851,7 @@ $('#clearAllInputImagesBtn')?.addEventListener('click',()=>{ mainImages=[]; refI
 $('#prompts').addEventListener('input', calcEstimate);
 $('#promptMultilineTasks')?.addEventListener('change', calcEstimate);
 $('#repeatCount').addEventListener('input', calcEstimate);
+$('#outputDir')?.addEventListener('input', ()=>updateRuntimeDataDirHint($('#outputDir')?.value || ''));
 $('#modelPreset').addEventListener('change', updateModelFromPreset);
 $('#model')?.addEventListener('input', ()=>{ updateSizeHint(); updateOfficialImageOptions(); });
 $('#size').addEventListener('change', updateSizeHint);
@@ -2040,6 +2060,7 @@ async function handleConfigSave(payload, successMsg='当前设置已保存'){
       if($('#backgroundKeepalive')) $('#backgroundKeepalive').checked = ret.config.background_keepalive !== false;
       if($('#clarity')) $('#clarity').value = ret.config.clarity || payload.clarity || '1K';
       if($('#claritySettings')) $('#claritySettings').value = ret.config.clarity || payload.clarity || '1K';
+      updateRuntimeDataDirHint(ret.config);
       applyThemeMode(ret.config.theme_mode || payload.theme_mode || 'auto');
       enableKeepAlive($('#backgroundKeepalive')?.checked);
       loadAnnouncements(true, false).catch(()=>{});
