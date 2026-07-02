@@ -374,6 +374,7 @@ function saveConfig(partial) {
   next.announcement_custom_enabled = next.announcement_custom_enabled === true;
   if (!next.port) next.port = 7860;
   fs.writeFileSync(configPath, JSON.stringify(next, null, 2), 'utf8');
+  try { mirrorRuntimeDataToOutputDir(next, { configOnly: true }); } catch {}
   return next;
 }
 function cleanOwner(raw, isLocal) {
@@ -1025,8 +1026,8 @@ function repairImageRowPaths(row = {}) {
   }
   return row;
 }
-function formatImage(row) {
-  row = repairImageRowPaths(row);
+function formatImage(row, opts = {}) {
+  row = opts.fast ? row : repairImageRowPaths(row);
   const remote = row.remote_url || row.result_url || '';
   const localFull = row.file_path && fs.existsSync(row.file_path) ? `/file?path=${encodeURIComponent(row.file_path)}` : '';
   const localThumb = row.thumb_path && fs.existsSync(row.thumb_path) ? `/file?path=${encodeURIComponent(row.thumb_path)}` : localFull;
@@ -3117,6 +3118,48 @@ function pathKey(p) {
 function currentStoreFilePath() {
   return path.join(DATA_ROOT, 'data', 'store.json');
 }
+function runtimeMirrorDir(cfg = readConfig()) {
+  const base = String(cfg.output_dir || '').trim();
+  return base ? path.join(base, '.TENYING_AI_RuntimeData') : '';
+}
+function mirrorRuntimeDataToOutputDir(cfg = readConfig(), opts = {}) {
+  const dir = runtimeMirrorDir(cfg);
+  if (!dir) return false;
+  try {
+    ensureDir(path.join(dir, 'data'));
+    if (configPath && fs.existsSync(configPath)) fs.copyFileSync(configPath, path.join(dir, 'config.json'));
+    if (!opts.configOnly) {
+      const storeFile = currentStoreFilePath();
+      if (fs.existsSync(storeFile)) fs.copyFileSync(storeFile, path.join(dir, 'data', 'store.json'));
+      const assetFile = assetDbPath(cfg);
+      if (assetFile && fs.existsSync(assetFile)) {
+        ensureDir(path.join(dir, 'assets_meta'));
+        fs.copyFileSync(assetFile, path.join(dir, 'assets_meta', 'assets_db.json'));
+      }
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+function restoreStoreFromOutputMirrorIfCurrentEmpty() {
+  try {
+    const cfg = readConfig();
+    const mirror = runtimeMirrorDir(cfg);
+    if (!mirror) return false;
+    const current = readStoreSummary(currentStoreFilePath());
+    if (current && current.count > 0) return false;
+    const mirrorStore = path.join(mirror, 'data', 'store.json');
+    const summary = readStoreSummary(mirrorStore);
+    if (!summary || summary.count <= 0) return false;
+    ensureDir(path.dirname(currentStoreFilePath()));
+    fs.copyFileSync(mirrorStore, currentStoreFilePath());
+    rememberHistoricalOutputRootsFromStoreData(summary.data);
+    return true;
+  } catch {
+    return false;
+  }
+}
 const historicalOutputRootsCache = { file: '', size: 0, mtime: 0, roots: [] };
 function historicalOutputRootsFromCurrentStore() {
   const file = currentStoreFilePath();
@@ -3700,6 +3743,40 @@ function imageTaskProgress(owner) {
         created_at: t.created_at || ''
       };
     });
+}
+function cleanupStaleImageTasks(owner = '') {
+  const st = getDB()._store;
+  const activeSet = new Set(['等待中','提交生成中','生成中','下载中']);
+  const cutoff = Date.now() - 30 * 60 * 1000;
+  let changed = false;
+  for (const task of st.tasks || []) {
+    if (owner && task.owner_id !== owner) continue;
+    if (!activeSet.has(String(task.status || ''))) continue;
+    if (String(task.remote_task_id || '').trim()) continue;
+    const ts = Date.parse(String(task.updated_at || task.created_at || '').replace(' ', 'T') + 'Z');
+    if (Number.isFinite(ts) && ts > cutoff) continue;
+    const oldTime = task.updated_at || task.created_at || nowISO();
+    task.status = '失败';
+    task.progress = 100;
+    task.progress_text = '已自动标记失败';
+    task.error_message = task.error_message || '程序重启后未找到本地队列或远端 task_id，已停止显示为生成中。';
+    task.finished_at = task.finished_at || oldTime;
+    task.updated_at = oldTime;
+    const batch = (st.batches || []).find(b => b.id === task.batch_id);
+    if (batch) {
+      batch.running_count = Math.max(0, Number(batch.running_count || 0) - 1);
+      batch.fail_count = Math.max(Number(batch.fail_count || 0), (st.tasks || []).filter(t => t.batch_id === batch.id && String(t.status || '') === '失败').length);
+      const done = Number(batch.success_count || 0) + Number(batch.fail_count || 0);
+      if (done >= Number(batch.task_count || 0) && Number(batch.running_count || 0) === 0) {
+        batch.status = Number(batch.success_count || 0) > 0 && Number(batch.fail_count || 0) > 0 ? '部分完成' : (Number(batch.fail_count || 0) > 0 ? '失败' : '已完成');
+        batch.finished_at = batch.finished_at || oldTime;
+      }
+      batch.updated_at = batch.updated_at || oldTime;
+    }
+    changed = true;
+  }
+  if (changed) getDB()._save();
+  return changed;
 }
 
 function appStats(owner) {
@@ -5327,7 +5404,7 @@ async function apiHandler(req, res, parsed) {
   const deviceOwner = getDeviceOwner(req, parsed);
   const accessOwner = getOwner(req, parsed, cfg);
   const owner = cfg.device_data_isolation === false ? '' : accessOwner;
-  const dataOwner = local ? '' : owner;
+  const dataOwner = owner;
   // 公网访问已通过密码后，按局域网逻辑使用；不再用只读模式阻止上传/生成。
   try {
     if (method === 'GET' && p === '/api/health') return send(res, {ok:true, time: nowISO(), app: cfg.app_name, ...urls(cfg)});
@@ -5412,7 +5489,7 @@ async function apiHandler(req, res, parsed) {
     if (method === 'POST' && p === '/api/assets/unshare') { const body=await readBody(req); return send(res, assetShare(body, local, cfg, deviceOwner, false)); }
     if (method === 'POST' && p === '/api/assets/export_zip') { const body=await readBody(req); const zipPath=assetExportZip(body, local, cfg, deviceOwner); return send(res,{ok:true,url:`/download?path=${encodeURIComponent(zipPath)}`}); }
     if (method === 'GET' && p === '/api/announcements') return send(res, await getAnnouncements(parsed.query.force === '1'));
-    if (method === 'GET' && p === '/api/status') return send(res, { ...appStats(deviceOwner), time_info: getNetworkTimeInfo(), ...hostCumulativeStats(), ...urls(cfg), is_local_client: local, is_public_client: publicHost, device_data_isolation: cfg.device_data_isolation !== false, host_status_visible: true });
+    if (method === 'GET' && p === '/api/status') { cleanupStaleImageTasks(deviceOwner); return send(res, { ...appStats(deviceOwner), time_info: getNetworkTimeInfo(), ...hostCumulativeStats(), ...urls(cfg), is_local_client: local, is_public_client: publicHost, device_data_isolation: cfg.device_data_isolation !== false, host_status_visible: true }); }
     if (method === 'GET' && p === '/api/batches') return send(res, listBatches({ownerId: dataOwner, page: 1, pageSize: local ? 6000 : 1000}).rows.map(normalizeBatch));
     if (method === 'GET' && p === '/api/history_batches') {
       const imageRows = listBatches({ownerId: dataOwner, page: 1, pageSize: local ? 6000 : 1000}).rows.map(b => ({ ...normalizeBatch(b), batch_type:'image' }));
@@ -5450,7 +5527,8 @@ async function apiHandler(req, res, parsed) {
         return true;
       });
       rows = rows.slice(0, pageSize);
-      return send(res, rows.map(formatImage));
+      const fastFormat = String(parsed.query.panel_only || '') === '1' && !String(parsed.query.batch_id || '');
+      return send(res, rows.map(row => formatImage(row, { fast: fastFormat })));
     }
     if (method === 'POST' && p === '/api/delete_images') { const body=await readBody(req); return send(res, deleteImages(body.image_ids || [], owner)); }
     if (method === 'POST' && p === '/api/clear_all_cache') {
@@ -5573,7 +5651,7 @@ function requestHandler(req, res) {
     if (!local && publicHost && !cfg.public_enabled) return sendText(res, 'public access disabled', 'text/plain', 403);
     if (!local && !publicHost && !cfg.lan_enabled) return sendText(res, 'lan access disabled', 'text/plain', 403);
     const accessOwner = getOwner(req, parsed, cfg);
-    const owner = local || cfg.device_data_isolation === false ? '' : accessOwner;
+    const owner = cfg.device_data_isolation === false ? '' : accessOwner;
     const id = parsed.query.id || '';
     const t = findVideoTaskById(id, owner);
     if (!t || !t.file_path) return sendText(res, 'video task not found', 'text/plain', 404);
@@ -5765,9 +5843,15 @@ function createWindow() {
 app.whenReady().then(() => {
   hardResetDataDirsBeforeInit();
   initConfig();
-  const restoredLegacyStore = restoreStoreFromLegacyIfCurrentEmpty();
+  const restoredOutputMirror = restoreStoreFromOutputMirrorIfCurrentEmpty();
+  const restoredLegacyStore = restoredOutputMirror ? false : restoreStoreFromLegacyIfCurrentEmpty();
   if (!restoredLegacyStore) rememberHistoricalOutputRootsFromStoreFile(path.join(DATA_ROOT, 'data', 'store.json'));
   initDB(app.getPath('userData'));
+  cleanupStaleImageTasks('');
+  mirrorRuntimeDataToOutputDir();
+  const mirrorTimer = setInterval(() => mirrorRuntimeDataToOutputDir(), 60 * 1000);
+  if (typeof mirrorTimer.unref === 'function') mirrorTimer.unref();
+  if (restoredOutputMirror) addLog('检测到当前任务库为空，已自动从输出目录 .TENYING_AI_RuntimeData 恢复程序缓存。', { level:'warn' });
   if (restoredLegacyStore) addLog('检测到更新后当前任务库为空，已自动从历史 RuntimeData 恢复批次、任务、图片和视频任务。', { level:'warn' });
   startNetworkTimeSync();
   queue = new TaskQueue();
@@ -5776,4 +5860,4 @@ app.whenReady().then(() => {
   startServer(Number(readConfig().port || 7861));
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
-app.on('before-quit', () => { try { stopTunnelProcess(); } catch {} try { if (queue && typeof queue.clearAllRunning === 'function') queue.clearAllRunning(); } catch {} try { if (server) server.close(); } catch {} });
+app.on('before-quit', () => { try { mirrorRuntimeDataToOutputDir(); } catch {} try { stopTunnelProcess(); } catch {} try { if (queue && typeof queue.clearAllRunning === 'function') queue.clearAllRunning(); } catch {} try { if (server) server.close(); } catch {} });
