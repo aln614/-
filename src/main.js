@@ -4,6 +4,7 @@ const os = require('os');
 const http = require('http');
 const https = require('https');
 const url = require('url');
+const crypto = require('crypto');
 const { app, BrowserWindow, shell, Menu, clipboard, nativeImage, ipcMain } = require('electron');
 const { spawn } = require('child_process');
 const { initDB, getDB, addLog, listBatches, listImages, listLogs, nowISO, uuid, setNetworkTimeOffset, getNetworkTimeInfo } = require('./services/db');
@@ -20,6 +21,15 @@ let lastMidjourneyImageRepairAt = 0;
 let tunnelProcess = null;
 let tunnelState = { running: false, provider: '', url: '', logs: [], last_error: '' };
 const staticDir = path.join(__dirname, 'renderer');
+const JSON_BODY_LIMIT_BYTES = Number(process.env.LAIG_JSON_BODY_LIMIT_MB || 64) * 1024 * 1024;
+const MEDIA_BODY_LIMIT_BYTES = Number(process.env.LAIG_MEDIA_BODY_LIMIT_MB || 1536) * 1024 * 1024;
+const STATUS_CACHE_TTL_MS = 1800;
+const HOST_STATS_CACHE_TTL_MS = 8000;
+const STALE_CLEANUP_TTL_MS = 15000;
+const BASE_SECURITY_HEADERS = {
+  'X-Content-Type-Options': 'nosniff',
+  'Referrer-Policy': 'no-referrer'
+};
 const APP_DISPLAY_NAME = 'TENYING_AI 1.0';
 const OUTPUT_ROOT_NAME = 'TENYING_AI_1_0';
 const OUTPUT_ZIP_DIR_NAME = 'TENYING_AI_1_0_Zips';
@@ -431,6 +441,27 @@ function parseCookies(req) {
   });
   return out;
 }
+const publicAccessTokens = new Map();
+function prunePublicAccessTokens() {
+  const now = Date.now();
+  for (const [token, expiresAt] of publicAccessTokens.entries()) {
+    if (!expiresAt || expiresAt <= now) publicAccessTokens.delete(token);
+  }
+}
+function issuePublicAccessToken(days = 7) {
+  prunePublicAccessTokens();
+  const ttl = Math.max(1, Number(days || 7)) * 24 * 60 * 60 * 1000;
+  const token = 'pa_' + crypto.randomBytes(24).toString('hex');
+  publicAccessTokens.set(token, Date.now() + ttl);
+  return token;
+}
+function isValidPublicAccessToken(token = '') {
+  const s = String(token || '').trim();
+  if (!s) return false;
+  prunePublicAccessTokens();
+  const expiresAt = publicAccessTokens.get(s);
+  return !!expiresAt && expiresAt > Date.now();
+}
 function hasPublicAccess(req, parsed, cfg) {
   if (!cfg.public_enabled) return false;
   const pass = String(cfg.public_password || '').trim();
@@ -438,7 +469,7 @@ function hasPublicAccess(req, parsed, cfg) {
   if (!pass) return false;
   const cookies = parseCookies(req);
   const got = String(req.headers['x-public-access'] || parsed.query.access || parsed.query.token || cookies.local_api_public_access || '').trim();
-  return got === pass;
+  return isValidPublicAccessToken(got) || got === pass;
 }
 function requestOrigin(req){
   const proto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() || (isPublicHost(req, readConfig()) ? 'https' : 'http');
@@ -534,18 +565,54 @@ function toCamelConfig(cfg) {
 }
 function send(res, obj, code = 200, extraHeaders = {}) {
   const body = Buffer.from(JSON.stringify(obj, null, 2), 'utf8');
-  res.writeHead(code, {'Content-Type':'application/json; charset=utf-8', 'Access-Control-Allow-Origin':'*', ...extraHeaders});
+  res.writeHead(code, {...BASE_SECURITY_HEADERS, 'Content-Type':'application/json; charset=utf-8', 'Access-Control-Allow-Origin':'*', ...extraHeaders});
   res.end(body);
 }
 function sendText(res, txt, type = 'text/plain; charset=utf-8', code = 200) {
-  res.writeHead(code, {'Content-Type': type, 'Access-Control-Allow-Origin':'*'});
+  res.writeHead(code, {...BASE_SECURITY_HEADERS, 'Content-Type': type, 'Access-Control-Allow-Origin':'*'});
   res.end(txt);
 }
-function readBody(req) {
+function bodyLimitForRequest(req) {
+  const p = url.parse(req.url || '', true).pathname || '';
+  if ([
+    '/api/batches',
+    '/api/assets/upload',
+    '/api/video_submit',
+    '/api/video_batch_submit',
+    '/api/mj_submit',
+    '/api/grsai_tool'
+  ].includes(p)) return MEDIA_BODY_LIMIT_BYTES;
+  return JSON_BODY_LIMIT_BYTES;
+}
+function payloadTooLargeError(limitBytes) {
+  const err = new Error(`请求体过大，最大允许 ${Math.round(limitBytes / 1024 / 1024)}MB`);
+  err.statusCode = 413;
+  return err;
+}
+function readBody(req, limitBytes = 0) {
   return new Promise((resolve, reject) => {
-    let raw = '';
-    req.on('data', c => { raw += c; if (raw.length > 300 * 1024 * 1024) req.destroy(); });
-    req.on('end', () => { try { resolve(raw ? JSON.parse(raw) : {}); } catch (e) { reject(e); } });
+    const limit = Number(limitBytes || bodyLimitForRequest(req) || JSON_BODY_LIMIT_BYTES);
+    const declared = Number(req.headers['content-length'] || 0);
+    let tooLarge = declared > limit;
+    let bytes = 0;
+    const chunks = [];
+    req.on('data', c => {
+      bytes += c.length;
+      if (tooLarge || bytes > limit) {
+        tooLarge = true;
+        return;
+      }
+      chunks.push(Buffer.from(c));
+    });
+    req.on('end', () => {
+      if (tooLarge) return reject(payloadTooLargeError(limit));
+      try {
+        const raw = chunks.length ? Buffer.concat(chunks, bytes).toString('utf8') : '';
+        resolve(raw ? JSON.parse(raw) : {});
+      } catch (e) {
+        reject(e);
+      }
+    });
     req.on('error', reject);
   });
 }
@@ -1031,15 +1098,32 @@ function repairImageRowPaths(row = {}) {
   }
   return row;
 }
+let storeLookupCache = { tasksRef: null, batchesRef: null, tasksLen: -1, batchesLen: -1, tasksById: new Map(), batchesById: new Map() };
+function storeLookups() {
+  const st = getDB()._store;
+  const tasks = st.tasks || [];
+  const batches = st.batches || [];
+  if (storeLookupCache.tasksRef !== tasks || storeLookupCache.batchesRef !== batches || storeLookupCache.tasksLen !== tasks.length || storeLookupCache.batchesLen !== batches.length) {
+    storeLookupCache = {
+      tasksRef: tasks,
+      batchesRef: batches,
+      tasksLen: tasks.length,
+      batchesLen: batches.length,
+      tasksById: new Map(tasks.map(t => [t.id, t])),
+      batchesById: new Map(batches.map(b => [b.id, b]))
+    };
+  }
+  return storeLookupCache;
+}
 function formatImage(row, opts = {}) {
   const fast = !!opts.fast;
   row = fast ? row : repairImageRowPaths(row);
   const remote = row.remote_url || row.result_url || '';
   const localFull = row.file_path && (fast || fs.existsSync(row.file_path)) ? `/file?path=${encodeURIComponent(row.file_path)}` : '';
   const localThumb = row.thumb_path && (fast || fs.existsSync(row.thumb_path)) ? `/file?path=${encodeURIComponent(row.thumb_path)}` : localFull;
-  const st = getDB()._store;
-  const task = st.tasks.find(t => t.id === row.task_id) || {};
-  const batch = st.batches.find(b => b.id === row.batch_id) || {};
+  const lookups = storeLookups();
+  const task = lookups.tasksById.get(row.task_id) || {};
+  const batch = lookups.batchesById.get(row.batch_id) || {};
   let mjImages = [], mjButtons = [], mjExecutedButtons = [];
   try { mjImages = JSON.parse(task.mj_images_json || '[]') || []; } catch {}
   try { mjButtons = JSON.parse(task.mj_buttons_json || '[]') || []; } catch {}
@@ -3010,6 +3094,7 @@ function streamVideoFile(file, req, res, download=false) {
   const type = contentType(file) || 'video/mp4';
   const filename = path.basename(file);
   const baseHeaders = {
+    ...BASE_SECURITY_HEADERS,
     'Content-Type': type,
     'Accept-Ranges': 'bytes',
     'Access-Control-Allow-Origin': '*',
@@ -3204,7 +3289,9 @@ function normalizeServedPathInput(filePath = '') {
   }
   return path.resolve(raw);
 }
+let referencedServedPathCache = { ts: 0, keys: new Set() };
 function referencedServedPathKeys(cfg = readConfig()) {
+  if (Date.now() - referencedServedPathCache.ts < 5000) return referencedServedPathCache.keys;
   const keys = new Set();
   const add = (p) => {
     if (!p) return;
@@ -3244,13 +3331,21 @@ function referencedServedPathKeys(cfg = readConfig()) {
       add(asset.thumb_path);
     }
   } catch {}
+  referencedServedPathCache = { ts: Date.now(), keys };
   return keys;
 }
 function isReferencedServedFile(filePath = '', cfg = readConfig()) {
   const key = pathKey(filePath);
   return !!key && referencedServedPathKeys(cfg).has(key);
 }
+let allowedFileRootsCache = { ts: 0, key: '', roots: [] };
 function allowedFileRoots(cfg = readConfig()) {
+  const cacheKey = JSON.stringify({
+    output_dir: cfg.output_dir || '',
+    legacy_output_dirs: Array.isArray(cfg.legacy_output_dirs) ? cfg.legacy_output_dirs : [],
+    asset_library_dir: cfg.asset_library_dir || ''
+  });
+  if (allowedFileRootsCache.key === cacheKey && Date.now() - allowedFileRootsCache.ts < 5000) return allowedFileRootsCache.roots;
   const roots = [
     path.join(DATA_ROOT, 'uploads'),
     path.join(DATA_ROOT, 'zips'),
@@ -3266,7 +3361,9 @@ function allowedFileRoots(cfg = readConfig()) {
   roots.push(...historicalOutputRootsFromCurrentStore());
   if (cfg.output_dir) roots.push(cfg.output_dir);
   if (Array.isArray(cfg.legacy_output_dirs)) roots.push(...cfg.legacy_output_dirs);
-  return Array.from(new Set(roots.map(r => path.resolve(r)).filter(Boolean)));
+  const resolved = Array.from(new Set(roots.map(r => path.resolve(r)).filter(Boolean)));
+  allowedFileRootsCache = { ts: Date.now(), key: cacheKey, roots: resolved };
+  return resolved;
 }
 function isAllowedServedFile(filePath = '', cfg = readConfig()) {
   const resolved = normalizeServedPathInput(filePath);
@@ -3714,6 +3811,7 @@ function assetSettings(body, local, cfg) {
 
 function imageTaskProgress(owner) {
   const st = getDB()._store;
+  const lookups = storeLookups();
   const filterOwner = (r) => !owner || r.owner_id === owner;
   const activeSet = new Set(['等待中','提交生成中','生成中','下载中']);
   return (st.tasks || [])
@@ -3721,14 +3819,14 @@ function imageTaskProgress(owner) {
     .sort((a,b)=>String(b.updated_at||b.created_at||'').localeCompare(String(a.updated_at||a.created_at||'')))
     .slice(0, 12)
     .map(t => {
-      const b = (st.batches || []).find(x => x.id === t.batch_id) || {};
+      const b = lookups.batchesById.get(t.batch_id) || {};
       const progress = Number.isFinite(Number(t.progress)) ? Number(t.progress) : (t.remote_task_id ? 5 : 0);
       let mjImages = [], mjButtons = [];
       try { mjImages = JSON.parse(t.mj_images_json || '[]') || []; } catch {}
       try { mjButtons = JSON.parse(t.mj_buttons_json || '[]') || []; } catch {}
-      const gridLocal = t.mj_grid_local_path && fs.existsSync(t.mj_grid_local_path) ? `/file?path=${encodeURIComponent(t.mj_grid_local_path)}` : '';
-      const resultLocal = t.result_path && fs.existsSync(t.result_path) ? `/file?path=${encodeURIComponent(t.result_path)}` : '';
-      const thumbLocal = t.thumb_path && fs.existsSync(t.thumb_path) ? `/file?path=${encodeURIComponent(t.thumb_path)}` : '';
+      const gridLocal = t.mj_grid_local_path ? `/file?path=${encodeURIComponent(t.mj_grid_local_path)}` : '';
+      const resultLocal = t.result_path ? `/file?path=${encodeURIComponent(t.result_path)}` : '';
+      const thumbLocal = t.thumb_path ? `/file?path=${encodeURIComponent(t.thumb_path)}` : '';
       return {
         id: t.id,
         batch_id: t.batch_id,
@@ -3749,7 +3847,7 @@ function imageTaskProgress(owner) {
         mj_grid_remote_url: t.mj_grid_remote_url || '',
         mj_grid_local_url: gridLocal || t.mj_grid_remote_url || '',
         mj_images: mjImages.map(item => {
-          const local = item.local_path && fs.existsSync(item.local_path) ? `/file?path=${encodeURIComponent(item.local_path)}` : '';
+          const local = item.local_path ? `/file?path=${encodeURIComponent(item.local_path)}` : '';
           return { ...item, full_url: local || item.remote_url || '', remote_url: item.remote_url || '' };
         }),
         mj_buttons: mjButtons,
@@ -3793,7 +3891,20 @@ function cleanupStaleImageTasks(owner = '') {
   return changed;
 }
 
+const appStatsCache = new Map();
+let hostCumulativeStatsCache = { ts: 0, data: null };
+const staleImageCleanupCache = new Map();
+function cleanupStaleImageTasksThrottled(owner = '') {
+  const key = owner || '__all__';
+  const last = staleImageCleanupCache.get(key) || 0;
+  if (Date.now() - last < STALE_CLEANUP_TTL_MS) return false;
+  staleImageCleanupCache.set(key, Date.now());
+  return cleanupStaleImageTasks(owner);
+}
 function appStats(owner) {
+  const cacheKey = owner || '__all__';
+  const cached = appStatsCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < STATUS_CACHE_TTL_MS) return cached.data;
   const s = getDB()._store;
   const filterOwner = (r) => !owner || r.owner_id === owner;
   const today = beijingDateKey();
@@ -3801,7 +3912,7 @@ function appStats(owner) {
   // V8.1：右侧实时面板按中国北京时间 UTC+8 的自然日统计；每天北京时间 00:00 自动归零，历史和图片不受影响。
   const tasks = ownerTasks.filter(t => beijingDateKey(t.created_at || '') === today);
   const batches = s.batches.filter(b => filterOwner(b) && beijingDateKey(b.created_at || '') === today).sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at))).slice(0,8).map(normalizeBatch);
-  return {
+  const data = {
     total: tasks.length,
     done: tasks.filter(t => t.status === '已完成').length,
     fail: tasks.filter(t => t.status === '失败').length,
@@ -3812,12 +3923,15 @@ function appStats(owner) {
     api: { ok: true, status: '正常' },
     stats_scope: 'today_device'
   };
+  appStatsCache.set(cacheKey, { ts: Date.now(), data });
+  return data;
 }
 function hostCumulativeStats() {
+  if (hostCumulativeStatsCache.data && Date.now() - hostCumulativeStatsCache.ts < HOST_STATS_CACHE_TTL_MS) return hostCumulativeStatsCache.data;
   const s = getDB()._store;
   const allTasks = s.tasks || [];
   const allImages = s.images || [];
-  return {
+  const data = {
     host_cumulative: {
       total_tasks: allTasks.length,
       completed_tasks: allTasks.filter(t => t.status === '已完成').length,
@@ -3827,6 +3941,8 @@ function hostCumulativeStats() {
       batches: (s.batches || []).length
     }
   };
+  hostCumulativeStatsCache = { ts: Date.now(), data };
+  return data;
 }
 function parseBoolValue(value, defaultValue = true) {
   if (value === true || value === false) return value;
@@ -5403,8 +5519,8 @@ async function apiHandler(req, res, parsed) {
     if (!cfg.public_enabled) return send(res, {ok:false,error:'公网访问未开启'}, 403);
     if (!pass) return send(res, {ok:false,error:'公网访问密码未设置，请在主机端“公网访问”里设置访问密码'}, 403);
     if (got !== pass) return send(res, {ok:false,error:'访问密码错误'}, 403);
-    const access = pass;
     const days = Number(cfg.public_remember_days || 7);
+    const access = issuePublicAccessToken(days);
     const cookie = `local_api_public_access=${encodeURIComponent(access)}; Max-Age=${Math.max(1, days) * 24 * 60 * 60}; Path=/; SameSite=Lax`;
     return send(res, {ok:true, access, remember_days: days, app: cfg.app_name}, 200, {'Set-Cookie': cookie});
   }
@@ -5503,7 +5619,7 @@ async function apiHandler(req, res, parsed) {
     if (method === 'POST' && p === '/api/assets/unshare') { const body=await readBody(req); return send(res, assetShare(body, local, cfg, deviceOwner, false)); }
     if (method === 'POST' && p === '/api/assets/export_zip') { const body=await readBody(req); const zipPath=assetExportZip(body, local, cfg, deviceOwner); return send(res,{ok:true,url:`/download?path=${encodeURIComponent(zipPath)}`}); }
     if (method === 'GET' && p === '/api/announcements') return send(res, await getAnnouncements(parsed.query.force === '1'));
-    if (method === 'GET' && p === '/api/status') { cleanupStaleImageTasks(deviceOwner); return send(res, { ...appStats(deviceOwner), time_info: getNetworkTimeInfo(), ...hostCumulativeStats(), ...urls(cfg), is_local_client: local, is_public_client: publicHost, device_data_isolation: cfg.device_data_isolation !== false, host_status_visible: true }); }
+    if (method === 'GET' && p === '/api/status') { cleanupStaleImageTasksThrottled(deviceOwner); return send(res, { ...appStats(deviceOwner), time_info: getNetworkTimeInfo(), ...hostCumulativeStats(), ...urls(cfg), is_local_client: local, is_public_client: publicHost, device_data_isolation: cfg.device_data_isolation !== false, host_status_visible: true }); }
     if (method === 'GET' && p === '/api/batches') return send(res, listBatches({ownerId: dataOwner, page: 1, pageSize: local ? 6000 : 1000}).rows.map(normalizeBatch));
     if (method === 'GET' && p === '/api/history_batches') {
       const scopedOwner = local && parsed.query.all_owners === '1' ? '' : dataOwner;
@@ -5643,14 +5759,20 @@ async function apiHandler(req, res, parsed) {
     }
     if (method === 'POST' && p === '/api/mj_submit') { const body=await readBody(req); return send(res, await submitMidjourneyAction(body, owner || deviceOwner)); }
     if (method === 'POST' && p === '/api/mj_upscale_jump') { return send(res, { ok:false, error:'mj_upscale_jump is disabled; jump image opens existing image_urls directly.' }, 410); }
-    if (method === 'GET' && p === '/api/mj_task') { return send(res, await queryMidjourneyTask({ task_id: parsed.query.task_id || '', api_key: parsed.query.api_key || '' })); }
+    if (method === 'GET' && p === '/api/mj_task') {
+      if (String(parsed.query.api_key || '').trim()) return send(res, {ok:false,error:'请使用 POST 查询 MJ 任务，避免 API Key 出现在链接中'}, 405);
+      return send(res, await queryMidjourneyTask({ task_id: parsed.query.task_id || '', api_key: local ? cfg.api_key || '' : '' }));
+    }
     if (method === 'POST' && p === '/api/mj_task') { const body=await readBody(req); return send(res, await queryMidjourneyTask(body)); }
     if (method === 'POST' && p === '/api/grsai_tool') {
       const body=await readBody(req); const ret = await grsaiTool({baseUrl: body.api_endpoint || cfg.api_endpoint, apiKey: body.api_key || (local ? cfg.api_key : ''), action: body.action, model: body.model || cfg.model, extra: body.body || {}, queryApiKey: body.target_api_key || ''});
       return send(res,{ok:true, action:body.action, response:ret});
     }
     return send(res, {ok:false,error:'接口不存在'}, 404);
-  } catch (e) { return send(res, {ok:false,error:e.message || String(e)}, 500); }
+  } catch (e) {
+    const code = Number(e && (e.statusCode || e.code)) === 413 ? 413 : 500;
+    return send(res, {ok:false,error:e.message || String(e)}, code);
+  }
 }
 function requestHandler(req, res) {
   const parsed = url.parse(req.url, true);
@@ -5697,7 +5819,7 @@ function requestHandler(req, res) {
     const type = contentType(file) || (isPublicFile ? 'application/octet-stream' : 'video/mp4');
     const range = req.headers.range;
     const cleanName = `${cleanId || 'reference'}${ext}`;
-    const baseHeaders = {'Content-Type': type, 'Content-Length': total, 'Accept-Ranges':'bytes', 'Access-Control-Allow-Origin':'*', 'Cache-Control':'public, max-age=7200', 'Content-Disposition': `inline; filename="${cleanName}"`};
+    const baseHeaders = {...BASE_SECURITY_HEADERS, 'Content-Type': type, 'Content-Length': total, 'Accept-Ranges':'bytes', 'Access-Control-Allow-Origin':'*', 'Cache-Control':'public, max-age=7200', 'Content-Disposition': `inline; filename="${cleanName}"`};
     if (req.method === 'HEAD') { res.writeHead(200, baseHeaders); return res.end(); }
     if (range) {
       const m = /bytes=(\d*)-(\d*)/.exec(range);
@@ -5705,7 +5827,7 @@ function requestHandler(req, res) {
         const start = m[1] ? Number(m[1]) : 0;
         const end = m[2] ? Math.min(Number(m[2]), total - 1) : total - 1;
         if (start <= end && start < total) {
-          res.writeHead(206, {'Content-Type':type,'Content-Range':`bytes ${start}-${end}/${total}`,'Content-Length':end-start+1,'Accept-Ranges':'bytes','Access-Control-Allow-Origin':'*'});
+          res.writeHead(206, {...BASE_SECURITY_HEADERS, 'Content-Type':type,'Content-Range':`bytes ${start}-${end}/${total}`,'Content-Length':end-start+1,'Accept-Ranges':'bytes','Access-Control-Allow-Origin':'*'});
           return fs.createReadStream(file,{start,end}).pipe(res);
         }
       }
@@ -5724,13 +5846,13 @@ function requestHandler(req, res) {
     catch { return sendText(res, 'file access denied', 'text/plain', 403); }
     if (!file || !fs.existsSync(file)) return sendText(res, 'not found', 'text/plain', 404);
     if (/^video\//i.test(contentType(file))) return streamVideoFile(file, req, res, parsed.pathname === '/download');
-    const headers = {'Content-Type': contentType(file), 'Access-Control-Allow-Origin':'*', 'Cache-Control':'public, max-age=86400'};
+    const headers = {...BASE_SECURITY_HEADERS, 'Content-Type': contentType(file), 'Access-Control-Allow-Origin':'*', 'Cache-Control':'public, max-age=86400'};
     if (parsed.pathname === '/download') headers['Content-Disposition'] = `attachment; filename*=UTF-8''${encodeURIComponent(path.basename(file))}`;
     res.writeHead(200, headers); return fs.createReadStream(file).pipe(res);
   }
   const file = safeJoinStatic(parsed.pathname);
   if (!file || !fs.existsSync(file) || fs.statSync(file).isDirectory()) return sendText(res, 'not found', 'text/plain', 404);
-  res.writeHead(200, {'Content-Type': contentType(file)}); fs.createReadStream(file).pipe(res);
+  res.writeHead(200, {...BASE_SECURITY_HEADERS, 'Content-Type': contentType(file)}); fs.createReadStream(file).pipe(res);
 }
 function startServer(port, retryCount = 0) {
   const desiredPort = Number(port || readConfig().port || 7861);
@@ -5853,9 +5975,23 @@ function createWindow() {
     width: 1480, height: 960, minWidth: 1180, minHeight: 760,
     title: (cfg.app_name || APP_DISPLAY_NAME),
     icon: path.join(__dirname, '..', 'assets', 'rocket.ico'),
-    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: false, preload: path.join(__dirname, 'preload.js') }
+    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: false, webSecurity: true, allowRunningInsecureContent: false, preload: path.join(__dirname, 'preload.js') }
   });
   setupImageContextMenu(mainWindow);
+  mainWindow.webContents.setWindowOpenHandler(({ url: target }) => {
+    if (/^https?:\/\//i.test(String(target || ''))) shell.openExternal(target).catch(()=>{});
+    return { action: 'deny' };
+  });
+  mainWindow.webContents.on('will-navigate', (event, target) => {
+    try {
+      const u = new URL(target);
+      const allowedHosts = new Set(['127.0.0.1', 'localhost', getLocalIP()]);
+      if (!allowedHosts.has(String(u.hostname || '').toLowerCase())) {
+        event.preventDefault();
+        if (/^https?:$/i.test(u.protocol)) shell.openExternal(target).catch(()=>{});
+      }
+    } catch {}
+  });
   mainWindow.on('closed', () => { mainWindow = null; });
 }
 // V14.1: 不再使用全局单实例锁。不同版本使用不同 appId，可与旧版本同时打开；端口被占用时会自动顺延。

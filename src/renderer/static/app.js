@@ -646,8 +646,8 @@ function updateBatchDurationBadges(){
     el.textContent = `${label} / ${Math.max(0,(end-start)/1000).toFixed(1)} 秒`;
   });
 }
-setInterval(updateBatchDurationBadges, 250);
-setInterval(updateMiniTaskElapsedBadges, 250);
+setInterval(updateBatchDurationBadges, 1000);
+setInterval(updateMiniTaskElapsedBadges, 1000);
 function toast(msg){ const t=$('#toast'); if(!t) return; t.textContent=msg; t.classList.add('show'); clearTimeout(toast._timer); toast._timer=setTimeout(()=>t.classList.remove('show'),2600); }
 window.__copyImageToast = toast;
 
@@ -1629,7 +1629,7 @@ async function submitPublicLogin(){
     const res = await fetch('/api/public_login', {method:'POST', headers:{'Content-Type':'application/json','X-Client-Id':getClientId()}, body:JSON.stringify({password})});
     const data = await res.json().catch(()=>({}));
     if(!res.ok || !data.ok) throw new Error(data.error || '密码验证失败');
-    rememberPublicAccess(password, data.remember_days || 7);
+    rememberPublicAccess(data.access || password, data.remember_days || 7);
     hidePublicLogin();
     await startup();
     toast('公网访问已登录，本设备 7 天内免输入密码');
