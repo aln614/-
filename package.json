@@ -5,6 +5,8 @@
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
+    "start:docker": "node src/docker-server.js",
+    "docker:build": "docker build -t tenying-ai:1.0.23 .",
     "dist": "electron-builder --win portable --config.win.signAndEditExecutable=false --config.forceCodeSigning=false",
     "dist:dir": "electron-builder --win dir --config.win.signAndEditExecutable=false --config.forceCodeSigning=false"
   },

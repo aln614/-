@@ -1,0 +1,21 @@
+services:
+  tenying-ai:
+    image: tenying-ai:1.0.23
+    container_name: tenying-ai
+    restart: unless-stopped
+    ports:
+      - "7868:7868"
+    environment:
+      NODE_ENV: production
+      LAIG_DOCKER: "1"
+      LAIG_SERVER_ONLY: "1"
+      PORT: "7868"
+      LOCAL_API_IMAGE_GENERATOR_DATA_DIR: /data/runtime
+      LAIG_OUTPUT_DIR: /data/output
+      LAIG_DOWNLOAD_DIR: /data/downloads
+      LAIG_LAN_ENABLED: "1"
+      APIMART_PROXY_URL: ""
+    volumes:
+      - ./runtime:/data/runtime
+      - ./output:/data/output
+      - ./downloads:/data/downloads

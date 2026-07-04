@@ -4010,11 +4010,13 @@ function registerApimartVideoUiRules(items = []){
       defaultAspect:item.defaultAspect || '16:9',
       durations:item.durations || videoRange(item.durationMin || 4, item.durationMax || 10),
       defaultDuration:String(item.defaultDuration || 5),
-      note:item.note || ''
+      note:item.note || '',
+      durationWithVideo:item.durationWithVideo === true
     };
   });
 }
 registerApimartVideoUiRules([
+  { model:'gemini-omni-flash-preview', label:'Gemini Omni Flash Preview', resolutions:['720p'], defaultResolution:'720p', aspects:['16:9','9:16'], defaultAspect:'16:9', durationMin:3, durationMax:10, defaultDuration:6, note:'支持文生视频、图生视频和上传视频编辑；图片最多 16 张，视频最多 1 个。', durationWithVideo:true },
   { model:'doubao-seedance-1-5-pro', label:'Doubao Seedance 1.5 Pro', resolutions:['480p','720p','1080p'], defaultResolution:'720p', aspects:['16:9','9:16','1:1'], durationMin:4, durationMax:12 },
   { model:'doubao-seedance-2.0', label:'Doubao Seedance 2.0', resolutions:['480p','720p','1080p','4k'], aspects:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'], durationMin:4, durationMax:15 },
   { model:'doubao-seedance-2.0-fast', label:'Doubao Seedance 2.0 Fast', resolutions:['480p','720p'], aspects:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'], durationMin:4, durationMax:15 },
@@ -4057,7 +4059,7 @@ registerApimartVideoUiRules([
   { model:'pixverse-v6', label:'Pixverse v6', resolutions:['360p','540p','720p','1080p'], durationMin:1, durationMax:15 }
 ]);
 const APIMART_VIDEO_MODEL_GROUPS_UI = [
-  ['Omni / Google', ['omni-flash-ext','veo3.1-fast','veo3.1-quality','veo3.1-lite','veo3.1-fast-official','veo3.1-quality-official']],
+  ['Omni / Google', ['gemini-omni-flash-preview','omni-flash-ext','veo3.1-fast','veo3.1-quality','veo3.1-lite','veo3.1-fast-official','veo3.1-quality-official']],
   ['Doubao Seedance', ['doubao-seedance-1-0-pro-fast','doubao-seedance-1-0-pro-quality','doubao-seedance-1-5-pro','doubao-seedance-2.0','doubao-seedance-2.0-fast','doubao-seedance-2.0-face','doubao-seedance-2.0-fast-face','doubao-seedance-2.0-mini']],
   ['Sora / MiniMax / SkyReels', ['sora-2','sora-2-pro','MiniMax-Hailuo-02','MiniMax-Hailuo-2.3','MiniMax-Hailuo-2.3-Fast','skyreels-v4-fast','skyreels-v4-std']],
   ['HappyHorse / Wan', ['happyhorse-1.0','happyhorse-1.1','wan2.5-preview','wan2.6','wan2.6-i2v','wan2.6-i2v-flash','wan2.7','wan2.7-r2v','wan2.7-videoedit']],
@@ -4076,6 +4078,10 @@ function apimartVideoModelOptionsHtml(){
 function currentApimartVideoRule(){
   const key = ($('#videoModel')?.value || 'omni-flash-ext').toLowerCase();
   return APIMART_VIDEO_MODEL_RULES_UI[key] || APIMART_VIDEO_MODEL_RULES_UI['omni-flash-ext'];
+}
+function isApimartOmniVideoModel(){
+  const model = String($('#videoModel')?.value || '').toLowerCase();
+  return model.includes('omni') || model === 'omni-flash-ext';
 }
 function videoModeAutoLabel(){
   const hasVideo = hasReferenceVideo();
@@ -4197,8 +4203,8 @@ function updateVideoModeUI(){
     ? (hasVideo
       ? '本地 Flow2API：上传视频编辑仅支持 Omni Flash。中文提示词会原样直接提交给 Google Flow，不会调用翻译服务。'
       : '本地 Flow2API：Omni Flash 支持文生、首帧、多素材及上传视频编辑；Veo 3.1 仅支持文生 / 图生视频。')
-    : ($('#videoModel')?.value || '').startsWith('omni')
-      ? 'Omni Flash 支持 4/6/8/10 秒及直接上传视频编辑；公网视频 URL 必须是 APIMart 云端可访问的 HTTP/HTTPS 直链。'
+    : isApimartOmniVideoModel()
+      ? `${apimartRule.label} 支持直接上传视频编辑；公网视频 URL 必须是 APIMart 云端可访问的 HTTP/HTTPS 直链。${apimartRule.note ? ' ' + apimartRule.note : ''}`
       : 'APIMart 视频系列已按官方文档匹配模型、时长、比例和分辨率；上传视频编辑仅对支持 video_url / video_urls 的模型开放。'
   if(platform === 'flow2api' && images > 7){
     toast('本地 Flow2API Omni Flash 最多支持 7 张图片素材');
@@ -4217,7 +4223,7 @@ function setVideoApiPlatform(platform='apimart', silent=false){
   if($('#videoApiKeyLabel')) $('#videoApiKeyLabel').textContent = p === 'flow2api' ? 'Flow2API API Key' : 'APIMart API Key';
   if($('#videoPlatformWarning')) $('#videoPlatformWarning').textContent = p === 'flow2api'
     ? '本地 Flow2API 已支持 Omni Flash：文生、首帧、多素材及直接上传视频编辑；编辑结果时长跟随源视频。'
-    : 'Omni Flash 支持 4/6/8/10 秒及直接上传视频编辑；公网视频 URL 必须是 APIMart 云端可访问的 HTTP/HTTPS 直链。';
+    : 'Omni / Google 视频模型支持文生视频、图生视频和上传视频编辑；公网视频 URL 必须是 APIMart 云端可访问的 HTTP/HTTPS 直链。';
   $('#videoUrlWrap')?.classList.remove('hidden');
   updateVideoDurationVisibility();
   updateVideoModeUI();
@@ -4250,7 +4256,8 @@ function syncVideoApiKeyToHome(value=''){
 }
 function hasReferenceVideo(){ return !!(videoFilesData.length || ($('#videoUrlInput')?.value || '').trim()); }
 function updateVideoDurationVisibility(){
-  const refVideo = hasReferenceVideo() || currentVideoModeValue() === 'video_edit';
+  const rule = currentVideoPlatform() === 'apimart' ? currentApimartVideoRule() : {};
+  const refVideo = (hasReferenceVideo() || currentVideoModeValue() === 'video_edit') && !rule.durationWithVideo;
   $('#videoDurationWrap')?.classList.toggle('hidden', refVideo);
   updateVideoModeUI();
 }
@@ -4330,7 +4337,8 @@ async function submitVideoTask(){
   }
   const platformCfg = loadClientConfig(platform) || {};
   const body = { video_platform:platform, api_endpoint:platform === 'flow2api' ? (platformCfg.api_endpoint || 'http://127.0.0.1:38000') : 'https://api.apimart.ai', api_key:apiKey, video_model:$('#videoModel')?.value || '', video_mode:currentVideoModeValue(), seed:$('#videoSeed')?.value?.trim() || '', copies:Number($('#videoRepeatCount')?.value || 1), retry_times:Number($('#videoRetryTimes')?.value || 0), prompts:$('#videoPrompt').value, prompt_multiline_tasks: $('#videoPromptMultilineTasks') ? $('#videoPromptMultilineTasks').checked : false, resolution:$('#videoResolution').value, aspect_ratio:$('#videoAspect').value, video_url:$('#videoUrlInput').value.trim(), video_files:videoFilesData, ref_images:videoRefImages };
-  if(!refVideoMode) body.duration = $('#videoDuration').value;
+  const apimartDurationWithVideo = platform === 'apimart' && currentApimartVideoRule().durationWithVideo === true;
+  if(!refVideoMode || apimartDurationWithVideo) body.duration = $('#videoDuration').value;
   $('#startVideoBtn').disabled = true; $('#startVideoBtn').textContent = '批量提交中...';
   try{
     const r = await api('/api/video_batch_submit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});

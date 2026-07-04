@@ -21,6 +21,7 @@ let lastMidjourneyImageRepairAt = 0;
 let tunnelProcess = null;
 let tunnelState = { running: false, provider: '', url: '', logs: [], last_error: '' };
 const staticDir = path.join(__dirname, 'renderer');
+const SERVER_ONLY = process.env.LAIG_SERVER_ONLY === '1' || process.env.LAIG_DOCKER === '1';
 const JSON_BODY_LIMIT_BYTES = Number(process.env.LAIG_JSON_BODY_LIMIT_MB || 64) * 1024 * 1024;
 const MEDIA_BODY_LIMIT_BYTES = Number(process.env.LAIG_MEDIA_BODY_LIMIT_MB || 1536) * 1024 * 1024;
 const STATUS_CACHE_TTL_MS = 1800;
@@ -365,9 +366,27 @@ function readConfig() {
     migrated.legacy_output_dirs = Array.isArray(migrated.legacy_output_dirs)
       ? Array.from(new Set(migrated.legacy_output_dirs.map(r => String(r || '').trim()).filter(Boolean)))
       : [];
+    if (SERVER_ONLY) {
+      if (!String(migrated.output_dir || '').trim()) migrated.output_dir = process.env.LAIG_OUTPUT_DIR || '/data/output';
+      if (!String(migrated.asset_library_dir || '').trim() && process.env.LAIG_ASSET_DIR) migrated.asset_library_dir = process.env.LAIG_ASSET_DIR;
+      if (process.env.PORT) migrated.port = Number(process.env.PORT) || migrated.port || DEFAULT_CONFIG.port;
+      migrated.lan_enabled = typeof process.env.LAIG_LAN_ENABLED === 'undefined'
+        ? true
+        : (process.env.LAIG_LAN_ENABLED !== '0' && process.env.LAIG_LAN_ENABLED !== 'false');
+      if (!String(process.env.APIMART_PROXY_URL || '').trim() && (!String(raw.apimart_proxy_url || '').trim() || String(raw.apimart_proxy_url || '').trim() === DEFAULT_CONFIG.apimart_proxy_url)) migrated.apimart_proxy_url = '';
+    }
     return { ...DEFAULT_CONFIG, ...migrated };
   }
-  catch { return { ...DEFAULT_CONFIG }; }
+  catch {
+    const fallback = { ...DEFAULT_CONFIG };
+    if (SERVER_ONLY) {
+      fallback.output_dir = process.env.LAIG_OUTPUT_DIR || '/data/output';
+      fallback.port = Number(process.env.PORT || fallback.port || 7868);
+      fallback.lan_enabled = process.env.LAIG_LAN_ENABLED === '0' || process.env.LAIG_LAN_ENABLED === 'false' ? false : true;
+      fallback.apimart_proxy_url = String(process.env.APIMART_PROXY_URL || '').trim();
+    }
+    return fallback;
+  }
 }
 function saveConfig(partial) {
   const next = { ...readConfig(), ...partial };
@@ -1720,6 +1739,7 @@ function registerApimartVideoRules(items = []) {
   }
 }
 registerApimartVideoRules([
+  { model:'gemini-omni-flash-preview', label:'Gemini Omni Flash Preview', resolutions:['720p'], defaultResolution:'720p', aspectRatios:['16:9','9:16'], defaultAspectRatio:'16:9', durationRange:[3,10], defaultDuration:6, supportsImageUrls:true, supportsVideoUrls:true, videoParam:'video_urls', maxImageCount:16, maxVideoCount:1, durationWithVideo:true },
   { model:'doubao-seedance-1-5-pro', label:'Doubao Seedance 1.5 Pro', resolutions:['480p','720p','1080p'], defaultResolution:'720p', aspectRatios:['16:9','9:16','1:1'], durationRange:[4,12], supportsImageUrls:false, supportsImageWithRoles:true, supportsLastFrame:true },
   { model:'doubao-seedance-2.0', label:'Doubao Seedance 2.0', resolutions:['480p','720p','1080p','4k'], aspectRatios:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'], durationRange:[4,15], supportsImageUrls:true, supportsVideoUrls:true, supportsImageWithRoles:true, supportsLastFrame:true },
   { model:'doubao-seedance-2.0-fast', label:'Doubao Seedance 2.0 Fast', resolutions:['480p','720p'], aspectRatios:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'], durationRange:[4,15], supportsImageUrls:true, supportsVideoUrls:true, supportsImageWithRoles:true, supportsLastFrame:true },
@@ -2761,8 +2781,12 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
     if (Array.isArray(rule.allowedImageCounts) && !rule.allowedImageCounts.includes(imageUrls.length)) {
       throw new Error(`${rule.label || videoModel} 参考图数量仅支持 ${rule.allowedImageCounts.join('/')} 张，当前为 ${imageUrls.length} 张。`);
     }
+    if (Number(rule.maxImageCount || 0) > 0 && imageUrls.length > Number(rule.maxImageCount)) {
+      throw new Error(`${rule.label || videoModel} 参考图最多支持 ${rule.maxImageCount} 张，当前为 ${imageUrls.length} 张。`);
+    }
     const mode = resolveApimartVideoMode(body.video_mode, { imageCount: imageUrls.length, hasVideo: !!videoUrl });
     if (videoUrl && !rule.supportsVideoUrls) throw new Error(`${rule.label || videoModel} 不支持上传视频编辑，请切换 Omni Flash。`);
+    if (videoUrl && Number(rule.maxVideoCount || 0) > 0 && Number(rule.maxVideoCount) < 1) throw new Error(`${rule.label || videoModel} 不支持上传视频编辑。`);
     const payload = {
       model: rule.model || videoModel,
       prompt,
@@ -2798,7 +2822,7 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
       if (rule.videoParam === 'video_url') payload.video_url = videoUrl;
       else payload.video_urls = [videoUrl];
     }
-    if (!videoUrl) payload.duration = normalizeVideoDuration(body.duration, rule.defaultDuration || 6, payload.model);
+    if (!videoUrl || rule.durationWithVideo) payload.duration = normalizeVideoDuration(body.duration, rule.defaultDuration || 6, payload.model);
     const seed = optionalInt(body.seed);
     if (seed !== undefined) payload.seed = seed;
     row.resolution = normalizedResolution;
@@ -6011,8 +6035,8 @@ app.whenReady().then(() => {
   startNetworkTimeSync();
   queue = new TaskQueue();
   queue.recoverInterruptedBatches();
-  createWindow();
+  if (!SERVER_ONLY) createWindow();
   startServer(Number(readConfig().port || 7861));
 });
-app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
+app.on('window-all-closed', () => { if (!SERVER_ONLY && process.platform !== 'darwin') app.quit(); });
 app.on('before-quit', () => { try { mirrorRuntimeDataToOutputDir(); } catch {} try { stopTunnelProcess(); } catch {} try { if (queue && typeof queue.clearAllRunning === 'function') queue.clearAllRunning(); } catch {} try { if (server) server.close(); } catch {} });
