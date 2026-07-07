@@ -43,6 +43,7 @@ let imageHasMore = false;
 let imageLoading = false;
 let imageGridEventsBound = false;
 let imageGridScrollBound = false;
+let imageGridScrollRoot = null;
 let imageGridScrollTimer = 0;
 let miniImagesCache = [];
 let miniImagesFetchedAt = 0;
@@ -2674,9 +2675,13 @@ function bindImageGridEvents(){
   }, true);
 }
 function bindImageInfiniteScroll(){
-  if(imageGridScrollBound) return;
+  const root = $('#imageGrid') || document.querySelector('.main') || window;
+  if(imageGridScrollBound && imageGridScrollRoot === root) return;
+  if(imageGridScrollBound && imageGridScrollRoot && imageGridScrollRoot.__laigImageScrollHandler){
+    imageGridScrollRoot.removeEventListener('scroll', imageGridScrollRoot.__laigImageScrollHandler);
+  }
   imageGridScrollBound = true;
-  const root = document.querySelector('.main') || window;
+  imageGridScrollRoot = root;
   const onScroll = ()=>{
     if(imageGridScrollTimer) return;
     imageGridScrollTimer = window.setTimeout(()=>{
@@ -2687,6 +2692,7 @@ function bindImageInfiniteScroll(){
       if(remain < 900) loadImages({append:true});
     }, 120);
   };
+  root.__laigImageScrollHandler = onScroll;
   root.addEventListener('scroll', onScroll, {passive:true});
 }
 async function loadImages(opts = {}){
@@ -2700,13 +2706,14 @@ async function loadImages(opts = {}){
     imageRowsCache = [];
     imagePage = 1;
     imageHasMore = false;
+    const grid = $('#imageGrid');
+    if(grid) grid.scrollTop = 0;
     if($('#imageGrid')) $('#imageGrid').innerHTML = '<div class="card">正在加载图片...</div>';
   }
   imageLoading = true;
   try{
     const params = new URLSearchParams({fast:'1', limit:String(IMAGE_PAGE_SIZE), page:String(imagePage)});
     if(currentImageBatch) params.set('batch_id', currentImageBatch);
-    else params.set('panel_only', '1');
     const imgs = await api('/api/images?' + params.toString());
     imageRowsCache = append ? imageRowsCache.concat(imgs) : imgs;
     imageHasMore = Array.isArray(imgs) && imgs.length >= IMAGE_PAGE_SIZE;
