@@ -3656,6 +3656,20 @@ function resolveServedFilePath(filePath = '', cfg = readConfig()) {
   if (!isAllowedServedFile(resolved, cfg)) throw new Error('文件路径不在允许访问的程序目录内');
   return resolved;
 }
+function resolveMediaCachePath(filePath = '', cfg = readConfig()) {
+  const resolved = normalizeServedPathInput(filePath);
+  const key = pathKey(resolved);
+  const outputRoot = String(cfg.output_dir || '').trim();
+  if (outputRoot && isPathInside(path.resolve(outputRoot), resolved)) return resolved;
+  try {
+    const st = getDB()._store || {};
+    const rows = Array.isArray(st.images) ? st.images : [];
+    for (const img of rows) {
+      if ((img.file_path && pathKey(img.file_path) === key) || (img.thumb_path && pathKey(img.thumb_path) === key)) return resolved;
+    }
+  } catch {}
+  throw new Error('文件路径不在允许访问的程序目录内');
+}
 function assetDbPath(cfg=readConfig()) {
   const base = defaultAssetLibraryDir(cfg);
   ensureDir(path.join(base, 'meta'));
@@ -5948,6 +5962,10 @@ async function apiHandler(req, res, parsed) {
       const fastFormat = fastRequested || (String(parsed.query.panel_only || '') === '1' && !String(parsed.query.batch_id || ''));
       return send(res, rows.map(row => formatImage(row, { fast: fastFormat })));
     }
+    if (method === 'GET' && p === '/api/media_cache_status') {
+      const ret = mediaCacheStatus(req, parsed);
+      return send(res, ret, ret.status || 200);
+    }
     if (method === 'POST' && p === '/api/delete_images') { const body=await readBody(req); return send(res, deleteImages(body.image_ids || [], owner)); }
     if (method === 'POST' && p === '/api/clear_all_cache') {
       if (!local) return send(res, {ok:false,error:'只有主机端可以清除所有数据'}, 403);
@@ -6218,8 +6236,8 @@ async function servePreviewImage(req, res, parsed) {
     return sendText(res, e.message || 'preview image failed', 'text/plain', 500);
   }
 }
-function sendDiskFile(req, res, file, opts = {}) {
-  const stat = fs.statSync(file);
+async function sendDiskFile(req, res, file, opts = {}) {
+  const stat = opts.stat || await fs.promises.stat(file);
   const headers = {
     ...BASE_SECURITY_HEADERS,
     'Content-Type': opts.type || contentType(file),
@@ -6240,7 +6258,12 @@ async function serveFileRequest(req, res, parsed) {
   if (!local && publicHost && !cfg.public_enabled) return sendText(res, 'public access disabled', 'text/plain', 403);
   if (!local && !publicHost && !cfg.lan_enabled) return sendText(res, 'lan access disabled', 'text/plain', 403);
   let file = '';
-  try { file = resolveServedFilePath(parsed.query.path || '', cfg); }
+  try {
+    const rawPath = parsed.query.path || '';
+    const maybeType = contentType(normalizeServedPathInput(rawPath));
+    if (parsed.pathname !== '/download' && /^image\//i.test(maybeType)) file = resolveMediaCachePath(rawPath, cfg);
+    else file = resolveServedFilePath(rawPath, cfg);
+  }
   catch { return sendText(res, 'file access denied', 'text/plain', 403); }
   const type = contentType(file);
   if (parsed.pathname !== '/download' && /^image\//i.test(type)) {
@@ -6250,10 +6273,9 @@ async function serveFileRequest(req, res, parsed) {
       return sendDiskFile(req, res, cachedPath, { download:false, filename:path.basename(file), type });
     }
   }
-  if (!file || !fs.existsSync(file)) return sendText(res, 'not found', 'text/plain', 404);
   if (/^video\//i.test(type)) return streamVideoFile(file, req, res, parsed.pathname === '/download');
   let sourceStat = null;
-  try { sourceStat = fs.statSync(file); } catch { return sendText(res, 'not found', 'text/plain', 404); }
+  try { sourceStat = await fs.promises.stat(file); } catch { return sendText(res, 'not found', 'text/plain', 404); }
   let servePath = file;
   if (parsed.pathname !== '/download' && shouldHotCacheMedia(file, sourceStat, type)) {
     const cachedPath = localHotMediaCachePath(file);
@@ -6269,7 +6291,27 @@ async function serveFileRequest(req, res, parsed) {
       }
     }
   }
-  return sendDiskFile(req, res, servePath, { download: parsed.pathname === '/download', filename:path.basename(file), type });
+  return sendDiskFile(req, res, servePath, { download: parsed.pathname === '/download', filename:path.basename(file), type, stat: servePath === file ? sourceStat : null });
+}
+function mediaCacheStatus(req, parsed) {
+  const cfg = readConfig();
+  const local = isLocalReq(req);
+  const publicHost = isPublicHost(req, cfg);
+  if (!local && publicHost && !hasPublicAccess(req, parsed, cfg)) return { ok:false, error:'public access denied', status:403 };
+  if (!local && publicHost && !cfg.public_enabled) return { ok:false, error:'public access disabled', status:403 };
+  if (!local && !publicHost && !cfg.lan_enabled) return { ok:false, error:'lan access disabled', status:403 };
+  let file = '';
+  try { file = resolveMediaCachePath(parsed.query.path || '', cfg); }
+  catch { return { ok:false, error:'file access denied', status:403 }; }
+  const type = contentType(file);
+  if (!/^image\//i.test(type)) return { ok:false, error:'not an image', status:415 };
+  const cachedPath = localHotMediaCachePath(file);
+  if (fs.existsSync(cachedPath)) {
+    fs.utimes(cachedPath, new Date(), new Date(), ()=>{});
+    return { ok:true, ready:true, url:`/file?path=${encodeURIComponent(file)}`, cached_path:cachedPath };
+  }
+  scheduleLocalHotMedia(file);
+  return { ok:true, ready:false, url:`/file?path=${encodeURIComponent(file)}` };
 }
 function setupImageContextMenu(win) {
   win.webContents.on('context-menu', (event, params) => {

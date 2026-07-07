@@ -12,6 +12,7 @@ let previewScale = 1;
 const PREVIEW_MIN_SCALE = 0.02;
 const PREVIEW_MAX_SCALE = 12;
 const PREVIEW_FULL_AUTO_LOAD_MAX_BYTES = 24 * 1024 * 1024;
+const PREVIEW_PROXY_MIN_BYTES = 24 * 1024 * 1024;
 let lastMiniImagesSignature = '';
 let refreshAllInFlight = false;
 let refreshAllQueued = false;
@@ -3150,7 +3151,7 @@ function mergeMjSingleButtons(buttons=[]){
 function imageRowToPreviewMeta(img={}){
   const full = img.full_url || img.url || img.remote_url || ''; 
   const thumb = img.thumb_url || img.url || full;
-  return {id:img.id, fullUrl:full, originalUrl:img.original_url||full, thumbUrl:thumb, remoteUrl:img.remote_url||'', prompt:img.prompt||'', model:img.model||'', size:img.size||'', imageSize:img.image_size||'', batch:img.batch_name||'', time:formatBeijingTime(img.generated_at||''), filename:img.filename||'generated-image.png', status:img.status||'', progress:img.progress||0, progress_text:img.progress_text||'', taskId:img.task_id||'', local_task_id:img.local_task_id||'', batch_id:img.batch_id||'', mj_source:img.mj_source||'', mj_action:img.mj_action||'', mj_parent_task_id:img.mj_parent_task_id||'', mj_parent_remote_task_id:img.mj_parent_remote_task_id||'', mj_is_grid:!!img.mj_is_grid, mj_variant_index:img.mj_variant_index||0, mj_images:img.mj_images||[], mj_buttons:img.mj_buttons||[], mj_executed_buttons:img.mj_executed_buttons||[], mj_grid_remote_url:img.mj_grid_remote_url||'', mj_grid_local_url:img.mj_grid_local_url||''};
+  return {id:img.id, fullUrl:full, originalUrl:img.original_url||full, thumbUrl:thumb, remoteUrl:img.remote_url||'', prompt:img.prompt||'', model:img.model||'', size:img.size||'', imageSize:img.image_size||'', size_bytes:Number(img.size_bytes||0), batch:img.batch_name||'', time:formatBeijingTime(img.generated_at||''), filename:img.filename||'generated-image.png', status:img.status||'', progress:img.progress||0, progress_text:img.progress_text||'', taskId:img.task_id||'', local_task_id:img.local_task_id||'', batch_id:img.batch_id||'', mj_source:img.mj_source||'', mj_action:img.mj_action||'', mj_parent_task_id:img.mj_parent_task_id||'', mj_parent_remote_task_id:img.mj_parent_remote_task_id||'', mj_is_grid:!!img.mj_is_grid, mj_variant_index:img.mj_variant_index||0, mj_images:img.mj_images||[], mj_buttons:img.mj_buttons||[], mj_executed_buttons:img.mj_executed_buttons||[], mj_grid_remote_url:img.mj_grid_remote_url||'', mj_grid_local_url:img.mj_grid_local_url||''};
 }
 function openMjJumpImage(meta={}, index=1){
   const idx = Number(index || 1);
@@ -3694,7 +3695,12 @@ function previewProxyMaxDim(){
   const target = Math.max(window.innerWidth || 1200, window.innerHeight || 900) * dpr * 1.45;
   return Math.max(1200, Math.min(3200, Math.round(target)));
 }
-function previewProxyUrlFor(src){
+function previewProxyUrlFor(src, meta = {}){
+  if(meta.forceProxyPreview !== true){
+    const bytes = Number(meta.size_bytes || meta.sizeBytes || 0);
+    if(bytes > 0 && bytes <= PREVIEW_PROXY_MIN_BYTES) return '';
+    if(!bytes) return '';
+  }
   try{
     const u = new URL(withPublicAccess(src || ''), location.href);
     if(u.pathname !== '/file' && u.pathname !== '/download') return '';
@@ -3708,6 +3714,35 @@ function previewProxyUrlFor(src){
     return '';
   }
 }
+function mediaCacheStatusUrlFor(src){
+  try{
+    const u = new URL(withPublicAccess(src || ''), location.href);
+    if(u.pathname !== '/file' && u.pathname !== '/download') return '';
+    const filePath = u.searchParams.get('path') || '';
+    if(!filePath) return '';
+    const out = new URL('/api/media_cache_status', location.href);
+    out.searchParams.set('path', filePath);
+    return withPublicAccess(out.pathname + out.search);
+  }catch(_e){
+    return '';
+  }
+}
+async function waitForLocalHotMedia(src, timeoutMs = 60000){
+  const statusUrl = mediaCacheStatusUrlFor(src);
+  if(!statusUrl) return src;
+  const started = Date.now();
+  let delay = 350;
+  while(Date.now() - started < timeoutMs){
+    try{
+      const res = await fetch(statusUrl, {headers:assetSourceHeaders(), cache:'no-store'});
+      const data = await res.json().catch(()=>null);
+      if(data && data.ok && data.ready) return src;
+    }catch(_e){}
+    await new Promise(resolve => setTimeout(resolve, delay));
+    delay = Math.min(1200, Math.round(delay * 1.25));
+  }
+  return '';
+}
 async function showPreview(src, meta = {}){
   previewScale = 1; previewFitScale = 1; previewX = 0; previewY = 0; previewNaturalWidth = 0; previewNaturalHeight = 0;
   applyPreviewBgSettings();
@@ -3716,7 +3751,7 @@ async function showPreview(src, meta = {}){
   const finalSrc = src || meta.fullUrl || '';
   const thumbSrc = meta.thumbUrl || meta.thumb_url || '';
   const remoteSrc = meta.remoteUrl || meta.remote_url || '';
-  const proxySrc = previewProxyUrlFor(finalSrc);
+  const proxySrc = previewProxyUrlFor(finalSrc, meta);
   const displaySrc = thumbSrc && finalSrc && thumbSrc !== finalSrc ? thumbSrc : (proxySrc || finalSrc);
   const token = ++previewLoadToken;
   const fitLoadedImage = ()=>{
@@ -3748,8 +3783,13 @@ async function showPreview(src, meta = {}){
         (async()=>{
           let hiSrc = proxySrc;
           if(!hiSrc){
-            const finalSize = await previewUrlContentLength(finalSrc);
-            if(shouldAutoLoadFullPreview(finalSrc, meta) && (!finalSize || finalSize <= PREVIEW_FULL_AUTO_LOAD_MAX_BYTES)) hiSrc = finalSrc;
+            const knownSize = Number(meta.size_bytes || meta.sizeBytes || 0);
+            if(knownSize > 0 && knownSize <= PREVIEW_FULL_AUTO_LOAD_MAX_BYTES) hiSrc = await waitForLocalHotMedia(finalSrc);
+            else {
+              const finalSize = await previewUrlContentLength(finalSrc);
+              if(shouldAutoLoadFullPreview(finalSrc, meta) && finalSize && finalSize <= PREVIEW_FULL_AUTO_LOAD_MAX_BYTES) hiSrc = await waitForLocalHotMedia(finalSrc);
+              else if(shouldAutoLoadFullPreview(finalSrc, meta) && !finalSize) hiSrc = '';
+            }
           }
           if(token === previewLoadToken && hiSrc){
             const hi = new Image();
