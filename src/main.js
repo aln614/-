@@ -5869,9 +5869,11 @@ function requestHandler(req, res) {
     try { file = resolveServedFilePath(parsed.query.path || '', cfg); }
     catch { return sendText(res, 'file access denied', 'text/plain', 403); }
     if (!file || !fs.existsSync(file)) return sendText(res, 'not found', 'text/plain', 404);
+    const stat = fs.statSync(file);
     if (/^video\//i.test(contentType(file))) return streamVideoFile(file, req, res, parsed.pathname === '/download');
-    const headers = {...BASE_SECURITY_HEADERS, 'Content-Type': contentType(file), 'Access-Control-Allow-Origin':'*', 'Cache-Control':'public, max-age=86400'};
+    const headers = {...BASE_SECURITY_HEADERS, 'Content-Type': contentType(file), 'Content-Length': stat.size, 'Access-Control-Allow-Origin':'*', 'Cache-Control':'public, max-age=86400'};
     if (parsed.pathname === '/download') headers['Content-Disposition'] = `attachment; filename*=UTF-8''${encodeURIComponent(path.basename(file))}`;
+    if (req.method === 'HEAD') { res.writeHead(200, headers); return res.end(); }
     res.writeHead(200, headers); return fs.createReadStream(file).pipe(res);
   }
   const file = safeJoinStatic(parsed.pathname);
