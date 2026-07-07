@@ -56,9 +56,21 @@ const RESET_MARKER = path.join(os.tmpdir(), 'LocalApiImageGenerator_full_reset_v
 const LEGACY_RESTORE_BLOCK_MARKER = path.join(DATA_ROOT, 'data', 'skip_legacy_restore.json');
 const PREVIEW_IMAGE_DEFAULT_MAX_DIM = 2200;
 const PREVIEW_IMAGE_MAX_WORKERS = Math.max(1, Math.min(2, os.cpus().length || 2));
+const LOCAL_HOT_CACHE_ROOT = process.env.TENYING_AI_LOCAL_HOT_CACHE_DIR || path.join(
+  process.env.LOCALAPPDATA || process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Local'),
+  'TENYING_AI',
+  'HotCache'
+);
+const LOCAL_HOT_CACHE_MAX_BYTES = Math.max(512, Number(process.env.TENYING_AI_LOCAL_HOT_CACHE_MB || 4096)) * 1024 * 1024;
+const LOCAL_HOT_CACHE_FILE_MAX_BYTES = Math.max(8, Number(process.env.TENYING_AI_LOCAL_HOT_CACHE_FILE_MB || 80)) * 1024 * 1024;
+const LOCAL_HOT_CACHE_WORKERS = Math.max(1, Math.min(3, os.cpus().length || 2));
 let previewImageActiveWorkers = 0;
 const previewImageQueue = [];
 const previewImageInflight = new Map();
+let hotCacheActiveWorkers = 0;
+let hotCacheLastTrimAt = 0;
+const hotCacheQueue = [];
+const hotCacheInflight = new Map();
 
 function clampPreviewImageMaxDim(value) {
   const n = Number(value || PREVIEW_IMAGE_DEFAULT_MAX_DIM);
@@ -66,10 +78,10 @@ function clampPreviewImageMaxDim(value) {
   return Math.max(600, Math.min(3600, Math.round(n)));
 }
 function previewImageCacheDir() {
-  return ensureDir(path.join(DATA_ROOT, 'cache', 'preview_images'));
+  return ensureDir(path.join(LOCAL_HOT_CACHE_ROOT, 'preview_images'));
 }
 function previewImageWorkerScriptPath() {
-  return path.join(DATA_ROOT, 'cache', 'preview_worker.ps1');
+  return path.join(LOCAL_HOT_CACHE_ROOT, 'preview_worker.ps1');
 }
 function ensurePreviewImageWorkerScript() {
   const file = previewImageWorkerScriptPath();
@@ -171,6 +183,132 @@ function ensurePreviewImage(filePath, maxDim) {
     await generatePreviewImageInWorker(filePath, outPath, maxDim);
     return outPath;
   });
+}
+function localHotMediaCacheDir() {
+  return ensureDir(path.join(LOCAL_HOT_CACHE_ROOT, 'media'));
+}
+function hotCacheKey(filePath, version = 'path-v1') {
+  return crypto.createHash('sha1').update([filePath, version].join('|')).digest('hex');
+}
+function localHotMediaCachePath(filePath) {
+  const ext = (path.extname(filePath) || '.bin').toLowerCase().replace(/[^a-z0-9.]/g, '') || '.bin';
+  return path.join(localHotMediaCacheDir(), `${hotCacheKey(filePath)}${ext}`);
+}
+function shouldHotCacheMedia(filePath, stat, type) {
+  if (!filePath || !stat || !stat.isFile || !stat.isFile()) return false;
+  if (!/^image\//i.test(type || contentType(filePath))) return false;
+  if (stat.size <= 0 || stat.size > LOCAL_HOT_CACHE_FILE_MAX_BYTES) return false;
+  return true;
+}
+function hotCacheAwaitMs(filePath, stat) {
+  const p = String(filePath || '').toLowerCase();
+  if (p.includes(`${path.sep}_thumbs${path.sep}`) || p.includes('/_thumbs/')) return 1600;
+  if (stat.size <= 8 * 1024 * 1024) return 900;
+  return 0;
+}
+function runHotCacheQueue() {
+  while (hotCacheActiveWorkers < LOCAL_HOT_CACHE_WORKERS && hotCacheQueue.length) {
+    const job = hotCacheQueue.shift();
+    hotCacheActiveWorkers++;
+    job.fn().then(job.resolve, job.reject).finally(() => {
+      hotCacheActiveWorkers--;
+      runHotCacheQueue();
+    });
+  }
+}
+function enqueueHotCacheJob(key, fn) {
+  if (hotCacheInflight.has(key)) return hotCacheInflight.get(key);
+  const promise = new Promise((resolve, reject) => {
+    hotCacheQueue.push({ fn, resolve, reject });
+    runHotCacheQueue();
+  }).finally(() => hotCacheInflight.delete(key));
+  hotCacheInflight.set(key, promise);
+  return promise;
+}
+async function copyFileToLocalHotCache(filePath, outPath) {
+  ensureDir(path.dirname(outPath));
+  const tmp = `${outPath}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    await fs.promises.copyFile(filePath, tmp);
+    await fs.promises.rename(tmp, outPath).catch(async () => {
+      await fs.promises.copyFile(tmp, outPath);
+      await fs.promises.unlink(tmp).catch(()=>{});
+    });
+    return outPath;
+  } catch (e) {
+    try { await fs.promises.unlink(tmp); } catch {}
+    throw e;
+  }
+}
+function trimLocalHotCacheSoon() {
+  const now = Date.now();
+  if (now - hotCacheLastTrimAt < 5 * 60 * 1000) return;
+  hotCacheLastTrimAt = now;
+  setTimeout(() => {
+    try {
+      const files = [];
+      const walk = (dir) => {
+        if (!fs.existsSync(dir)) return;
+        for (const name of fs.readdirSync(dir)) {
+          const p = path.join(dir, name);
+          let st = null;
+          try { st = fs.statSync(p); } catch { continue; }
+          if (st.isDirectory()) walk(p);
+          else files.push({ path:p, size:st.size, time:Math.max(st.atimeMs || 0, st.mtimeMs || 0) });
+        }
+      };
+      walk(LOCAL_HOT_CACHE_ROOT);
+      let total = files.reduce((sum, f) => sum + f.size, 0);
+      if (total <= LOCAL_HOT_CACHE_MAX_BYTES) return;
+      files.sort((a,b)=>a.time-b.time);
+      for (const f of files) {
+        if (total <= LOCAL_HOT_CACHE_MAX_BYTES * 0.82) break;
+        try { fs.unlinkSync(f.path); total -= f.size; } catch {}
+      }
+    } catch {}
+  }, 1000).unref?.();
+}
+function ensureLocalHotMedia(filePath, stat, type) {
+  if (!shouldHotCacheMedia(filePath, stat, type)) return Promise.resolve('');
+  const outPath = localHotMediaCachePath(filePath);
+  try {
+    if (fs.existsSync(outPath)) {
+      fs.utimes(outPath, new Date(), new Date(), ()=>{});
+      return Promise.resolve(outPath);
+    }
+  } catch {}
+  const key = `media|${filePath}|${stat.size}`;
+  return enqueueHotCacheJob(key, async () => {
+    if (fs.existsSync(outPath)) return outPath;
+    const ret = await copyFileToLocalHotCache(filePath, outPath);
+    trimLocalHotCacheSoon();
+    return ret;
+  });
+}
+function scheduleLocalHotMedia(filePath) {
+  const value = String(filePath || '').trim();
+  if (!value || /^https?:/i.test(value) || /^data:/i.test(value)) return;
+  enqueueHotCacheJob(`stat|${value}`, async () => {
+    let st = null;
+    try { st = await fs.promises.stat(value); } catch { return ''; }
+    const type = contentType(value);
+    if (!shouldHotCacheMedia(value, st, type)) return '';
+    const outPath = localHotMediaCachePath(value);
+    if (fs.existsSync(outPath)) return outPath;
+    const ret = await copyFileToLocalHotCache(value, outPath);
+    trimLocalHotCacheSoon();
+    return ret;
+  }).catch(()=>{});
+}
+function warmLocalHotCacheForImageRows(rows = []) {
+  const picked = [];
+  for (const row of rows.slice(0, 120)) {
+    if (row && row.thumb_path) picked.push(row.thumb_path);
+  }
+  for (const row of rows.slice(0, 24)) {
+    if (row && row.file_path) picked.push(row.file_path);
+  }
+  Array.from(new Set(picked.filter(Boolean))).forEach(scheduleLocalHotMedia);
 }
 function getLegacyDataRoots() {
   const appDataRoot = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
@@ -656,6 +794,8 @@ function configForClient(cfg, local, publicHost) {
   out.app_version = getAppVersion();
   out.local_runtime_data_dir = local ? DATA_ROOT : '';
   out.output_runtime_data_dir = local ? runtimeMirrorDir(cfg) : '';
+  out.local_hot_cache_dir = local ? LOCAL_HOT_CACHE_ROOT : '';
+  out.local_hot_cache_max_mb = local ? Math.round(LOCAL_HOT_CACHE_MAX_BYTES / 1024 / 1024) : 0;
   return out;
 }
 function getLocalIP() {
@@ -5694,7 +5834,7 @@ async function apiHandler(req, res, parsed) {
       const oldPort = Number(cfg.port || 7861); const next = saveConfig(body); const newPort = Number(next.port || 7861);
       const runtime = { port_changed: oldPort !== newPort };
       if (runtime.port_changed) setTimeout(()=>startServer(newPort), 900);
-      return send(res, {ok:true, config:{...next, ...urls(next), local_runtime_data_dir:DATA_ROOT, output_runtime_data_dir:runtimeMirrorDir(next)}, runtime});
+      return send(res, {ok:true, config:{...next, ...urls(next), local_runtime_data_dir:DATA_ROOT, output_runtime_data_dir:runtimeMirrorDir(next), local_hot_cache_dir:LOCAL_HOT_CACHE_ROOT, local_hot_cache_max_mb:Math.round(LOCAL_HOT_CACHE_MAX_BYTES / 1024 / 1024)}, runtime});
     }
     if (method === 'POST' && p === '/api/update/check') {
       if (!local) return send(res, {ok:false,error:'只有主机端可以检查软件更新'}, 403);
@@ -5804,6 +5944,7 @@ async function apiHandler(req, res, parsed) {
         return true;
       });
       rows = rows.slice(0, pageSize);
+      warmLocalHotCacheForImageRows(rows);
       const fastFormat = fastRequested || (String(parsed.query.panel_only || '') === '1' && !String(parsed.query.batch_id || ''));
       return send(res, rows.map(row => formatImage(row, { fast: fastFormat })));
     }
@@ -5981,22 +6122,8 @@ function requestHandler(req, res) {
     return;
   }
   if (parsed.pathname === '/file' || parsed.pathname === '/download') {
-    const cfg = readConfig();
-    const local = isLocalReq(req);
-    const publicHost = isPublicHost(req, cfg);
-    if (!local && publicHost && !hasPublicAccess(req, parsed, cfg)) return sendText(res, 'public access denied', 'text/plain', 403);
-    if (!local && publicHost && !cfg.public_enabled) return sendText(res, 'public access disabled', 'text/plain', 403);
-    if (!local && !publicHost && !cfg.lan_enabled) return sendText(res, 'lan access disabled', 'text/plain', 403);
-    let file = '';
-    try { file = resolveServedFilePath(parsed.query.path || '', cfg); }
-    catch { return sendText(res, 'file access denied', 'text/plain', 403); }
-    if (!file || !fs.existsSync(file)) return sendText(res, 'not found', 'text/plain', 404);
-    const stat = fs.statSync(file);
-    if (/^video\//i.test(contentType(file))) return streamVideoFile(file, req, res, parsed.pathname === '/download');
-    const headers = {...BASE_SECURITY_HEADERS, 'Content-Type': contentType(file), 'Content-Length': stat.size, 'Access-Control-Allow-Origin':'*', 'Cache-Control':'public, max-age=86400'};
-    if (parsed.pathname === '/download') headers['Content-Disposition'] = `attachment; filename*=UTF-8''${encodeURIComponent(path.basename(file))}`;
-    if (req.method === 'HEAD') { res.writeHead(200, headers); return res.end(); }
-    res.writeHead(200, headers); return fs.createReadStream(file).pipe(res);
+    serveFileRequest(req, res, parsed);
+    return;
   }
   const file = safeJoinStatic(parsed.pathname);
   if (!file || !fs.existsSync(file) || fs.statSync(file).isDirectory()) return sendText(res, 'not found', 'text/plain', 404);
@@ -6090,6 +6217,59 @@ async function servePreviewImage(req, res, parsed) {
     addLog('预览图后台处理失败：' + (e.message || e), { ownerId:'local', level:'warn' });
     return sendText(res, e.message || 'preview image failed', 'text/plain', 500);
   }
+}
+function sendDiskFile(req, res, file, opts = {}) {
+  const stat = fs.statSync(file);
+  const headers = {
+    ...BASE_SECURITY_HEADERS,
+    'Content-Type': opts.type || contentType(file),
+    'Content-Length': stat.size,
+    'Access-Control-Allow-Origin':'*',
+    'Cache-Control':'public, max-age=86400'
+  };
+  if (opts.download) headers['Content-Disposition'] = `attachment; filename*=UTF-8''${encodeURIComponent(opts.filename || path.basename(file))}`;
+  if (req.method === 'HEAD') { res.writeHead(200, headers); return res.end(); }
+  res.writeHead(200, headers);
+  return fs.createReadStream(file).pipe(res);
+}
+async function serveFileRequest(req, res, parsed) {
+  const cfg = readConfig();
+  const local = isLocalReq(req);
+  const publicHost = isPublicHost(req, cfg);
+  if (!local && publicHost && !hasPublicAccess(req, parsed, cfg)) return sendText(res, 'public access denied', 'text/plain', 403);
+  if (!local && publicHost && !cfg.public_enabled) return sendText(res, 'public access disabled', 'text/plain', 403);
+  if (!local && !publicHost && !cfg.lan_enabled) return sendText(res, 'lan access disabled', 'text/plain', 403);
+  let file = '';
+  try { file = resolveServedFilePath(parsed.query.path || '', cfg); }
+  catch { return sendText(res, 'file access denied', 'text/plain', 403); }
+  const type = contentType(file);
+  if (parsed.pathname !== '/download' && /^image\//i.test(type)) {
+    const cachedPath = localHotMediaCachePath(file);
+    if (fs.existsSync(cachedPath)) {
+      fs.utimes(cachedPath, new Date(), new Date(), ()=>{});
+      return sendDiskFile(req, res, cachedPath, { download:false, filename:path.basename(file), type });
+    }
+  }
+  if (!file || !fs.existsSync(file)) return sendText(res, 'not found', 'text/plain', 404);
+  if (/^video\//i.test(type)) return streamVideoFile(file, req, res, parsed.pathname === '/download');
+  let sourceStat = null;
+  try { sourceStat = fs.statSync(file); } catch { return sendText(res, 'not found', 'text/plain', 404); }
+  let servePath = file;
+  if (parsed.pathname !== '/download' && shouldHotCacheMedia(file, sourceStat, type)) {
+    const cachedPath = localHotMediaCachePath(file);
+    if (fs.existsSync(cachedPath)) {
+      servePath = cachedPath;
+      fs.utimes(cachedPath, new Date(), new Date(), ()=>{});
+    } else {
+      const promise = ensureLocalHotMedia(file, sourceStat, type).catch(()=> '');
+      const waitMs = hotCacheAwaitMs(file, sourceStat);
+      if (waitMs > 0) {
+        const ready = await Promise.race([promise, new Promise(resolve => setTimeout(()=>resolve(''), waitMs))]);
+        if (ready && fs.existsSync(ready)) servePath = ready;
+      }
+    }
+  }
+  return sendDiskFile(req, res, servePath, { download: parsed.pathname === '/download', filename:path.basename(file), type });
 }
 function setupImageContextMenu(win) {
   win.webContents.on('context-menu', (event, params) => {
