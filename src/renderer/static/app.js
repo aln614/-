@@ -1586,7 +1586,7 @@ function setPage(name){
   updateVideoOwnerScopeUi();
   if(name === 'images') loadImages();
   if(name === 'video'){ syncVideoApiKeyFromHome(); loadVideoTasks(); }
-  if(name === 'video-manage') loadVideoTasks();
+  if(name === 'video-manage') { lastVideoManageSignature = ''; renderVideoLibrary(); loadVideoTasks(); }
   if(name === 'history') { currentBatchFilter = currentBatchFilter || 'all'; loadBatches({history:true}).finally(forceRenderHistory); }
   if(name === 'api') loadLogs();
   if(name === 'logs') loadLogs();
@@ -4071,6 +4071,8 @@ let lastVideoManageSignature = '';
 let lastVideoBatchSignature = '';
 let videoManageVisibleCount = 160;
 let videoManageScrollBound = false;
+let videoManageScrollRoot = null;
+let videoManageScrollTimer = 0;
 function stableSig(obj){ try{return JSON.stringify(obj);}catch{return String(Date.now());} }
 let currentVideoPreviewMeta = null;
 const imageTaskPreviewMap = new Map();
@@ -4469,12 +4471,21 @@ async function submitVideoTask(){
 }
 async function loadVideoTasks(){
   try{
-    const r = await api(isVideoAllOwnersScope() ? '/api/video_tasks?all_owners=1' : '/api/video_tasks');
+    const params = new URLSearchParams({limit:'5000'});
+    if(isVideoAllOwnersScope()) params.set('all_owners', '1');
+    const r = await api('/api/video_tasks?' + params.toString());
     const rows = r.rows || [];
     if(isVideoRealtimeMode()) updateRightPanelStats(r.video_stats || {total:rows.length, done:rows.filter(v=>v.status==='已完成').length, fail:rows.filter(v=>v.status==='失败').length, running:rows.filter(v=>['等待中','提交中','提交生成中','生成中','查询中','下载中'].includes(v.status)).length}, true);
     const sig = stableSig([r.scope || '', rows.map(v=>[v.id,v.status,v.progress,v.progress_text,v.url,v.stream_url,v.download_url,v.remote_url,v.error_message,v.updated_at])]);
+    const dataChanged = sig !== lastVideoTasksSignature;
+    if(dataChanged && $('#page-video-manage')?.classList.contains('active')){
+      videoManageVisibleCount = Math.min(Math.max(160, videoManageVisibleCount || 160), rows.length || 160);
+      const root = videoManageScrollRoot || $('#page-video-manage');
+      if(root && root !== window && root.scrollTop > 0 && videoManageVisibleCount <= 160) root.scrollTop = 0;
+      lastVideoManageSignature = '';
+    }
     videoTasksCache = rows;
-    if(sig !== lastVideoTasksSignature){
+    if(dataChanged){
       lastVideoTasksSignature = sig;
       renderVideoLibrary();
     }
@@ -4964,10 +4975,17 @@ function openUploadedVideoPip(index){
 }
 
 function bindVideoManageIncrementalScroll(){
-  if(videoManageScrollBound) return;
+  const root = $('#page-video-manage') || document.querySelector('.main') || window;
+  if(videoManageScrollBound && videoManageScrollRoot === root) return;
+  if(videoManageScrollBound && videoManageScrollRoot && videoManageScrollRoot.__laigVideoManageScrollHandler){
+    videoManageScrollRoot.removeEventListener('scroll', videoManageScrollRoot.__laigVideoManageScrollHandler);
+  }
   videoManageScrollBound = true;
-  const root = document.querySelector('.main') || window;
-  root.addEventListener('scroll', ()=>{
+  videoManageScrollRoot = root;
+  const onScroll = ()=>{
+    if(videoManageScrollTimer) return;
+    videoManageScrollTimer = window.setTimeout(()=>{
+      videoManageScrollTimer = 0;
     if(!$('#page-video-manage')?.classList.contains('active')) return;
     const el = root === window ? document.documentElement : root;
     const remain = el.scrollHeight - el.scrollTop - el.clientHeight;
@@ -4975,7 +4993,10 @@ function bindVideoManageIncrementalScroll(){
     videoManageVisibleCount = Math.min(videoTasksCache.length, videoManageVisibleCount + 120);
     lastVideoManageSignature = '';
     renderVideoLibrary();
-  }, {passive:true});
+    }, 120);
+  };
+  root.__laigVideoManageScrollHandler = onScroll;
+  root.addEventListener('scroll', onScroll, {passive:true});
 }
 
 function renderVideoLibrary(){

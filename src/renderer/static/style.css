@@ -3200,6 +3200,9 @@ body:not(.theme-dark) .asset-card-icon-btn.danger{color:#dc2626;background:rgba(
 #page-video-manage .video-day-grid{grid-template-columns:repeat(auto-fill,minmax(236px,1fr));align-items:start}
 #page-video-manage .video-card{border-radius:18px;background:rgba(255,255,255,.72);backdrop-filter:blur(18px) saturate(150%);-webkit-backdrop-filter:blur(18px) saturate(150%)}
 .theme-dark #page-video-manage .video-card{background:rgba(15,23,42,.74)}
+#page-video-manage.page.active{display:flex!important;flex-direction:column!important;min-height:0!important;overflow-y:auto!important;overflow-x:hidden!important}
+#page-video-manage .section-head,#page-video-manage .toolbar{flex:0 0 auto!important}
+#page-video-manage #videoManageGrid{flex:1 1 auto!important;min-height:0!important;padding-bottom:26px!important}
 .video-owner-scope-toggle{border:1px solid rgba(20,184,166,.22)!important;background:rgba(20,184,166,.10)!important;color:#0f766e!important}
 .video-owner-scope-toggle.active{background:linear-gradient(135deg,#14b8a6,#0ea5e9)!important;color:#fff!important;box-shadow:0 12px 28px rgba(14,165,233,.22)}
 .video-context-menu{position:fixed;z-index:10000;min-width:142px;padding:7px;border:1px solid rgba(255,255,255,.22);border-radius:14px;background:rgba(20,28,42,.88);backdrop-filter:blur(18px) saturate(170%);-webkit-backdrop-filter:blur(18px) saturate(170%);box-shadow:0 18px 46px rgba(0,0,0,.28)}
