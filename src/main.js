@@ -54,6 +54,124 @@ try { app.setPath('userData', DATA_ROOT); } catch {}
 
 const RESET_MARKER = path.join(os.tmpdir(), 'LocalApiImageGenerator_full_reset_v1498.json');
 const LEGACY_RESTORE_BLOCK_MARKER = path.join(DATA_ROOT, 'data', 'skip_legacy_restore.json');
+const PREVIEW_IMAGE_DEFAULT_MAX_DIM = 2200;
+const PREVIEW_IMAGE_MAX_WORKERS = Math.max(1, Math.min(2, os.cpus().length || 2));
+let previewImageActiveWorkers = 0;
+const previewImageQueue = [];
+const previewImageInflight = new Map();
+
+function clampPreviewImageMaxDim(value) {
+  const n = Number(value || PREVIEW_IMAGE_DEFAULT_MAX_DIM);
+  if (!Number.isFinite(n)) return PREVIEW_IMAGE_DEFAULT_MAX_DIM;
+  return Math.max(600, Math.min(3600, Math.round(n)));
+}
+function previewImageCacheDir() {
+  return ensureDir(path.join(DATA_ROOT, 'cache', 'preview_images'));
+}
+function previewImageWorkerScriptPath() {
+  return path.join(DATA_ROOT, 'cache', 'preview_worker.ps1');
+}
+function ensurePreviewImageWorkerScript() {
+  const file = previewImageWorkerScriptPath();
+  ensureDir(path.dirname(file));
+  const script = `
+param(
+  [Parameter(Mandatory=$true)][string]$Source,
+  [Parameter(Mandatory=$true)][string]$Dest,
+  [int]$MaxDim = ${PREVIEW_IMAGE_DEFAULT_MAX_DIM}
+)
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Drawing
+$srcFull = [System.IO.Path]::GetFullPath($Source)
+$destFull = [System.IO.Path]::GetFullPath($Dest)
+$destDir = [System.IO.Path]::GetDirectoryName($destFull)
+if (-not [System.IO.Directory]::Exists($destDir)) { [System.IO.Directory]::CreateDirectory($destDir) | Out-Null }
+$fs = [System.IO.File]::Open($srcFull, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+$img = $null
+$bmp = $null
+$g = $null
+try {
+  $img = [System.Drawing.Image]::FromStream($fs, $false, $false)
+  $w = [double]$img.Width
+  $h = [double]$img.Height
+  if ($w -lt 1 -or $h -lt 1) { throw 'Invalid image size' }
+  $scale = [Math]::Min(1.0, [Math]::Min(([double]$MaxDim / $w), ([double]$MaxDim / $h)))
+  $nw = [Math]::Max(1, [int][Math]::Round($w * $scale))
+  $nh = [Math]::Max(1, [int][Math]::Round($h * $scale))
+  $bmp = New-Object System.Drawing.Bitmap($nw, $nh)
+  $g = [System.Drawing.Graphics]::FromImage($bmp)
+  $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+  $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
+  $g.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+  $g.CompositingQuality = [System.Drawing.Drawing2D.CompositingQuality]::HighQuality
+  $g.DrawImage($img, 0, 0, $nw, $nh)
+  $bmp.Save($destFull, [System.Drawing.Imaging.ImageFormat]::Png)
+} finally {
+  if ($g -ne $null) { $g.Dispose() }
+  if ($bmp -ne $null) { $bmp.Dispose() }
+  if ($img -ne $null) { $img.Dispose() }
+  if ($fs -ne $null) { $fs.Dispose() }
+}
+`.trim();
+  try {
+    if (!fs.existsSync(file) || fs.readFileSync(file, 'utf8') !== script) fs.writeFileSync(file, script, 'utf8');
+  } catch {
+    fs.writeFileSync(file, script, 'utf8');
+  }
+  return file;
+}
+function previewImageCachePath(filePath, maxDim) {
+  const stat = fs.statSync(filePath);
+  const key = crypto.createHash('sha1').update([filePath, stat.size, maxDim, 'v4'].join('|')).digest('hex');
+  return path.join(previewImageCacheDir(), `${key}.png`);
+}
+function runPreviewImageQueue() {
+  while (previewImageActiveWorkers < PREVIEW_IMAGE_MAX_WORKERS && previewImageQueue.length) {
+    const job = previewImageQueue.shift();
+    previewImageActiveWorkers++;
+    job.fn().then(job.resolve, job.reject).finally(() => {
+      previewImageActiveWorkers--;
+      runPreviewImageQueue();
+    });
+  }
+}
+function enqueuePreviewImageJob(key, fn) {
+  if (previewImageInflight.has(key)) return previewImageInflight.get(key);
+  const promise = new Promise((resolve, reject) => {
+    previewImageQueue.push({ fn, resolve, reject });
+    runPreviewImageQueue();
+  }).finally(() => previewImageInflight.delete(key));
+  previewImageInflight.set(key, promise);
+  return promise;
+}
+function generatePreviewImageInWorker(filePath, outPath, maxDim) {
+  return new Promise((resolve, reject) => {
+    const script = ensurePreviewImageWorkerScript();
+    const child = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, filePath, outPath, String(maxDim)], { windowsHide: true });
+    let stderr = '';
+    const timer = setTimeout(() => {
+      try { child.kill(); } catch {}
+      reject(new Error('预览图后台处理超时'));
+    }, 120000);
+    child.stderr.on('data', b => { stderr += b.toString('utf8'); });
+    child.on('error', e => { clearTimeout(timer); reject(e); });
+    child.on('close', code => {
+      clearTimeout(timer);
+      if (code === 0 && fs.existsSync(outPath)) resolve(outPath);
+      else reject(new Error(stderr.trim() || `预览图后台处理失败：${code}`));
+    });
+  });
+}
+function ensurePreviewImage(filePath, maxDim) {
+  const outPath = previewImageCachePath(filePath, maxDim);
+  if (fs.existsSync(outPath)) return Promise.resolve(outPath);
+  const key = `${filePath}|${maxDim}`;
+  return enqueuePreviewImageJob(key, async () => {
+    if (fs.existsSync(outPath)) return outPath;
+    await generatePreviewImageInWorker(filePath, outPath, maxDim);
+    return outPath;
+  });
+}
 function getLegacyDataRoots() {
   const appDataRoot = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
   const roots = [
@@ -5858,6 +5976,10 @@ function requestHandler(req, res) {
     }
     res.writeHead(200, baseHeaders); return fs.createReadStream(file).pipe(res);
   }
+  if (parsed.pathname === '/preview-image') {
+    servePreviewImage(req, res, parsed);
+    return;
+  }
   if (parsed.pathname === '/file' || parsed.pathname === '/download') {
     const cfg = readConfig();
     const local = isLocalReq(req);
@@ -5937,6 +6059,37 @@ function resolveImageInfoFromSrc(src) {
 }
 function localPathFromImageSrc(src) {
   return resolveImageInfoFromSrc(src).filePath || '';
+}
+async function servePreviewImage(req, res, parsed) {
+  try {
+    const cfg = readConfig();
+    const local = isLocalReq(req);
+    const publicHost = isPublicHost(req, cfg);
+    if (!local && publicHost && !hasPublicAccess(req, parsed, cfg)) return sendText(res, 'public access denied', 'text/plain', 403);
+    if (!local && publicHost && !cfg.public_enabled) return sendText(res, 'public access disabled', 'text/plain', 403);
+    if (!local && !publicHost && !cfg.lan_enabled) return sendText(res, 'lan access disabled', 'text/plain', 403);
+    let file = '';
+    try { file = resolveServedFilePath(parsed.query.path || '', cfg); }
+    catch { return sendText(res, 'file access denied', 'text/plain', 403); }
+    if (!file || !fs.existsSync(file)) return sendText(res, 'not found', 'text/plain', 404);
+    if (!/^image\//i.test(contentType(file))) return sendText(res, 'not an image', 'text/plain', 415);
+    const maxDim = clampPreviewImageMaxDim(parsed.query.max);
+    const previewPath = await ensurePreviewImage(file, maxDim);
+    const stat = fs.statSync(previewPath);
+    const headers = {
+      ...BASE_SECURITY_HEADERS,
+      'Content-Type': 'image/png',
+      'Content-Length': stat.size,
+      'Access-Control-Allow-Origin': '*',
+      'Cache-Control': 'public, max-age=604800'
+    };
+    if (req.method === 'HEAD') { res.writeHead(200, headers); return res.end(); }
+    res.writeHead(200, headers);
+    return fs.createReadStream(previewPath).pipe(res);
+  } catch (e) {
+    addLog('预览图后台处理失败：' + (e.message || e), { ownerId:'local', level:'warn' });
+    return sendText(res, e.message || 'preview image failed', 'text/plain', 500);
+  }
 }
 function setupImageContextMenu(win) {
   win.webContents.on('context-menu', (event, params) => {

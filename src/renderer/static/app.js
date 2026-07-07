@@ -352,7 +352,7 @@ function withPublicAccess(url){
   if(!url || /^data:/i.test(url) || /^blob:/i.test(url)) return url;
   try{
     const u = new URL(url, location.href);
-    const needsLocalParams = (u.pathname === '/file' || u.pathname === '/download' || u.pathname === '/video-file' || u.pathname === '/api/assets/source');
+    const needsLocalParams = (u.pathname === '/file' || u.pathname === '/download' || u.pathname === '/preview-image' || u.pathname === '/video-file' || u.pathname === '/api/assets/source');
     if(needsLocalParams){
       // V12.9：公网/局域网都和 API 请求一样携带设备ID，保证图片/视频数据隔离下也能正确预览。
       if(!u.searchParams.get('client_id')) u.searchParams.set('client_id', getClientId());
@@ -3689,6 +3689,25 @@ function shouldAutoLoadFullPreview(src, meta = {}){
   if(!value || /^data:/i.test(value) || /^blob:/i.test(value)) return false;
   return true;
 }
+function previewProxyMaxDim(){
+  const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+  const target = Math.max(window.innerWidth || 1200, window.innerHeight || 900) * dpr * 1.45;
+  return Math.max(1200, Math.min(3200, Math.round(target)));
+}
+function previewProxyUrlFor(src){
+  try{
+    const u = new URL(withPublicAccess(src || ''), location.href);
+    if(u.pathname !== '/file' && u.pathname !== '/download') return '';
+    const filePath = u.searchParams.get('path') || '';
+    if(!filePath) return '';
+    const out = new URL('/preview-image', location.href);
+    out.searchParams.set('path', filePath);
+    out.searchParams.set('max', String(previewProxyMaxDim()));
+    return withPublicAccess(out.pathname + out.search);
+  }catch(_e){
+    return '';
+  }
+}
 async function showPreview(src, meta = {}){
   previewScale = 1; previewFitScale = 1; previewX = 0; previewY = 0; previewNaturalWidth = 0; previewNaturalHeight = 0;
   applyPreviewBgSettings();
@@ -3697,7 +3716,8 @@ async function showPreview(src, meta = {}){
   const finalSrc = src || meta.fullUrl || '';
   const thumbSrc = meta.thumbUrl || meta.thumb_url || '';
   const remoteSrc = meta.remoteUrl || meta.remote_url || '';
-  const displaySrc = thumbSrc && finalSrc && thumbSrc !== finalSrc ? thumbSrc : finalSrc;
+  const proxySrc = previewProxyUrlFor(finalSrc);
+  const displaySrc = thumbSrc && finalSrc && thumbSrc !== finalSrc ? thumbSrc : (proxySrc || finalSrc);
   const token = ++previewLoadToken;
   const fitLoadedImage = ()=>{
     if(token !== previewLoadToken) return;
@@ -3726,17 +3746,21 @@ async function showPreview(src, meta = {}){
       img.classList.remove('hidden');
       if(displaySrc && displaySrc !== finalSrc){
         (async()=>{
-          const finalSize = await previewUrlContentLength(finalSrc);
-          if(token === previewLoadToken && shouldAutoLoadFullPreview(finalSrc, meta) && (!finalSize || finalSize <= PREVIEW_FULL_AUTO_LOAD_MAX_BYTES)){
+          let hiSrc = proxySrc;
+          if(!hiSrc){
+            const finalSize = await previewUrlContentLength(finalSrc);
+            if(shouldAutoLoadFullPreview(finalSrc, meta) && (!finalSize || finalSize <= PREVIEW_FULL_AUTO_LOAD_MAX_BYTES)) hiSrc = finalSrc;
+          }
+          if(token === previewLoadToken && hiSrc){
             const hi = new Image();
             hi.decoding = 'async';
             hi.loading = 'eager';
             hi.onload = ()=>{
               if(token !== previewLoadToken || !$('#previewModal')?.classList.contains('active')) return;
               img.onload = fitLoadedImage;
-              img.src = withPublicAccess(finalSrc);
+              img.src = withPublicAccess(hiSrc);
             };
-            hi.src = withPublicAccess(finalSrc);
+            hi.src = withPublicAccess(hiSrc);
           }
         })();
       }
