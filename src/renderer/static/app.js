@@ -4476,7 +4476,7 @@ async function loadVideoTasks(){
     const r = await api('/api/video_tasks?' + params.toString());
     const rows = r.rows || [];
     if(isVideoRealtimeMode()) updateRightPanelStats(r.video_stats || {total:rows.length, done:rows.filter(v=>v.status==='已完成').length, fail:rows.filter(v=>v.status==='失败').length, running:rows.filter(v=>['等待中','提交中','提交生成中','生成中','查询中','下载中'].includes(v.status)).length}, true);
-    const sig = stableSig([r.scope || '', rows.map(v=>[v.id,v.status,v.progress,v.progress_text,v.url,v.stream_url,v.download_url,v.remote_url,v.error_message,v.updated_at])]);
+    const sig = stableSig([r.scope || '', rows.map(v=>[v.id,v.status,v.progress,v.progress_text,v.url,v.stream_url,v.download_url,v.remote_url,v.error_message,v.video_cache_ready,v.updated_at])]);
     const dataChanged = sig !== lastVideoTasksSignature;
     if(dataChanged && $('#page-video-manage')?.classList.contains('active')){
       videoManageVisibleCount = Math.min(Math.max(160, videoManageVisibleCount || 160), rows.length || 160);
@@ -4503,6 +4503,18 @@ function publicCopyUrl(u){ return absoluteAppUrl(withPublicAccess(u || '')); }
 function videoPlayableUrl(meta = {}){
   return meta.stream_url || meta.url || meta.download_url || meta.remote_url || '';
 }
+function videoPreviewStreamUrl(raw){
+  if(!raw) return '';
+  let u = withPublicAccess(raw);
+  try{
+    const parsed = new URL(u, location.origin);
+    if(parsed.pathname === '/video-file' && !parsed.searchParams.has('preview')){
+      parsed.searchParams.set('preview', '1');
+      u = parsed.pathname + parsed.search + parsed.hash;
+    }
+  }catch{}
+  return u;
+}
 async function openVideoPictureInPicture(meta = {}){
   const url = videoPlayableUrl(meta);
   if(!url){ toast('该视频还没有可预览的视频链接'); showVideoPreview(meta); return; }
@@ -4522,13 +4534,13 @@ async function openVideoPictureInPicture(meta = {}){
   try{
     if(document.pictureInPictureElement) await document.exitPictureInPicture().catch(()=>{});
     player.pause?.();
-    player.src = withPublicAccess(url);
+    player.src = videoPreviewStreamUrl(url);
     await player.play().catch(()=>{});
     if(player.requestPictureInPicture){ await player.requestPictureInPicture(); toast('已打开画中画预览'); }
-    else { window.open(withPublicAccess(url), '_blank'); toast('当前环境不支持画中画，已打开视频链接'); }
+    else { window.open(videoPreviewStreamUrl(url), '_blank'); toast('当前环境不支持画中画，已打开视频链接'); }
   }catch(e){
     console.warn(e);
-    window.open(withPublicAccess(url), '_blank');
+    window.open(videoPreviewStreamUrl(url), '_blank');
     toast('画中画打开失败，已尝试打开视频链接');
   }
 }
@@ -4544,7 +4556,7 @@ function showVideoPreview(meta = {}){
     player.removeAttribute('src');
     player.load?.();
     if(url){
-      player.src = withPublicAccess(url);
+      player.src = videoPreviewStreamUrl(url);
       player.onerror = ()=>{ $('#videoPlayerError')?.classList.remove('hidden'); };
       player.onloadedmetadata = ()=>{ $('#videoPlayerError')?.classList.add('hidden'); };
       setTimeout(()=>player.play?.().catch(()=>{}), 60);
@@ -4573,7 +4585,7 @@ function renderVideoCard(v, opts = {}){
   return `<div class="video-card ${selected?'selected':''} ${compact?'compact':''}" data-video-id="${escapeHtml(v.id)}" title="${previewTitle}">
     ${selectable ? `<div class="video-select-badge">${selected?'✓ 已选择':'Shift + 右键选择'}</div>` : ''}
     <div class="video-click-zone" data-video-act="preview" data-video-id="${escapeHtml(v.id)}" title="${previewTitle}">
-      ${playable ? `<div class="video-first-frame" data-video-id="${escapeHtml(v.id)}" data-src="${escapeHtml(playable)}"><div class="video-lazy-icon">▶</div><small>懒加载第一帧</small></div>` : `<div class="video-pending ${failed?'failed':''}"><strong>${escapeHtml(v.status || '生成中')}</strong><span>${failed ? '!' : `${progress}%`}</span><small>${escapeHtml(failed ? '任务失败，点击查看生成信息' : (progressText || '左右键同时点击查看生成信息'))}</small></div>`}
+      ${playable ? `<div class="video-first-frame" data-video-id="${escapeHtml(v.id)}" data-cache-ready="${v.video_cache_ready ? '1' : '0'}" data-src="${escapeHtml(playable)}"><div class="video-lazy-icon">▶</div><small>懒加载第一帧</small></div>` : `<div class="video-pending ${failed?'failed':''}"><strong>${escapeHtml(v.status || '生成中')}</strong><span>${failed ? '!' : `${progress}%`}</span><small>${escapeHtml(failed ? '任务失败，点击查看生成信息' : (progressText || '左右键同时点击查看生成信息'))}</small></div>`}
     </div>
     <div class="video-meta"><b>${escapeHtml(v.status || '')}</b><span>${escapeHtml(v.platform === 'flow2api' ? '本地 Flow2API' : 'APIMart')} · ${escapeHtml(v.mode||'')} · ${escapeHtml(v.resolution||'')} · ${escapeHtml(v.aspect_ratio||'')}</span></div>
     <div class="video-progress-wrap"><div class="video-progress-head"><span>${escapeHtml(progressText || '等待进度')}</span><b>${progress}%</b></div><div class="video-progress-bar"><i style="width:${progress}%"></i></div></div>
@@ -4636,6 +4648,12 @@ function renderVideoRecentBatches(batches = []){
 }
 
 let videoFirstFrameObserver = null;
+let videoHotCacheObserver = null;
+let videoHotCacheObserverRoot = null;
+const videoHotCacheQueuedIds = new Set();
+const videoHotCacheRequestedIds = new Set();
+let videoHotCacheFlushTimer = 0;
+let videoHotCacheRefreshTimer = 0;
 const videoFirstFrameQueue = [];
 const videoFirstFrameQueued = new Set();
 const videoFirstFrameCache = new Map();
@@ -4647,14 +4665,21 @@ let videoFirstFrameScrollBound = false;
 let videoFirstFrameScrollTimer = 0;
 let videoFirstFramePendingRoot = null;
 const VIDEO_FIRST_FRAME_MAX_ACTIVE = 1;
-const VIDEO_FIRST_FRAME_DELAY_MS = 110;
-const VIDEO_FIRST_FRAME_TIMEOUT_MS = 6500;
+const VIDEO_FIRST_FRAME_DELAY_MS = 220;
+const VIDEO_FIRST_FRAME_TIMEOUT_MS = 3500;
 const VIDEO_FIRST_FRAME_CACHE_LIMIT = 64;
 const VIDEO_FIRST_FRAME_VISIBLE_MARGIN = 18;
 function videoFirstFrameUrl(raw){
   if(!raw) return '';
   let u = withPublicAccess(raw);
   if(/^data:|^blob:/i.test(u)) return u;
+  try{
+    const parsed = new URL(u, location.origin);
+    if(parsed.pathname === '/video-file' && !parsed.searchParams.has('preview')){
+      parsed.searchParams.set('preview', '1');
+      u = parsed.pathname + parsed.search + parsed.hash;
+    }
+  }catch{}
   if(/#t=/.test(u)) return u;
   return u + (u.includes('#') ? '' : '#t=0.1');
 }
@@ -4851,6 +4876,10 @@ function scheduleVideoFirstFramePump(delay = VIDEO_FIRST_FRAME_DELAY_MS){
 }
 function enqueueVideoFirstFrame(el){
   if(!el || !el.isConnected || el.classList.contains('loaded') || el.classList.contains('load-error') || videoFirstFrameQueued.has(el)) return;
+  if(el.dataset.cacheReady === '0'){
+    if(el.closest('#videoManageGrid')) enqueueVideoHotCache(el.dataset.videoId || '');
+    return;
+  }
   const src = videoFirstFrameUrl(el.dataset.src || '');
   if(!src) return;
   if(videoFirstFrameCache.has(src)){
@@ -4862,12 +4891,15 @@ function enqueueVideoFirstFrame(el){
   videoFirstFrameQueued.add(el);
   videoFirstFrameQueue.push(el);
   pruneVideoFirstFrameQueue();
-  scheduleVideoFirstFramePump(18);
+  scheduleVideoFirstFramePump(VIDEO_FIRST_FRAME_DELAY_MS);
 }
 function cleanupVideoFirstFrameRoot(root){
   root?.querySelectorAll?.('.video-first-frame.video-first-observed').forEach(el=>{
     try { videoFirstFrameObserver?.unobserve(el); } catch {}
     videoFirstFrameQueued.delete(el);
+  });
+  root?.querySelectorAll?.('.video-first-frame.video-cache-observed').forEach(el=>{
+    try { videoHotCacheObserver?.unobserve(el); } catch {}
   });
   for(let i = videoFirstFrameQueue.length - 1; i >= 0; i--){
     const el = videoFirstFrameQueue[i];
@@ -4942,6 +4974,7 @@ function initLazyVideoFirstFrames(root=document){
   bindVideoFirstFrameScrollRefresh();
   const obs = ensureVideoFirstFrameObserver();
   root.querySelectorAll?.('.video-first-frame[data-src]:not(.video-first-observed):not(.loaded)').forEach(el=>{
+    if(el.dataset.cacheReady === '0') return;
     el.classList.add('video-first-observed');
     obs.observe(el);
   });
@@ -4949,6 +4982,63 @@ function initLazyVideoFirstFrames(root=document){
 }
 function loadVideoFirstFrame(el){
   scheduleVisibleVideoFirstFrameRefresh(el);
+}
+function flushVisibleVideoHotCache(){
+  videoHotCacheFlushTimer = 0;
+  const ids = Array.from(videoHotCacheQueuedIds).filter(Boolean).slice(0, 24);
+  if(!ids.length) return;
+  ids.forEach(id=>videoHotCacheQueuedIds.delete(id));
+  const refreshVideoCacheState = ()=>{
+    lastVideoTasksSignature = '';
+    loadVideoTasks();
+  };
+  api('/api/video_cache_touch', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({ ids, all_owners:isVideoAllOwnersScope() })
+  }).then(()=>{
+    if(!videoHotCacheRefreshTimer){
+      videoHotCacheRefreshTimer = window.setTimeout(()=>{
+        videoHotCacheRefreshTimer = 0;
+        refreshVideoCacheState();
+        window.setTimeout(refreshVideoCacheState, 12000);
+      }, 4200);
+    }
+    window.setTimeout(()=>ids.forEach(id=>videoHotCacheRequestedIds.delete(id)), 30000);
+  }).catch(()=>{
+    ids.forEach(id=>videoHotCacheRequestedIds.delete(id));
+  });
+  if(videoHotCacheQueuedIds.size && !videoHotCacheFlushTimer){
+    videoHotCacheFlushTimer = window.setTimeout(flushVisibleVideoHotCache, 900);
+  }
+}
+function enqueueVideoHotCache(id){
+  if(!id || videoHotCacheQueuedIds.has(id) || videoHotCacheRequestedIds.has(id)) return;
+  videoHotCacheRequestedIds.add(id);
+  videoHotCacheQueuedIds.add(id);
+  if(videoHotCacheFlushTimer) return;
+  videoHotCacheFlushTimer = window.setTimeout(flushVisibleVideoHotCache, 420);
+}
+function initVisibleVideoHotCache(root=document, opts = {}){
+  const observerRoot = opts.observerRoot || null;
+  if(videoHotCacheObserver && videoHotCacheObserverRoot !== observerRoot){
+    try { videoHotCacheObserver.disconnect(); } catch {}
+    videoHotCacheObserver = null;
+  }
+  videoHotCacheObserverRoot = observerRoot;
+  if(!videoHotCacheObserver){
+    videoHotCacheObserver = new IntersectionObserver(entries=>{
+      entries.forEach(entry=>{
+        if(!entry.isIntersecting) return;
+        const id = entry.target?.dataset?.videoId || '';
+        enqueueVideoHotCache(id);
+      });
+    }, { root:observerRoot, rootMargin:'700px 0px', threshold:0.01 });
+  }
+  root.querySelectorAll?.('.video-first-frame[data-video-id][data-cache-ready="0"]:not(.video-cache-observed)').forEach(el=>{
+    el.classList.add('video-cache-observed');
+    videoHotCacheObserver.observe(el);
+  });
 }
 function showVideoInfoById(id){
   const v = videoTaskById(id);
@@ -5029,6 +5119,7 @@ function renderVideoLibrary(){
       const more = videoManageVisibleCount < videoTasksCache.length ? `<div class="image-load-more-hint">已显示 ${videoManageVisibleCount} / ${videoTasksCache.length} 个视频，继续向下滚动加载更多...</div>` : '';
       manageBox.innerHTML = groups.map(g=>`<section class="video-day-group video-batch-group" data-video-batch="${escapeHtml(g.key)}">${videoBatchHeadHtml(g)}<div class="video-batch-progress"><i style="width:${g.progress}%"></i></div><div class="video-day-grid">${g.rows.map(v=>renderVideoCard(v,{selectable:true})).join('')}</div></section>`).join('') + more;
       initLazyVideoFirstFrames(manageBox);
+      initVisibleVideoHotCache(manageBox, { observerRoot: $('#page-video-manage') || null });
       manageBox.querySelectorAll('[data-video-batch-select]').forEach(btn=>btn.addEventListener('click', e=>{ e.stopPropagation(); toggleVideoBatchSelection(btn.dataset.videoBatchSelect || ''); }));
     }
   }

@@ -64,7 +64,7 @@ const LOCAL_HOT_CACHE_ROOT = process.env.TENYING_AI_LOCAL_HOT_CACHE_DIR || path.
 const LOCAL_HOT_CACHE_MAX_BYTES = Math.max(512, Number(process.env.TENYING_AI_LOCAL_HOT_CACHE_MB || 4096)) * 1024 * 1024;
 const LOCAL_HOT_CACHE_FILE_MAX_BYTES = Math.max(8, Number(process.env.TENYING_AI_LOCAL_HOT_CACHE_FILE_MB || 80)) * 1024 * 1024;
 const LOCAL_HOT_CACHE_VIDEO_FILE_MAX_BYTES = Math.max(64, Number(process.env.TENYING_AI_LOCAL_HOT_CACHE_VIDEO_MB || 1024)) * 1024 * 1024;
-const LOCAL_HOT_CACHE_WORKERS = Math.max(1, Math.min(3, os.cpus().length || 2));
+const LOCAL_HOT_CACHE_WORKERS = Math.max(1, Math.min(2, Number(process.env.TENYING_AI_LOCAL_HOT_CACHE_WORKERS || 1)));
 let previewImageActiveWorkers = 0;
 const previewImageQueue = [];
 const previewImageInflight = new Map();
@@ -3288,7 +3288,8 @@ function formatVideoTask(row, opts = {}) {
   row = opts.fast ? row : repairVideoTaskFilePath(row);
   const hasFile = opts.fast ? !!row.file_path : !!(row.file_path && fs.existsSync(row.file_path));
   const stream = hasFile ? `/video-file?id=${encodeURIComponent(row.id)}${opts.allOwners ? '&all_owners=1' : ''}` : '';
-  return { ...row, file_exists: hasFile, progress_text: row.progress_text || (row.status === '\u5df2\u5b8c\u6210' ? '\u5df2\u5b8c\u6210' : ''), stream_url: stream, share_url: hasFile ? `/video-share?id=${encodeURIComponent(row.id)}` : '', url: stream || row.remote_url || '', download_url: hasFile ? `/download?path=${encodeURIComponent(row.file_path)}` : (row.remote_url || ''), filename: hasFile ? path.basename(row.file_path) : `${row.id}.mp4` };
+  const cacheReady = hasFile && row.file_path ? fs.existsSync(localHotMediaCachePath(row.file_path)) : false;
+  return { ...row, file_exists: hasFile, video_cache_ready: cacheReady, progress_text: row.progress_text || (row.status === '\u5df2\u5b8c\u6210' ? '\u5df2\u5b8c\u6210' : ''), stream_url: stream, share_url: hasFile ? `/video-share?id=${encodeURIComponent(row.id)}` : '', url: stream || row.remote_url || '', download_url: hasFile ? `/download?path=${encodeURIComponent(row.file_path)}` : (row.remote_url || ''), filename: hasFile ? path.basename(row.file_path) : `${row.id}.mp4` };
 }
 
 function listVideoBatchSummaries(owner = '') {
@@ -3400,11 +3401,20 @@ function copyFileToSystemClipboard(filePath, label='文件') {
   });
 }
 function copyVideoFileToSystemClipboard(filePath) { return copyFileToSystemClipboard(filePath, '视频'); }
-async function streamVideoFile(file, req, res, download=false) {
-  try { file = resolveServedFilePath(file, readConfig()); }
-  catch { return sendText(res, 'video access denied', 'text/plain', 403); }
+async function streamVideoFile(file, req, res, download=false, opts = {}) {
+  if (!opts.trustedLocal) {
+    try { file = resolveServedFilePath(file, readConfig()); }
+    catch { return sendText(res, 'video access denied', 'text/plain', 403); }
+  }
+  if (!download && opts.previewOnly) {
+    const cachedPath = localHotMediaCachePath(file);
+    if (fs.existsSync(cachedPath)) {
+      try { fs.utimes(cachedPath, new Date(), new Date(), ()=>{}); } catch {}
+      file = cachedPath;
+    }
+  }
   if (!file || !fs.existsSync(file)) return sendText(res, 'video not found', 'text/plain', 404);
-  if (!download) {
+  if (!download && !opts.previewOnly) {
     let sourceStat = null;
     try { sourceStat = await fs.promises.stat(file); } catch { sourceStat = null; }
     const cachedPath = localHotMediaCachePath(file);
@@ -6062,9 +6072,17 @@ async function apiHandler(req, res, parsed) {
     }
     if (method === 'POST' && p === '/api/video_submit') { const body=await readBody(req); if(String(body.video_platform||'').toLowerCase()==='flow2api'){const ret=await createFlow2VideoBatch({...body,prompts:body.prompt||body.prompts,copies:1},deviceOwner);return send(res,{ok:true,task:ret.rows[0]||null});} const row = await createApimartVideoTask(body, deviceOwner, req, cfg); return send(res,{ok:true, task:formatVideoTask(row)}); }
     if (method === 'POST' && p === '/api/video_batch_submit') { const body=await readBody(req); return send(res, String(body.video_platform||'').toLowerCase()==='flow2api' ? await createFlow2VideoBatch(body, deviceOwner) : await createApimartVideoBatch(body, deviceOwner, req, cfg)); }
-    if (method === 'GET' && p === '/api/video_tasks') { const scopedOwner = local && parsed.query.all_owners === '1' ? '' : dataOwner; cleanupStaleVideoTasks(scopedOwner); const st=ensureVideoStore(); const allOwners = !scopedOwner; const pageSize = Math.max(1, Math.min(local ? 5000 : 500, Number(parsed.query.limit || parsed.query.page_size || (local ? 1200 : 500)))); const rawRows=st.video_tasks.filter(v=>!scopedOwner || v.owner_id===scopedOwner).sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at))).slice(0,pageSize); warmLocalHotCacheForVideoRows(rawRows); const rows=rawRows.map(row=>formatVideoTask(row, { allOwners, fast:true })); return send(res,{ok:true, rows, video_stats: videoTodayStats(scopedOwner), scope: scopedOwner ? 'device' : 'all_owners'}); }
+    if (method === 'GET' && p === '/api/video_tasks') { const scopedOwner = local && parsed.query.all_owners === '1' ? '' : dataOwner; cleanupStaleVideoTasks(scopedOwner); const st=ensureVideoStore(); const allOwners = !scopedOwner; const pageSize = Math.max(1, Math.min(local ? 5000 : 500, Number(parsed.query.limit || parsed.query.page_size || (local ? 1200 : 500)))); const rawRows=st.video_tasks.filter(v=>!scopedOwner || v.owner_id===scopedOwner).sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at))).slice(0,pageSize); const rows=rawRows.map(row=>formatVideoTask(row, { allOwners, fast:true })); return send(res,{ok:true, rows, video_stats: videoTodayStats(scopedOwner), scope: scopedOwner ? 'device' : 'all_owners'}); }
     if (method === 'POST' && p === '/api/video_delete_selected') { const body=await readBody(req); const scopedOwner = local && body.all_owners === true ? '' : owner; return send(res, deleteVideoTasks(body.ids || [], scopedOwner)); }
     if (method === 'POST' && p === '/api/video_export_selected') { const body=await readBody(req); const scopedOwner = local && body.all_owners === true ? '' : owner; const zipPath=exportSelectedVideos(body.ids || [], scopedOwner); return send(res,{ok:true,url:`/download?path=${encodeURIComponent(zipPath)}`}); }
+    if (method === 'POST' && p === '/api/video_cache_touch') {
+      const body = await readBody(req);
+      const scopedOwner = local && body.all_owners === true ? '' : owner;
+      const ids = Array.from(new Set((body.ids || []).filter(Boolean))).slice(0, 24);
+      const rows = ids.map(id => findVideoTaskById(id, scopedOwner)).filter(v => v && v.file_path);
+      rows.forEach(v => scheduleLocalHotMedia(v.file_path));
+      return send(res, { ok:true, queued:rows.length });
+    }
     if (method === 'POST' && p === '/api/video_copy_file') {
       if (!local) return send(res,{ok:false,error:'远程访问端无法直接复制主机上的视频文件，请使用下载按钮。'},403);
       const body = await readBody(req);
@@ -6144,7 +6162,11 @@ function requestHandler(req, res) {
     const id = parsed.query.id || '';
     const t = findVideoTaskById(id, owner);
     if (!t || !t.file_path) return sendText(res, 'video task not found', 'text/plain', 404);
-    return streamVideoFile(t.file_path, req, res, false);
+    if (parsed.query.preview === '1') {
+      const cachedPath = localHotMediaCachePath(t.file_path);
+      if (fs.existsSync(cachedPath)) return streamVideoFile(cachedPath, req, res, false, { trustedLocal:true });
+    }
+    return streamVideoFile(t.file_path, req, res, false, { previewOnly: parsed.query.preview === '1' });
   }
   if (parsed.pathname.startsWith('/public-video/') || parsed.pathname.startsWith('/public-file/')) {
     const isPublicFile = parsed.pathname.startsWith('/public-file/');
