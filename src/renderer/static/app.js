@@ -128,12 +128,13 @@ function updateApiKeyWarning(){
   const warn = $('#apiKeyWarning');
   const startBtn = $('#startBatchBtn');
   if(!keyEl || !warn) return;
-  const empty = !String(keyEl.value || '').trim();
-  warn.classList.toggle('show', empty);
+  const msg = imageApiKeyValidationMessage(currentImagePlatform(), keyEl.value || '');
+  warn.classList.toggle('show', !!msg);
+  if(msg) warn.textContent = msg;
   if(startBtn){
-    startBtn.disabled = empty;
-    startBtn.classList.toggle('disabled', empty);
-    startBtn.title = empty ? 'API Key 未填写，不能开始生成新批次' : '';
+    startBtn.disabled = !!msg;
+    startBtn.classList.toggle('disabled', !!msg);
+    startBtn.title = msg || '';
   }
 }
 
@@ -659,6 +660,16 @@ function normalizeImagePlatformValue(platform='apimart'){
   const p = String(platform || '').toLowerCase();
   return (p === 'legacy' || p === 'grsai' || p === 'flow2api') ? 'flow2api' : 'apimart';
 }
+function isLikelyApimartApiKey(key=''){
+  return /^sk-[A-Za-z0-9_-]{16,}$/.test(String(key || '').trim());
+}
+function imageApiKeyValidationMessage(platform, key){
+  const p = normalizeImagePlatformValue(platform);
+  const s = String(key || '').trim();
+  if(!s) return 'API Key 未填写，请先填写后再开始生成';
+  if(p === 'flow2api' && isLikelyApimartApiKey(s)) return '当前是本地 Flow2API，请填写 Flow2API 自己的 API Key，不能使用 APIMart 的 sk- Key';
+  return '';
+}
 const IMAGE_PLATFORM_CONFIG_PREFIX = CLIENT_CONFIG_KEY + '_image_platform_';
 const IMAGE_PLATFORM_ACTIVE_KEY = CLIENT_CONFIG_KEY + '_active_image_platform';
 const APIMART_MODEL_OPTIONS = [
@@ -733,6 +744,7 @@ function loadClientConfig(platform=''){
 function saveClientConfig(cfg){
   const p = normalizeImagePlatformValue(cfg.image_api_platform || currentImagePlatform());
   const safeCfg = sanitizePlatformEndpoint(cfg || {}, p);
+  if(p === 'flow2api' && isLikelyApimartApiKey(safeCfg.api_key)) safeCfg.api_key = '';
   localStorage.setItem(IMAGE_PLATFORM_ACTIVE_KEY, p);
   const allowed = ['image_api_platform','api_endpoint','legacy_api_endpoint','api_key','model','size','clarity','quality','background','moderation','output_format','output_compression','image_n','mask_url','theme_mode','concurrency','retry_times','repeat_count','poll_interval_ms','timeout_seconds','background_keepalive','prompt_multiline_tasks'];
   const cleaned = { image_api_platform:p };
@@ -816,6 +828,7 @@ function applyImagePlatformFields(cfg = {}, platform='apimart'){
   if(p === 'flow2api'){
     merged.model = normalizeFlow2ApiBaseModel(merged.model);
     if(merged.api_key === 'laig-flow2api-local-2026') merged.api_key = '';
+    if(isLikelyApimartApiKey(merged.api_key)) merged.api_key = '';
   }
   if($('#apiEndpoint')) $('#apiEndpoint').value = merged.api_endpoint || platformDefaultApiEndpoint(p);
   if($('#apiKey')) $('#apiKey').value = merged.api_key || '';
@@ -2228,8 +2241,9 @@ $('#chatInput')?.addEventListener('keydown', e=>{ if(e.key === 'Enter' && !e.shi
 
 $('#startBatchBtn').addEventListener('click', async()=>{
   updateApiKeyWarning();
-  if(!($('#apiKey')?.value || '').trim()){
-    toast('API Key 未填写，请先填写后再开始生成');
+  const keyError = imageApiKeyValidationMessage(currentImagePlatform(), $('#apiKey')?.value || '');
+  if(keyError){
+    toast(keyError);
     return;
   }
   const body = {...collectConfig(), client_id:getClientId(), prompts: $('#prompts').value, prompt_multiline_tasks: isPromptMultilineTasksEnabled(), main_images: mainImages, reference_images: refImages};
