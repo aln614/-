@@ -18,7 +18,7 @@ function getSettings() {
                 serverUrl: storedServerUrl === "ws://127.0.0.1:8000/captcha_ws"
                     ? DEFAULT_SETTINGS.serverUrl
                     : storedServerUrl,
-                apiKey: (stored.apiKey || "").trim(),
+                apiKey: (stored.apiKey || DEFAULT_SETTINGS.apiKey || "").trim(),
                 routeKey: (stored.routeKey || "").trim(),
                 clientLabel: (stored.clientLabel || "").trim()
             });
@@ -473,4 +473,29 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     }
 });
 
+chrome.runtime.onInstalled.addListener(() => {
+    connectWS().catch(err => console.log("[Flow2API] onInstalled connect failed:", err));
+    chrome.alarms.create("flow2api_keepalive", { periodInMinutes: 1 });
+});
+
+chrome.runtime.onStartup.addListener(() => {
+    connectWS().catch(err => console.log("[Flow2API] onStartup connect failed:", err));
+    chrome.alarms.create("flow2api_keepalive", { periodInMinutes: 1 });
+});
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+    if (alarm && alarm.name === "flow2api_keepalive") {
+        connectWS().catch(err => console.log("[Flow2API] keepalive connect failed:", err));
+    }
+});
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (!message || message.type !== "flow2api_connect") return false;
+    connectWS()
+        .then(() => sendResponse({ ok: true }))
+        .catch(err => sendResponse({ ok: false, error: err && err.message ? err.message : String(err) }));
+    return true;
+});
+
+chrome.alarms.create("flow2api_keepalive", { periodInMinutes: 1 });
 connectWS().catch(err => console.log("[Flow2API] initial connect failed:", err));
