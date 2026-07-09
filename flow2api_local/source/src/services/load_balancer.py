@@ -29,15 +29,15 @@ class LoadBalancer:
         self._risk_cooldowns: Dict[int, Dict[str, object]] = {}
         self._risk_cooldown_lock = asyncio.Lock()
 
-    async def cooldown_token(self, token_id: Optional[int], seconds: int = 300, reason: str = ""):
+    async def cooldown_token(self, token_id: Optional[int], seconds: int = 1800, reason: str = ""):
         """Temporarily avoid a token after Flow risk-control rejection."""
         if token_id is None:
             return
 
         try:
-            normalized_seconds = max(30, min(1800, int(seconds)))
+            normalized_seconds = max(300, min(3600, int(seconds)))
         except Exception:
-            normalized_seconds = 300
+            normalized_seconds = 1800
 
         async with self._risk_cooldown_lock:
             until = time.time() + normalized_seconds

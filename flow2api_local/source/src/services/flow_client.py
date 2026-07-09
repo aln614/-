@@ -505,10 +505,10 @@ class FlowClient:
             or "recaptcha evaluation failed" in error_lower
         )
 
-    async def _activate_flow_risk_pause(self, error_message: str, seconds: int = 180):
+    async def _activate_flow_risk_pause(self, error_message: str, seconds: int = 1800):
         if not self._is_flow_risk_error_text(error_message):
             return
-        pause_seconds = max(30, min(600, int(seconds or 180)))
+        pause_seconds = max(300, min(3600, int(seconds or 1800)))
         async with self._flow_risk_lock:
             self._flow_risk_until = max(self._flow_risk_until, time.time() + pause_seconds)
             self._flow_risk_reason = str(error_message or "flow_risk_control")[:240]

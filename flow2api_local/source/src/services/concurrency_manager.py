@@ -8,6 +8,15 @@ from ..core.logger import debug_logger
 class ConcurrencyManager:
     """Manages concurrent request limits for each token"""
 
+    @staticmethod
+    def _protected_limit(value: Optional[int]) -> int:
+        """Flow Web risk is per browser/account; keep one upstream submit per token."""
+        try:
+            n = int(value or 0)
+        except Exception:
+            n = 0
+        return n if n > 0 else 1
+
     def __init__(self):
         """Initialize concurrency manager"""
         # token_id -> max concurrency limit (only stores >0 values, missing means unlimited)
@@ -37,12 +46,10 @@ class ConcurrencyManager:
                 self._image_inflight[token.id] = 0
                 self._video_inflight[token.id] = 0
 
-                if token.image_concurrency and token.image_concurrency > 0:
-                    self._image_limits[token.id] = token.image_concurrency
-                if token.video_concurrency and token.video_concurrency > 0:
-                    self._video_limits[token.id] = token.video_concurrency
+                self._image_limits[token.id] = self._protected_limit(token.image_concurrency)
+                self._video_limits[token.id] = self._protected_limit(token.video_concurrency)
 
-            debug_logger.log_info(f"Concurrency manager initialized with {len(tokens)} tokens")
+            debug_logger.log_info(f"Concurrency manager initialized with {len(tokens)} tokens (container-protected limit: default 1)")
 
     async def can_use_image(self, token_id: int) -> bool:
         """

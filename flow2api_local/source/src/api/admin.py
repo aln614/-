@@ -39,6 +39,15 @@ active_admin_tokens = set()
 SUPPORTED_API_CAPTCHA_METHODS = {"yescaptcha", "capmonster", "ezcaptcha", "capsolver"}
 
 
+def _container_protected_concurrency(value: Optional[int]) -> int:
+    """Keep local Flow browser/API traffic serialized per account."""
+    try:
+        n = int(value or 0)
+    except Exception:
+        n = 0
+    return n if n > 0 else 1
+
+
 def _mask_token(token: Optional[str]) -> str:
     if not token:
         return ""
@@ -100,6 +109,23 @@ def _extract_error_summary(payload: Any) -> str:
         return ""
 
     return _truncate_text(payload)
+
+
+def _extract_request_model(payload: Any) -> str:
+    if payload is None:
+        return ""
+    if isinstance(payload, str):
+        raw = payload.strip()
+        if not raw:
+            return ""
+        try:
+            return _extract_request_model(json.loads(raw))
+        except Exception:
+            return ""
+    if not isinstance(payload, dict):
+        return ""
+    model = payload.get("model")
+    return str(model).strip() if model is not None else ""
 
 
 def _guess_client_hints_from_user_agent(user_agent: str) -> Dict[str, str]:
@@ -491,8 +517,8 @@ class AddTokenRequest(BaseModel):
     extension_route_key: Optional[str] = None
     image_enabled: bool = True
     video_enabled: bool = True
-    image_concurrency: int = -1
-    video_concurrency: int = -1
+    image_concurrency: int = 1
+    video_concurrency: int = 1
 
 
 class UpdateTokenRequest(BaseModel):
@@ -572,8 +598,8 @@ class ImportTokenItem(BaseModel):
     extension_route_key: Optional[str] = None
     image_enabled: bool = True
     video_enabled: bool = True
-    image_concurrency: int = -1
-    video_concurrency: int = -1
+    image_concurrency: int = 1
+    video_concurrency: int = 1
 
 
 class ImportTokensRequest(BaseModel):
@@ -732,8 +758,8 @@ async def add_token(
             extension_route_key=request.extension_route_key.strip() if request.extension_route_key is not None else None,
             image_enabled=request.image_enabled,
             video_enabled=request.video_enabled,
-            image_concurrency=request.image_concurrency,
-            video_concurrency=request.video_concurrency
+            image_concurrency=_container_protected_concurrency(request.image_concurrency),
+            video_concurrency=_container_protected_concurrency(request.video_concurrency)
         )
 
         # 热更新并发限制，避免必须重启服务
@@ -796,8 +822,8 @@ async def update_token(
             extension_route_key=request.extension_route_key.strip() if request.extension_route_key is not None else None,
             image_enabled=request.image_enabled,
             video_enabled=request.video_enabled,
-            image_concurrency=request.image_concurrency,
-            video_concurrency=request.video_concurrency
+            image_concurrency=_container_protected_concurrency(request.image_concurrency),
+            video_concurrency=_container_protected_concurrency(request.video_concurrency)
         )
 
         # 热更新并发限制，确保管理台修改立即生效
@@ -1000,8 +1026,8 @@ async def import_tokens(
                         extension_route_key=item.extension_route_key.strip() if item.extension_route_key is not None else None,
                         image_enabled=item.image_enabled,
                         video_enabled=item.video_enabled,
-                        image_concurrency=item.image_concurrency,
-                        video_concurrency=item.video_concurrency
+                        image_concurrency=_container_protected_concurrency(item.image_concurrency),
+                        video_concurrency=_container_protected_concurrency(item.video_concurrency)
                     )
                     # 如果过期则禁用
                     if is_expired:
@@ -1025,8 +1051,8 @@ async def import_tokens(
                         extension_route_key=item.extension_route_key.strip() if item.extension_route_key is not None else None,
                         image_enabled=item.image_enabled,
                         video_enabled=item.video_enabled,
-                        image_concurrency=item.image_concurrency,
-                        video_concurrency=item.video_concurrency
+                        image_concurrency=_container_protected_concurrency(item.image_concurrency),
+                        video_concurrency=_container_protected_concurrency(item.video_concurrency)
                     )
                     # 如果过期则禁用
                     if is_expired:
@@ -1318,6 +1344,7 @@ async def get_logs(
             "token_email": log.get("token_email"),
             "token_username": log.get("token_username"),
             "operation": log.get("operation"),
+            "request_model": _extract_request_model(log.get("request_body_excerpt")),
             "status_code": status_code if status_code is not None else raw_status_code,
             "duration": log.get("duration"),
             "status_text": log.get("status_text") or "",
@@ -1347,6 +1374,7 @@ async def get_log_detail(
         "token_email": log.get("token_email"),
         "token_username": log.get("token_username"),
         "operation": log.get("operation"),
+        "request_model": _extract_request_model(log.get("request_body")),
         "status_code": log.get("status_code"),
         "duration": log.get("duration"),
         "status_text": log.get("status_text") or "",

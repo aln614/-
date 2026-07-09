@@ -1484,7 +1484,7 @@ class GenerationHandler:
         try:
             await self.load_balancer.cooldown_token(
                 token.id,
-                seconds=300,
+                seconds=1800,
                 reason="recaptcha_evaluation_failed",
             )
         except Exception as exc:

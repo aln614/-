@@ -348,6 +348,16 @@ function renderSidebar() {
     section.appendChild(list);
     sidebar.appendChild(section);
   }
+
+  if (!STATE.selectedModel || !ALL_MODELS[STATE.selectedModel]) {
+    const preferredVideoModel = [
+      "veo_3_1_t2v_fast_4s",
+      "veo_3_1_t2v_fast",
+      "veo_3_1_t2v",
+    ].find(modelId => ALL_MODELS[modelId]);
+    const fallbackVideoModel = modelIds.find(modelId => getModelType(modelId) === "video");
+    selectModel(preferredVideoModel || fallbackVideoModel || modelIds[0]);
+  }
 }
 
 function selectModel(modelId) {
