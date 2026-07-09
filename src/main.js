@@ -824,18 +824,13 @@ function urls(cfg) {
   const pub = normalizeExternalPublicOrigin((cfg.public_url || tunnelState.url || '').trim());
   return { local_ip: ip, port, local_url: `http://127.0.0.1:${port}`, lan_url: `http://${ip}:${port}`, public_url: pub };
 }
-function isLikelyApimartApiKey(key = '') {
-  return /^sk-[A-Za-z0-9_-]{16,}$/.test(String(key || '').trim());
-}
 function toCamelConfig(cfg) {
-  const imageApiPlatform = (['legacy','grsai','flow2api'].includes(String(cfg.image_api_platform||'').toLowerCase()) || /(?:127\.0\.0\.1|localhost):38000|grsaiapi\.com|grsai\.dakka\.com\.cn/i.test(cfg.api_endpoint||'') ? 'flow2api' : 'apimart');
-  const apiKey = imageApiPlatform === 'flow2api' && isLikelyApimartApiKey(cfg.api_key) ? '' : cfg.api_key;
   return {
     appName: cfg.app_name,
-    imageApiPlatform,
+    imageApiPlatform: (['legacy','grsai','flow2api'].includes(String(cfg.image_api_platform||'').toLowerCase()) || /(?:127\.0\.0\.1|localhost):38000|grsaiapi\.com|grsai\.dakka\.com\.cn/i.test(cfg.api_endpoint||'') ? 'flow2api' : 'apimart'),
     apiBaseUrl: cfg.api_endpoint,
     legacyApiEndpoint: cfg.legacy_api_endpoint || 'http://127.0.0.1:38000',
-    apiKey,
+    apiKey: cfg.api_key,
     model: cfg.model,
     size: cfg.size,
     imageSize: cfg.clarity || '1K',
@@ -4315,28 +4310,16 @@ function mapPayloadToQueue(body, owner) {
   const mainImages = (body.main_images || []).map(x => dataUrlToFile(x, owner)).filter(Boolean);
   const refImages = (body.reference_images || []).map(x => dataUrlToFile(x, owner)).filter(Boolean);
   const cfg = toCamelConfig(readConfig());
-  const imageApiPlatform = (['legacy','grsai','flow2api'].includes(String(body.image_api_platform || cfg.imageApiPlatform || '').toLowerCase()) || /(?:127\.0\.0\.1|localhost):38000|grsaiapi\.com|grsai\.dakka\.com\.cn/i.test(body.api_endpoint || cfg.apiBaseUrl || '') ? 'flow2api' : 'apimart');
-  const apiBaseUrl = normalizeImageApiEndpoint(['legacy','grsai','flow2api'].includes(String(body.image_api_platform || cfg.imageApiPlatform || '').toLowerCase()) ? (body.api_endpoint || body.legacy_api_endpoint || cfg.legacyApiEndpoint || 'http://127.0.0.1:38000') : (body.api_endpoint || cfg.apiBaseUrl));
-  const requestApiKey = String(body.api_key || '').trim();
-  const fallbackApiKey = String(cfg.apiKey || '').trim();
-  const apiKey = requestApiKey || fallbackApiKey;
-  const pickNumber = (value, fallback) => (value !== undefined && value !== null && String(value).trim() !== '') ? Number(value) : Number(fallback);
-  if (imageApiPlatform === 'flow2api' && !apiKey) {
-    throw new Error('请填写本地 Flow2API API Key');
-  }
-  if (imageApiPlatform === 'flow2api' && isLikelyApimartApiKey(apiKey)) {
-    throw new Error('当前为本地 Flow2API，请填写 Flow2API 自己的 API Key，不能使用 APIMart 的 sk- Key');
-  }
   const payload = {
     ownerId: owner,
     prompts: body.prompts || '',
     promptMultilineTasks: parseBoolValue(body.prompt_multiline_tasks, true),
     mainImages,
     refImages,
-    imageApiPlatform,
-    apiBaseUrl,
+    imageApiPlatform: (['legacy','grsai','flow2api'].includes(String(body.image_api_platform || cfg.imageApiPlatform || '').toLowerCase()) || /(?:127\.0\.0\.1|localhost):38000|grsaiapi\.com|grsai\.dakka\.com\.cn/i.test(body.api_endpoint || cfg.apiBaseUrl || '') ? 'flow2api' : 'apimart'),
+    apiBaseUrl: normalizeImageApiEndpoint(['legacy','grsai','flow2api'].includes(String(body.image_api_platform || cfg.imageApiPlatform || '').toLowerCase()) ? (body.api_endpoint || body.legacy_api_endpoint || cfg.legacyApiEndpoint || 'http://127.0.0.1:38000') : (body.api_endpoint || cfg.apiBaseUrl)),
     legacyApiEndpoint: body.legacy_api_endpoint || cfg.legacyApiEndpoint || 'http://127.0.0.1:38000',
-    apiKey,
+    apiKey: body.api_key || cfg.apiKey,
     apimartProxyUrl: body.apimart_proxy_url || cfg.apimartProxyUrl || '',
     model: body.model || cfg.model,
     size: body.size || cfg.size,
@@ -4345,14 +4328,14 @@ function mapPayloadToQueue(body, owner) {
     background: body.background || cfg.background || 'auto',
     moderation: body.moderation || cfg.moderation || 'auto',
     outputFormat: body.output_format || cfg.outputFormat || 'png',
-    outputCompression: pickNumber(body.output_compression, cfg.outputCompression || 90),
-    imageN: pickNumber(body.image_n, cfg.imageN || 1),
+    outputCompression: Number(body.output_compression || cfg.outputCompression || 90),
+    imageN: Number(body.image_n || cfg.imageN || 1),
     maskUrl: body.mask_url || cfg.maskUrl || '',
-    concurrency: pickNumber(body.concurrency, cfg.concurrency || 30),
-    retryTimes: pickNumber(body.retry_times, cfg.retryTimes ?? 2),
-    repeatCount: pickNumber(body.repeat_count, cfg.repeatCount || 1),
-    pollIntervalMs: pickNumber(body.poll_interval_ms, cfg.pollIntervalMs || 1200),
-    timeoutMs: pickNumber(body.timeout_seconds, 1200) * 1000,
+    concurrency: Number(body.concurrency || cfg.concurrency || 30),
+    retryTimes: Number(body.retry_times || cfg.retryTimes || 2),
+    repeatCount: Number(body.repeat_count || cfg.repeatCount || 1),
+    pollIntervalMs: Number(body.poll_interval_ms || cfg.pollIntervalMs || 1200),
+    timeoutMs: Number(body.timeout_seconds || 1200) * 1000,
     outputDir: body.output_dir || cfg.outputDir || '',
     name: body.name || ''
   };
