@@ -13,15 +13,6 @@ function parseTimeMs(v) {
 }
 function elapsedMsSince(v) { return Math.max(0, Date.now() - parseTimeMs(v)); }
 function taskTimeoutMs(cfg) { return Math.max(1000, Number(cfg.timeoutMs || 0) || 20 * 60 * 1000); }
-function isFlow2ApiCaptchaCooldownError(err) {
-  const text = String(err && (err.message || err) || '');
-  return !!(err && (err.noRetry || err.stopBatch || err.flow2apiRisk)) ||
-    /FLOW2API_CAPTCHA_COOLDOWN|reCAPTCHA|captcha|Google Flow|PUBLIC_ERROR_UNUSUAL_ACTIVITY|UNUSUAL_ACTIVITY_TOO_MUCH_TRAFFIC|risk|unusual activity|too much traffic|cooldown|风控|风险|冷却|稍后重试|浏览器会话/i.test(text);
-}
-function friendlyFlow2ApiCaptchaMessage(err) {
-  const raw = String(err && (err.message || err) || '').replace(/^FLOW2API_CAPTCHA_COOLDOWN:\s*/i, '');
-  return raw || 'Google Flow reCAPTCHA 风控冷却中。请先在 Chrome 打开 Flow 页面完成真人验证，并确认 Flow2API Captcha Worker 已连接；等待冷却结束或更换账号/网络后再重试。';
-}
 
 class TaskQueue extends EventEmitter {
   constructor() {
@@ -300,24 +291,13 @@ class TaskQueue extends EventEmitter {
         if (token !== this.resetToken || this.stopFlags.has(batchId)) return;
         const maxRetry = Number(batch.retry_times || cfg.retryTimes || 0);
         const timedOut = elapsedMsSince(task.recovery_started_at || task.created_at) >= taskTimeoutMs(cfg);
-        const flow2apiCaptchaCooldown = String(cfg.imageApiPlatform || '').toLowerCase() === 'flow2api' && isFlow2ApiCaptchaCooldownError(err);
-        const taskErrorMessage = flow2apiCaptchaCooldown ? friendlyFlow2ApiCaptchaMessage(err) : (timedOut ? `单任务累计超时：${Math.round(elapsedMsSince(task.recovery_started_at || task.created_at)/1000)} 秒` : (err.message || String(err)));
-        const shouldRetry = !flow2apiCaptchaCooldown && !timedOut && attempt <= maxRetry;
-        if (flow2apiCaptchaCooldown) this.stopFlags.add(batchId);
+        const shouldRetry = !timedOut && attempt <= maxRetry;
         db.transaction(() => {
           db.prepare('UPDATE tasks SET status=?, error_message=?, updated_at=? WHERE id=?').run(shouldRetry ? '等待中' : '失败', timedOut ? `单任务累计超时：${Math.round(elapsedMsSince(task.recovery_started_at || task.created_at)/1000)} 秒` : (err.message || String(err)), nowISO(), task.id);
           db.prepare('UPDATE batches SET fail_count=fail_count+?, running_count=MAX(running_count-1,0), updated_at=? WHERE id=?').run(shouldRetry ? 0 : 1, nowISO(), batchId);
         })();
-        if (flow2apiCaptchaCooldown) {
-          db.transaction(() => {
-            db.prepare('UPDATE tasks SET status=?, error_message=?, progress_text=?, updated_at=?, finished_at=? WHERE id=?').run('\u5931\u8d25', taskErrorMessage, 'Flow2API reCAPTCHA \u98ce\u63a7\u51b7\u5374\uff0c\u5df2\u505c\u6b62\u672c\u6279\u6b21', nowISO(), nowISO(), task.id);
-            db.prepare('UPDATE tasks SET status=?, error_message=?, progress_text=?, updated_at=?, finished_at=? WHERE batch_id=? AND status NOT IN (?,?)').run('\u5931\u8d25', taskErrorMessage, 'Flow2API reCAPTCHA \u98ce\u63a7\u51b7\u5374\uff0c\u672a\u7ee7\u7eed\u63d0\u4ea4', nowISO(), nowISO(), batchId, '\u5df2\u5b8c\u6210', '\u5931\u8d25');
-            const failed = db.prepare('SELECT COUNT(*) AS c FROM tasks WHERE batch_id=? AND status=?').get(batchId, '\u5931\u8d25');
-            db.prepare('UPDATE batches SET status=?, fail_count=?, running_count=0, updated_at=? WHERE id=?').run('\u5df2\u505c\u6b62', Number(failed && failed.c || 1), nowISO(), batchId);
-          })();
-        }
         db._save();
-        addLog(`\u4efb\u52a1 ${task.task_index} ${flow2apiCaptchaCooldown ? '\u89e6\u53d1 Flow2API \u98ce\u63a7\uff0c\u5df2\u505c\u6b62\u672c\u6279\u6b21' : (shouldRetry ? '\u5931\u8d25\u91cd\u8bd5' : '\u5931\u8d25')}\uff1a${taskErrorMessage}`, { ownerId: task.owner_id, batchId, level: shouldRetry ? 'warning' : 'error' });
+        addLog(`任务 ${task.task_index} ${shouldRetry ? '失败重试' : '失败'}：${err.message}`, { ownerId: task.owner_id, batchId, level: shouldRetry ? 'warning' : 'error' });
       }
       this.emit('changed');
       } finally {

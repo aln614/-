@@ -117,18 +117,6 @@ function extractApimartErrorMessage(data){
   walk(data);
   return candidates[0] || compactJson(data, 600) || 'unknown_error';
 }
-function isFlow2ApiRiskErrorText(text = '') {
-  const raw = String(text || '');
-  return /FLOW2API_CAPTCHA_COOLDOWN|reCAPTCHA|captcha|Google Flow|PUBLIC_ERROR_UNUSUAL_ACTIVITY|UNUSUAL_ACTIVITY_TOO_MUCH_TRAFFIC|risk|risk score|unusual activity|too much traffic|temporar(?:y|ily)|cooldown|风控|风险|冷却|稍后重试|浏览器会话/i.test(raw);
-}
-function createFlow2ApiRiskError(raw = '') {
-  const detail = String(raw || '').replace(/^HTTP\s+\d+:\s*/i, '').trim();
-  const err = new Error(`FLOW2API_CAPTCHA_COOLDOWN: Google Flow reCAPTCHA 风控冷却中。请先在 Chrome 打开 Flow 页面并完成真人验证，确认 Flow2API Captcha Worker 已连接；等待冷却结束或更换账号/网络后再重试。${detail ? '原始错误：' + detail : ''}`);
-  err.noRetry = true;
-  err.stopBatch = true;
-  err.flow2apiRisk = true;
-  return err;
-}
 function assertApimartCode200(data, context = 'APIMart'){
   const code = data && (data.code ?? data.status_code);
   if (code !== undefined && code !== null && Number(code) !== 200) {
@@ -1091,21 +1079,11 @@ async function generateFlow2ApiImage({ cfg, prompt, mainImagePath, refImages = [
     try{ cfg.onSubmitLog({ url, payload:compactPayloadForLog({...payload, messages:[{role:'user',content:paths.length ? `[文本 + ${paths.length} 张图片]` : String(prompt || '')}]}) }); }catch{}
   }
   if(typeof onProgress === 'function') onProgress({progress:8,statusText:'正在提交到本地 Flow2API'});
-  let response;
-  try {
-    response = await postJson(url, cfg.apiKey, payload, '');
-  } catch (e) {
-    if (isFlow2ApiRiskErrorText(e && (e.message || e))) throw createFlow2ApiRiskError(e && (e.message || e));
-    throw e;
-  }
+  const response = await postJson(url, cfg.apiKey, payload, '');
   const error = response?.error?.message || response?.detail || '';
-  if(error) {
-    if (isFlow2ApiRiskErrorText(error)) throw createFlow2ApiRiskError(error);
-    throw new Error(`Flow2API 生成失败：${error}`);
-  }
+  if(error) throw new Error(`Flow2API 生成失败：${error}`);
   const message = response?.choices?.[0]?.message?.content || response?.choices?.[0]?.delta?.content || '';
   const image = pickFlow2ApiImage(message);
-  if(!image && isFlow2ApiRiskErrorText(JSON.stringify(response).slice(0, 2000))) throw createFlow2ApiRiskError(JSON.stringify(response).slice(0, 1000));
   if(!image) throw new Error(`Flow2API 未返回图片结果。请先在管理后台导入可用 Token。响应：${JSON.stringify(response).slice(0,1000)}`);
   if(typeof onProgress === 'function') onProgress({progress:95,statusText:'Flow2API 已返回图片，正在保存'});
   if(/^data:image\//i.test(image)){
