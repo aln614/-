@@ -384,18 +384,28 @@ class LoadBalancer:
 
         capability_tokens = []
         cooled_tokens = 0
+        max_cooldown_remaining = 0
         for token in supported_tokens:
             if for_image_generation and not token.image_enabled:
                 continue
             if for_video_generation and not token.video_enabled:
                 continue
-            if (for_image_generation or for_video_generation) and await self._get_risk_cooldown_remaining(token.id) > 0:
+            cooldown_remaining = (
+                await self._get_risk_cooldown_remaining(token.id)
+                if (for_image_generation or for_video_generation)
+                else 0
+            )
+            if cooldown_remaining > 0:
                 cooled_tokens += 1
+                max_cooldown_remaining = max(max_cooldown_remaining, cooldown_remaining)
                 continue
             capability_tokens.append(token)
 
         if supported_tokens and not capability_tokens and cooled_tokens:
-            return "当前账号刚触发 Google Flow reCAPTCHA 风控，已临时冷却。请稍后重试，或换账号/网络后再生成。"
+            return (
+                "当前账号刚触发 Google Flow reCAPTCHA 风控，已临时冷却。"
+                f"还剩约 {max_cooldown_remaining} 秒，请稍后重试，或换账号/网络后再生成。"
+            )
 
         if supported_tokens and not capability_tokens:
             if for_image_generation:

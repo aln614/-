@@ -526,6 +526,12 @@ class FlowClient:
         await asyncio.sleep(remaining)
         return remaining
 
+    async def _get_flow_risk_pause_state(self) -> tuple[int, str]:
+        async with self._flow_risk_lock:
+            remaining = int(max(0, self._flow_risk_until - time.time()))
+            reason = self._flow_risk_reason
+        return remaining, reason
+
     async def _get_image_launch_lock(self, token_id: Optional[int]) -> asyncio.Lock:
         key = int(token_id or 0)
         async with self._image_launch_locks_guard:
@@ -542,7 +548,13 @@ class FlowClient:
     ) -> tuple[bool, int, int]:
         """图片请求不再做本地发车排队，直接进入取 token 并提交上游。"""
         started = time.time()
-        await self._wait_flow_risk_pause()
+        remaining, reason = await self._get_flow_risk_pause_state()
+        if remaining > 0:
+            raise RuntimeError(
+                "Google Flow reCAPTCHA 风控冷却中，"
+                f"还剩 {remaining} 秒。请稍后重试，或在 Flow 网页端确认账号状态。"
+                f"原因：{reason or 'flow_risk_control'}"
+            )
         lock = await self._get_image_launch_lock(token_id)
         try:
             await asyncio.wait_for(lock.acquire(), timeout=config.flow_image_launch_wait_timeout)
@@ -562,6 +574,13 @@ class FlowClient:
         token_video_concurrency: Optional[int],
     ) -> tuple[bool, int, int]:
         """视频请求不再做本地发车排队，直接进入取 token 并提交上游。"""
+        remaining, reason = await self._get_flow_risk_pause_state()
+        if remaining > 0:
+            raise RuntimeError(
+                "Google Flow reCAPTCHA 风控冷却中，"
+                f"还剩 {remaining} 秒。请稍后重试，或在 Flow 网页端确认账号状态。"
+                f"原因：{reason or 'flow_risk_control'}"
+            )
         return True, 0, 0
 
     async def _release_video_launch_gate(self, token_id: Optional[int]):

@@ -985,6 +985,8 @@ class GenerationHandler:
         self.load_balancer = load_balancer
         self.db = db
         self.concurrency_manager = concurrency_manager
+        self._cooldown_log_suppression: Dict[str, float] = {}
+        self._cooldown_log_lock = asyncio.Lock()
         self.file_cache = FileCache(
             cache_dir=str(cache_dir),
             default_timeout=config.cache_timeout,
@@ -1024,6 +1026,33 @@ class GenerationHandler:
         if len(text) <= max_length:
             return text
         return f"{text[:max_length - 3]}..."
+
+    def _is_flow_risk_cooldown_message(self, error_message: str) -> bool:
+        message = str(error_message or "").lower()
+        return (
+            ("recaptcha" in message or "google flow" in message)
+            and ("冷却" in message or "cooldown" in message or "风控" in message)
+        )
+
+    async def _should_suppress_duplicate_cooldown_log(
+        self,
+        operation: str,
+        model: str,
+        error_message: str,
+        *,
+        has_existing_log: bool = False,
+    ) -> bool:
+        if has_existing_log or not self._is_flow_risk_cooldown_message(error_message):
+            return False
+
+        key = f"{operation}:{model}:flow_risk_cooldown"
+        now = time.time()
+        async with self._cooldown_log_lock:
+            last_logged_at = float(self._cooldown_log_suppression.get(key) or 0)
+            if now - last_logged_at < 300:
+                return True
+            self._cooldown_log_suppression[key] = now
+            return False
 
     def _resolve_video_model_key_for_tier(self, model_config: Dict[str, Any], user_tier: str) -> tuple[str, Optional[str]]:
         """根据账号层级调整视频模型 key。"""
@@ -1187,17 +1216,24 @@ class GenerationHandler:
                 error_msg = self._get_no_token_error_message(generation_type)
             debug_logger.log_error(f"[GENERATION] {error_msg}")
             record_generation_result(generation_type, "no_token", time.time() - start_time)
-            await self._log_request(
-                token_id=None,
-                operation=request_operation,
-                request_data=request_payload,
-                response_data={"error": error_msg, "performance": perf_trace},
-                status_code=503,
-                duration=time.time() - start_time,
-                log_id=request_log_state.get("id"),
-                status_text="failed",
-                progress=request_log_state.get("progress", 0),
+            suppress_log = await self._should_suppress_duplicate_cooldown_log(
+                request_operation,
+                model,
+                error_msg,
+                has_existing_log=bool(request_log_state.get("id")),
             )
+            if not suppress_log:
+                await self._log_request(
+                    token_id=None,
+                    operation=request_operation,
+                    request_data=request_payload,
+                    response_data={"error": error_msg, "performance": perf_trace},
+                    status_code=503,
+                    duration=time.time() - start_time,
+                    log_id=request_log_state.get("id"),
+                    status_text="failed",
+                    progress=request_log_state.get("progress", 0),
+                )
             if stream:
                 yield self._create_stream_chunk(f"❌ {error_msg}\n")
             yield self._create_error_response(error_msg, status_code=503)
@@ -1300,10 +1336,11 @@ class GenerationHandler:
             if not generation_result.get("success"):
                 error_msg = generation_result.get("error_message") or "生成未成功完成"
                 await self._cooldown_flow_risk_token(token, error_msg)
-                if self._is_flow_risk_control_error(error_msg):
+                is_flow_risk_error = self._is_flow_risk_control_error(error_msg)
+                if is_flow_risk_error:
                     error_msg = self._format_flow_risk_control_error(error_msg)
                 debug_logger.log_warning(f"[GENERATION] 生成未成功，不扣次数: {error_msg}")
-                if token:
+                if token and not is_flow_risk_error:
                     await self.token_manager.record_error(token.id, error_msg)
                 duration = time.time() - start_time
                 record_generation_result(generation_type, "failed", duration)
@@ -1407,10 +1444,11 @@ class GenerationHandler:
         except Exception as e:
             error_msg = f"生成失败: {str(e)}"
             await self._cooldown_flow_risk_token(token, error_msg)
-            if self._is_flow_risk_control_error(error_msg):
+            is_flow_risk_error = self._is_flow_risk_control_error(error_msg)
+            if is_flow_risk_error:
                 error_msg = self._format_flow_risk_control_error(error_msg)
             debug_logger.log_error(f"[GENERATION] ❌ {error_msg}")
-            if token:
+            if token and not is_flow_risk_error:
                 # 记录错误（所有错误统一处理，不再特殊处理429）
                 await self.token_manager.record_error(token.id, error_msg)
 
