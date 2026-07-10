@@ -113,6 +113,17 @@ if errorlevel 1 (
 )
 
 echo.
+echo Validating source files...
+echo Validating source files...>> build_log.txt
+call npm run check >> build_log.txt 2>&1
+if errorlevel 1 (
+  set BUILD_EXIT_CODE=1
+  echo [ERROR] Source validation failed. Check build_log.txt>last_error.txt
+  echo [ERROR] Source validation failed. Check build_log.txt
+  goto END
+)
+
+echo.
 echo Building portable EXE. Please wait...
 echo Building portable EXE...>> build_log.txt
 call npm run dist >> build_log.txt 2>&1

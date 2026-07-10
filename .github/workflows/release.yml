@@ -27,9 +27,7 @@ jobs:
         run: npm ci
 
       - name: Validate JavaScript
-        run: |
-          node --check src/main.js
-          node --check src/renderer/static/app.js
+        run: npm run check
 
       - name: Build portable EXE
         run: npm run dist

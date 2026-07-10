@@ -7,8 +7,10 @@
     "start": "electron .",
     "start:docker": "node src/docker-server.js",
     "docker:build": "docker build -t tenying-ai:1.0.23 .",
-    "dist": "electron-builder --win portable --config.win.signAndEditExecutable=false --config.forceCodeSigning=false",
-    "dist:dir": "electron-builder --win dir --config.win.signAndEditExecutable=false --config.forceCodeSigning=false"
+    "check": "node --check src/main.js && node --check src/renderer/static/app.js && node --check src/services/apiClient.js && node scripts/verify-image-models.js",
+    "sync:unpacked": "npm run check && node scripts/sync-unpacked-asar.js --restart",
+    "dist": "npm run check && electron-builder --win portable --config.win.signAndEditExecutable=false --config.forceCodeSigning=false",
+    "dist:dir": "npm run check && electron-builder --win dir --config.win.signAndEditExecutable=false --config.forceCodeSigning=false"
   },
   "author": "Local",
   "license": "MIT",
