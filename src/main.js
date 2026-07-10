@@ -5492,30 +5492,13 @@ function buildMidjourneyFallbackButtons(raw={}, localTask=null, imageUrls=[]) {
   if (action === 'upscale') {
     add('Vary Strong'); add('Vary Subtle'); add('Vary Region'); add('Zoom 1.5x'); add('Zoom 2x');
     add('Pan Left'); add('Pan Right'); add('Pan Up'); add('Pan Down');
+    add('Video Low Motion'); add('Video High Motion');
     add('Remix Strong'); add('Remix Subtle');
     return buttons;
   }
   return buttons;
 }
 
-function uniqueMidjourneyImageUrls(raw={}) {
-  // 按 APIMart Midjourney 查询文档优先使用输出字段 image_urls，避免把上传参考图误当作跳转图片。
-  const direct = pickDirectMidjourneyImageUrls(raw);
-  if (direct.length) return direct;
-  const explicit = pickExplicitMidjourneyImageUrls(raw);
-  if (explicit.length) return explicit;
-  const resultUrls = pickMidjourneyResultUrls(raw);
-  if (resultUrls.length) return resultUrls.slice(1);
-  const grid = pickMidjourneyGridUrl(raw);
-  const urls = pickApimartImageUrls(raw);
-  const out = [], seen = new Set();
-  for (const url of urls) {
-    const u = String(url || '').trim();
-    if (!u || seen.has(u) || (grid && u === grid)) continue;
-    seen.add(u); out.push(u);
-  }
-  return out;
-}
 function uniqueMidjourneyImageUrls(raw={}) {
   const merged = mergeMidjourneyResultImageUrls(raw);
   if (merged.image_urls.length) return merged.image_urls;
@@ -5537,19 +5520,25 @@ function buttonActionFromMeta(label='', customId='') {
   const text = String(label || '').trim();
   const custom = String(customId || '').trim();
   const combo = `${text} ${custom}`.toLowerCase();
-  const idxMatch = text.match(/([1-4])/);
-  const index = idxMatch ? Number(idxMatch[1]) : 0;
+  const explicitIndex = text.match(/^(?:u|v)\s*([1-4])$/i) || text.match(/\b([1-4])\b/);
+  const customIndex = custom.match(/::(?:upscale|variation|high-variation|low-variation|high_variation|low_variation|inpaint|pan_[a-z]+|video)::([0-4])::/i);
+  let index = explicitIndex ? Number(explicitIndex[1]) : 0;
+  if (!index && customIndex) {
+    const n = Number(customIndex[1]);
+    index = n >= 0 && n <= 3 ? n + 1 : n;
+  }
   if (/^u[1-4]$/i.test(text) || /::upscale::/i.test(custom)) return { action:'upscale', index };
+  if (/::high[-_]variation::/i.test(custom) || (/strong/i.test(combo) && /variation|vary/i.test(combo))) return { action:'high_variation', index };
+  if (/::low[-_]variation::/i.test(custom) || (/subtle|weak|low/i.test(combo) && /variation|vary/i.test(combo))) return { action:'low_variation', index };
   if (/^v[1-4]$/i.test(text) || /::variation::/i.test(custom)) return { action:'variation', index };
-  if (/strong/i.test(combo) && /variation|vary/i.test(combo)) return { action:'high_variation', index };
-  if (/subtle|weak|low/i.test(combo) && /variation|vary/i.test(combo)) return { action:'low_variation', index };
   if (/reroll|redo|re-roll|再生成/i.test(combo) || /::reroll::/i.test(custom)) return { action:'reroll', index };
   if (/vary region|region|inpaint/i.test(combo) || /::inpaint::/i.test(custom)) return { action:'inpaint', index };
   if (/remix/i.test(combo)) return { action:'remix', remix_strength:/subtle|weak|low/i.test(combo)?'subtle':'strong', index };
-  if (/left|←|⬅/i.test(combo) || /pan_left/i.test(combo)) return { action:'pan', direction:'left', index };
-  if (/right|→|➡/i.test(combo) || /pan_right/i.test(combo)) return { action:'pan', direction:'right', index };
-  if (/up|↑|⬆/i.test(combo) || /pan_up/i.test(combo)) return { action:'pan', direction:'up', index };
-  if (/down|↓|⬇/i.test(combo) || /pan_down/i.test(combo)) return { action:'pan', direction:'down', index };
+  if (/video|animate|motion|动态|视频/i.test(combo) || /::video::/i.test(custom)) return { action:'video', motion:/high|高/i.test(combo) ? 'high' : 'low', index };
+  if (/\bleft\b|←|⬅|pan_left/i.test(combo)) return { action:'pan', direction:'left', index };
+  if (/\bright\b|→|➡|pan_right/i.test(combo)) return { action:'pan', direction:'right', index };
+  if (/\bup\b|↑|⬆|pan_up/i.test(combo)) return { action:'pan', direction:'up', index };
+  if (/\bdown\b|↓|⬇|pan_down/i.test(combo)) return { action:'pan', direction:'down', index };
   if (/zoom/i.test(combo) || /customzoom/i.test(custom)) {
     const zm = combo.match(/(1(?:\.5|\.75)?|2(?:x)?)/i);
     return { action:'zoom', zoom_ratio: zm ? Number(String(zm[1]).replace(/x/i,'')) || 2 : 2, index };
@@ -5700,6 +5689,66 @@ async function saveMidjourneyTaskImages(task, ret={}) {
   addLog(`Midjourney 结果已记录：四宫格=${gridUrl ? '1' : '0'}，单图=${rows.length}，批次=${batch.name}`, { ownerId:task.owner_id, batchId:batch.id });
   return { gridRow, imageRows:rows, payload };
 }
+
+async function saveMidjourneyTaskVideos(task, ret={}) {
+  const st = ensureVideoStore();
+  const batch = st.batches.find(b => b.id === task.batch_id);
+  if (!batch) return [];
+  const videoUrls = pickApimartVideoUrls(ret.raw || ret);
+  if (!videoUrls.length) return [];
+  ensureDir(batch.output_dir || mjOutputRoot());
+  const prefix = String(task.task_index || 1).padStart(5, '0');
+  const createdAt = nowISO();
+  const rows = [];
+  for (let i = 0; i < videoUrls.length; i++) {
+    const remoteUrl = String(videoUrls[i] || '').trim();
+    if (!remoteUrl) continue;
+    let row = (st.video_tasks || []).find(v => v.source_midjourney_task_id === task.id && v.remote_url === remoteUrl);
+    if (!row) {
+      row = {
+        id: uuid('video_'),
+        owner_id: task.owner_id,
+        platform: 'midjourney',
+        model: 'Midjourney Video',
+        prompt: task.prompt || '',
+        status: '下载中',
+        progress: 96,
+        progress_text: 'Midjourney 视频已生成，正在保存到本地',
+        task_id: task.remote_task_id || '',
+        remote_url: remoteUrl,
+        file_path: '',
+        video_batch_id: `mj_video_${batch.id}`,
+        video_batch_name: `MJ_Video_${safeName(batch.note || batch.name || batch.id, 'Midjourney')}`,
+        source_midjourney_batch_id: batch.id,
+        source_midjourney_task_id: task.id,
+        created_at: createdAt,
+        updated_at: createdAt,
+        finished_at: ''
+      };
+      st.video_tasks.push(row);
+    }
+    const filePath = path.join(batch.output_dir, `${prefix}_video_${i + 1}.mp4`);
+    try {
+      if (!fs.existsSync(filePath)) await downloadVideoResult(remoteUrl, filePath);
+      row.file_path = filePath;
+      row.progress_text = '已完成';
+    } catch (e) {
+      row.download_error = e.message || String(e);
+      row.progress_text = '远端视频已生成，本地保存失败，可用远程链接预览';
+      addLog(`Midjourney 视频保存失败，保留远程链接：${remoteUrl}，${e.message || e}`, { ownerId: task.owner_id, batchId: batch.id, level:'warn' });
+    }
+    row.status = '已完成';
+    row.progress = 100;
+    row.updated_at = nowISO();
+    row.finished_at = row.finished_at || nowISO();
+    rows.push(row);
+  }
+  task.result_path = rows.find(r => r.file_path)?.file_path || task.result_path || '';
+  task.mj_video_urls_json = JSON.stringify(rows.map((row, idx)=>({ index:idx + 1, remote_url:row.remote_url || '', local_path:row.file_path || '', video_id:row.id || '' })));
+  getDB()._save();
+  addLog(`Midjourney 视频结果已记录：${rows.length} 个，批次 ${batch.name}`, { ownerId:task.owner_id, batchId:batch.id });
+  return rows;
+}
 async function repairCompletedMidjourneyImages(ownerId='') {
   const st = getDB()._store;
   const tasks = st.tasks.filter(t => (t.mj_source || '') === 'midjourney' && String(t.mj_action || '') !== 'describe' && /已完成|success|completed|done/i.test(String(t.status || '')) && (!ownerId || t.owner_id === ownerId));
@@ -5745,10 +5794,12 @@ async function syncMidjourneyTaskState(task, ret={}) {
   task.progress_text=statusRaw || task.progress_text || '处理中'; task.updated_at=nowISO(); task.mj_query_raw_json=JSON.stringify(ret.raw||ret||{}); task.mj_buttons_json=JSON.stringify(Array.isArray(ret.buttons)?ret.buttons:[]); task.mj_text_outputs_json=JSON.stringify(Array.isArray(ret.text_outputs)?ret.text_outputs:[]);
   if(ret.grid_image_url) task.mj_grid_remote_url=ret.grid_image_url;
   const hasImageUrls = !!(ret.grid_image_url || (Array.isArray(ret.image_urls) && ret.image_urls.length) || (Array.isArray(ret.all_image_urls) && ret.all_image_urls.length));
+  const hasVideoUrls = Array.isArray(ret.video_urls) && ret.video_urls.length > 0;
   const isDescribe = String(task.mj_action || '').toLowerCase() === 'describe';
   const hasTextOutputs = Array.isArray(ret.text_outputs) && ret.text_outputs.length > 0;
   if(isFailed){ const reason=failureReasonEarly || statusRaw || 'Midjourney task failed'; if(task.status!=='失败'){ batch.fail_count=Number(batch.fail_count||0)+1; batch.running_count=Math.max(0,Number(batch.running_count||0)-1); } task.status='失败'; task.error_message=reason; task.finished_at=nowISO(); task.progress=100; task.progress_text=reason; }
   else if(isSuccess && isDescribe){ if(task.status!=='已完成'){ batch.success_count=Number(batch.success_count||0)+1; batch.running_count=Math.max(0,Number(batch.running_count||0)-1); } task.status='已完成'; task.finished_at=nowISO(); task.progress=100; task.progress_text='图生文已完成'; }
+  else if(isSuccess && hasVideoUrls){ await saveMidjourneyTaskVideos(task, ret); if(task.status!=='已完成'){ batch.success_count=Number(batch.success_count||0)+1; batch.running_count=Math.max(0,Number(batch.running_count||0)-1); } task.status='已完成'; task.finished_at=nowISO(); task.progress=100; task.progress_text='Midjourney 视频已完成'; }
   else if(isSuccess && hasImageUrls){ await saveMidjourneyTaskImages(task, ret); if(task.status!=='已完成'){ batch.success_count=Number(batch.success_count||0)+1; batch.running_count=Math.max(0,Number(batch.running_count||0)-1); } task.status='已完成'; task.finished_at=nowISO(); task.progress=100; }
   else if(isSuccess && !hasImageUrls){ task.status='生成中'; task.progress=Math.max(Number(task.progress||0), 95); task.progress_text=hasTextOutputs ? '任务已成功，等待文本结果' : '任务已成功，等待图片 URL 返回'; }
   else task.status=task.remote_task_id ? '生成中' : '提交生成中';
@@ -5780,7 +5831,7 @@ function normalizeMidjourneyTaskResult(taskId, raw={}, localTask=null) {
 async function submitMidjourneyAction(body={}, owner='local') {
   const cfg=readConfig(); const apiKey=String(body.api_key || cfg.api_key || cfg.apiKey || '').trim(); if(!apiKey) throw new Error('请先在首页填写并保存 APIMart API Key');
   let action=String(body.action || 'imagine').trim().toLowerCase();
-  if(action==='button'){ const meta=buttonActionFromMeta(body.button_label || body.label || '', body.custom_id || ''); action=meta.action; body.index=body.index || meta.index || ''; body.direction=body.direction || meta.direction || ''; body.zoom_ratio=body.zoom_ratio || meta.zoom_ratio || ''; body.remix_strength=body.remix_strength || meta.remix_strength || ''; }
+  if(action==='button'){ const meta=buttonActionFromMeta(body.button_label || body.label || '', body.custom_id || ''); action=meta.action; body.index=body.index || meta.index || ''; body.direction=body.direction || meta.direction || ''; body.zoom_ratio=body.zoom_ratio || meta.zoom_ratio || ''; body.remix_strength=body.remix_strength || meta.remix_strength || ''; body.motion=body.motion || meta.motion || ''; }
   if(action === 'describe' && (body.describe_multi || String(body.describe_mode || '').toLowerCase() === 'multi')){
     const urlEntries = [...new Set(parseMjUrlText(body.image_urls_text || body.image_url || '').map(String))].map(url => ({url}));
     const fileEntries = (Array.isArray(body.describe_images) ? body.describe_images : (Array.isArray(body.images) ? body.images : [])).map(item => ({item}));
@@ -5803,14 +5854,28 @@ async function submitMidjourneyAction(body={}, owner='local') {
     }
   }
   const ctx=ensureMjBatchAndTask(body, owner); const batch=ctx.batch, task=ctx.task;
-  const endpointMap={ imagine:'/midjourney/generations', blend:'/midjourney/generations/blend', describe:'/midjourney/generations/describe', edits:'/midjourney/generations/edits', upscale:'/midjourney/generations/upscale', variation:'/midjourney/generations/variation', high_variation:'/midjourney/generations/high-variation', low_variation:'/midjourney/generations/low-variation', reroll:'/midjourney/generations/reroll', zoom:'/midjourney/generations/zoom', pan:'/midjourney/generations/pan', inpaint:'/midjourney/generations/inpaint', modal:'/midjourney/generations/modal' };
+  const endpointMap={ imagine:'/midjourney/generations', blend:'/midjourney/generations/blend', describe:'/midjourney/generations/describe', edits:'/midjourney/generations/edits', upscale:'/midjourney/generations/upscale', variation:'/midjourney/generations/variation', high_variation:'/midjourney/generations/high-variation', low_variation:'/midjourney/generations/low-variation', reroll:'/midjourney/generations/reroll', zoom:'/midjourney/generations/zoom', pan:'/midjourney/generations/pan', inpaint:'/midjourney/generations/inpaint', modal:'/midjourney/generations/modal', video:'/midjourney/generations/video' };
   let endpoint=endpointMap[action]; if(action==='remix') endpoint=`/midjourney/generations/remix-${String(body.remix_strength||'strong').trim().toLowerCase()==='subtle'?'subtle':'strong'}`; if(!endpoint) throw new Error('不支持的 Midjourney 操作：'+action);
   const prompt=buildMidjourneyPrompt(body); const speed=String(body.speed || body.modal_speed || '').trim(); const index=Number(body.index || body.image_no || body.image_index || 0); const customId=String(body.custom_id || '').trim(); const version=String(body.version || '').trim(); let payload={};
-  if(action==='blend'){ const imageUrls=[...parseMjUrlText(body.image_urls_text), ...await uploadMidjourneyItemsToUrls(body.blend_images || body.images || [], owner, apiKey)].slice(0,4); if(imageUrls.length<2) throw new Error('多图融合至少需要 2 张图片'); payload={ image_urls:imageUrls, dimensions:String(body.dimensions||'SQUARE').trim(), speed }; }
+  if(action==='blend'){ const imageUrls=[...parseMjUrlText(body.image_urls_text), ...await uploadMidjourneyItemsToUrls(body.blend_images || body.images || [], owner, apiKey)].slice(0,4); if(imageUrls.length<2) throw new Error('多图融合至少需要 2 张图片'); payload={ image_urls:imageUrls, dimensions:String(body.dimensions||'SQUARE').trim(), size:String(body.size||'').trim(), speed }; }
   else if(action==='describe'){ const direct=parseMjUrlText(body.image_url || body.image_urls_text)[0] || ''; const srcItems = body.describe_images || body.images || []; if(Array.isArray(srcItems) && srcItems[0]) saveMidjourneyInputPreview(task, srcItems[0], 'describe_input'); const uploaded=await uploadMidjourneyItemsToUrls(srcItems, owner, apiKey); const imageUrl=direct || uploaded[0] || ''; if(!imageUrl) throw new Error('图生文需要上传 1 张图片'); payload={ image_urls:[imageUrl], speed }; }
   else if(action==='edits'){ const imageUrls=[...parseMjUrlText(body.image_urls_text), ...await uploadMidjourneyItemsToUrls(body.edit_images || body.images || [], owner, apiKey)]; if(!imageUrls.length) throw new Error('图片编辑至少需要 1 张源图'); payload={ prompt, image_urls:imageUrls, speed, version }; }
   else if(action==='imagine'){ const imageUrls=[...parseMjUrlText(body.image_urls_text), ...await uploadMidjourneyItemsToUrls(body.imagine_images || body.images || [], owner, apiKey)].slice(0,4); const finalPrompt = imageUrls.length ? `${imageUrls.join(' ')} ${prompt}`.trim() : prompt; payload={ prompt: finalPrompt, speed, version }; if(body.size) payload.size=body.size; }
   else if(action==='modal'){ const maskUrl=String(body.modal_mask_url||'').trim() || (await uploadMidjourneyItemsToUrls(body.modal_mask ? [body.modal_mask] : (body.modal_masks || []), owner, apiKey))[0] || ''; if(!maskUrl) throw new Error('Modal 补充参数需要上传遮罩图或填写遮罩图 URL'); payload={ task_id:String(body.modal_task_id || body.task_id || '').trim(), prompt:String(body.modal_prompt || prompt || '').trim(), mask_url:maskUrl, speed }; }
+  else if(action==='video'){
+    const taskId=String(body.task_id||'').trim();
+    const startUrls=[...parseMjUrlText(body.image_urls_text || body.start_image_url), ...await uploadMidjourneyItemsToUrls(body.video_start_images || body.images || [], owner, apiKey)].slice(0,1);
+    const endUrl=String(body.end_url||'').trim() || (await uploadMidjourneyItemsToUrls(body.video_end_images || [], owner, apiKey))[0] || '';
+    if(taskId && startUrls.length) throw new Error('Midjourney 图生视频的 task_id 和 image_urls 不能同时提交，请二选一');
+    if(taskId && endUrl) throw new Error('Midjourney 图生视频使用 task_id 时不能同时提交结束帧 end_url');
+    if(!taskId && !startUrls.length) throw new Error('图生视频需要填写任务 ID，或上传/填写 1 张起始帧图片');
+    const videoIndex = body.video_index !== undefined && String(body.video_index).trim() !== '' ? Number(body.video_index) : (index ? Math.max(0, index - 1) : undefined);
+    const batchSizeRaw = Number(body.batch_size || 1);
+    const batchSize = Number.isFinite(batchSizeRaw) ? Math.max(1, Math.min(4, batchSizeRaw)) : 1;
+    payload={ prompt, task_id:taskId, image_urls:startUrls, end_url:endUrl, motion:String(body.motion||'low').trim(), video_type:String(body.video_type||'480').trim(), batch_size:batchSize };
+    if(customId) payload.custom_id=customId;
+    if(Number.isFinite(videoIndex)) payload.index=videoIndex;
+  }
   else if(action in {upscale:1, variation:1, high_variation:1, low_variation:1, reroll:1, zoom:1, pan:1, inpaint:1, remix:1}){ const taskId=String(body.task_id||'').trim(); if(!taskId) throw new Error('task_id 不能为空'); payload={ task_id:taskId, speed }; if(customId) payload.custom_id=customId; if(index) payload.index=index; if(action==='zoom') payload.zoom_ratio=Number(body.zoom_ratio||2); if(action==='pan') payload.direction=String(body.direction||'left').trim(); if(action==='reroll' && prompt) payload.prompt=prompt; if(action==='remix' && prompt) payload.prompt=prompt; }
   payload=sanitizeMjPayload(payload); addLog(`Midjourney ${action} 提交：${compactJsonForLog(payload,1200)}`);
   try { const raw=await postJsonApimart(endpoint, apiKey, payload, 180000); const remoteTaskId=pickTaskIdFromApimart(raw); Object.assign(task,{ remote_task_id:remoteTaskId||'', status:remoteTaskId?'生成中':'提交生成中', progress:remoteTaskId?5:1, progress_text:remoteTaskId?'已提交，等待 Midjourney 查询结果':'已提交', updated_at:nowISO(), mj_action:action, mj_submission_json:JSON.stringify(payload) }); if(body.source_task_local_id && (body.button_label || body.custom_id)) markMjButtonExecuted(String(body.source_task_local_id||''), {label:body.button_label||'', custom_id:body.custom_id||''}); getDB()._save(); return { ok:true, action, endpoint:`/v1${endpoint}`, task_id:remoteTaskId, local_task_id:task.id, batch_id:batch.id, batch_name:batch.note||batch.name||'', submitted_payload:payload, raw }; }

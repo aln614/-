@@ -3103,7 +3103,7 @@ function isMjGridAllowedButton(item={}){
 function isMjUpscaleOnlyButton(item={}){
   const label = String(item?.label || '').trim().toLowerCase();
   const combo = `${label} ${item?.custom_id || ''}`.toLowerCase();
-  return isMjRegionButton(item) || /vary|variation|zoom|pan|remix|customzoom/.test(combo);
+  return isMjRegionButton(item) || /vary|variation|zoom|pan|remix|customzoom|video|animate|motion/.test(combo);
 }
 function filterMjButtonsForPreview(meta={}, buttons=[]){
   const list = Array.isArray(buttons) ? buttons.filter(Boolean) : [];
@@ -3124,6 +3124,8 @@ function buildMjSingleFallbackButtons(){
     {label:'Pan Right（向右扩展）'},
     {label:'Pan Up（向上扩展）'},
     {label:'Pan Down（向下扩展）'},
+    {label:'Video Low Motion（图生视频 · 低运动）'},
+    {label:'Video High Motion（图生视频 · 高运动）'},
     {label:'Remix Strong（强重塑）'},
     {label:'Remix Subtle（弱重塑）'}
   ];
@@ -3140,6 +3142,8 @@ function mjButtonDisplayLabel(item={}){
   if(/pan_right|right|→/.test(combo)) return 'Pan Right（向右扩展）';
   if(/pan_up|up|↑/.test(combo)) return 'Pan Up（向上扩展）';
   if(/pan_down|down|↓/.test(combo)) return 'Pan Down（向下扩展）';
+  if(/video|animate|motion|动态|视频/.test(combo) && /high|高/.test(combo)) return 'Video High Motion（图生视频 · 高运动）';
+  if(/video|animate|motion|动态|视频/.test(combo)) return 'Video Low Motion（图生视频 · 低运动）';
   if(/remix/.test(combo) && /subtle|weak|low/.test(combo)) return 'Remix Subtle（弱重塑）';
   if(/remix/.test(combo)) return 'Remix Strong（强重塑）';
   return label || 'MJ';
@@ -3155,6 +3159,8 @@ function mjButtonKey(item={}){
   if(label.includes('pan right')) return 'pan-right';
   if(label.includes('pan up')) return 'pan-up';
   if(label.includes('pan down')) return 'pan-down';
+  if(label.includes('video high')) return 'video-high';
+  if(label.includes('video low') || label.includes('video')) return 'video-low';
   if(label.includes('remix subtle')) return 'remix-subtle';
   if(label.includes('remix strong')) return 'remix-strong';
   return String(item?.custom_id || item?.label || label || Math.random()).toLowerCase();
@@ -6287,7 +6293,8 @@ const MJ_TABS = [
   { key:'inpaint', label:'局部重绘', endpoint:'POST /v1/midjourney/generations/inpaint / modal' },
   { key:'zoom', label:'缩放', endpoint:'POST /v1/midjourney/generations/zoom' },
   { key:'pan', label:'平移', endpoint:'POST /v1/midjourney/generations/pan' },
-  { key:'remix', label:'重塑', endpoint:'POST /v1/midjourney/generations/remix-strong|subtle' }
+  { key:'remix', label:'重塑', endpoint:'POST /v1/midjourney/generations/remix-strong|subtle' },
+  { key:'video', label:'图生视频', endpoint:'POST /v1/midjourney/generations/video' }
 ];
 const mjState = { init:false, tab:'imagine', lastTaskId:'', lastLocalTaskId:'', lastBatchId:'', pollingTimer:null, lastJson:null };
 function mjOptionHtml(options=[], selected='', fieldName=''){
@@ -6336,7 +6343,7 @@ function mjRenderField(field){
   }
   return '';
 }
-const MJ_STANDARD_VERSION_OPTIONS = ['8.1','7','6.1','5.2','5.1'];
+const MJ_STANDARD_VERSION_OPTIONS = ['8.2','8.1','7','6.1','5.2','5.1'];
 const MJ_NIJI_VERSION_OPTIONS = [
   { value:'niji7', label:'niji 7' },
   { value:'niji6', label:'niji 6' }
@@ -6351,11 +6358,11 @@ function mjPromptCommonFields(){
       { name:'tile', label:'平铺 Tile', tip:'生成无缝平铺图案。' },
       { name:'raw', label:'Raw 原始', tip:'Raw 风格参数，减少 MJ 后期加工；注意：与 style-raw 不是同一个 flag。' },
       { name:'draft', label:'Draft 草图', requires:'v7plus', tip:'草图模式 --draft，V7+ 可用；快速低消耗预览，后续可继续操作。' },
-      { name:'hd', label:'HD 高清', requires:'v8', tip:'HD 高清 --hd，仅 V8 / V8.1 可用，生成时间更长。' }
+      { name:'hd', label:'HD 高清', requires:'v8', tip:'HD 高清 --hd，仅 V8 / V8.1 / V8.2 可用，生成时间更长。' }
     ] },
     { type:'row', fields:[
       { type:'select', name:'speed', label:'速度模式', value:'relax', options:[{value:'relax',label:'Relax（慢速）'},{value:'fast',label:'Fast（快速）'},{value:'turbo',label:'Turbo（极速）'}], tip:'Relax 慢速；Fast 快速；Turbo 极速。' },
-      { type:'select', name:'version', label:'版本', value:'8.1', options:MJ_STANDARD_VERSION_OPTIONS, tip:'勾选 Niji（动漫）后，版本只显示 niji 7 / niji 6。' }
+      { type:'select', name:'version', label:'版本', value:'8.2', options:MJ_STANDARD_VERSION_OPTIONS, tip:'勾选 Niji（动漫）后，版本只显示 niji 7 / niji 6。' }
     ]},
     { type:'row', fields:[
       { type:'select', name:'aspect_ratio', label:'宽高比', value:'1:1', options:[
@@ -6403,6 +6410,14 @@ const MJ_FORM_CONFIG = {
       { type:'file', name:'blend_images', label:'图片（2-4 张）', accept:'image/*', multiple:true, help:'上传 2 到 4 张图片进行 Midjourney 融合。' },
       { type:'row', fields:[
         { type:'select', name:'dimensions', label:'比例', value:'SQUARE', options:['SQUARE','PORTRAIT','LANDSCAPE'] },
+        { type:'select', name:'size', label:'自定义比例（文档 size）', value:'', options:[
+          {value:'', label:'跟随比例'},
+          {value:'1:1', label:'1:1'},
+          {value:'16:9', label:'16:9'},
+          {value:'9:16', label:'9:16'},
+          {value:'4:3', label:'4:3'},
+          {value:'3:4', label:'3:4'}
+        ], help:'APIMart 文档新增 size，可直接覆盖 SQUARE / PORTRAIT / LANDSCAPE。' },
         { type:'select', name:'speed', label:'速度模式', value:'relax', options:[{value:'relax',label:'Relax（慢速）'},{value:'fast',label:'Fast（快速）'},{value:'turbo',label:'Turbo（极速）'}] }
       ]}
     ],
@@ -6535,6 +6550,36 @@ const MJ_FORM_CONFIG = {
       { type:'select', name:'speed', label:'速度模式', value:'relax', options:[{value:'relax',label:'Relax（慢速）'},{value:'fast',label:'Fast（快速）'},{value:'turbo',label:'Turbo（极速）'}] }
     ],
     actions:[{label:'run ✈ 提交重塑', action:'remix', style:'primary'}]
+  },
+  video: {
+    title:'Midjourney 图生视频',
+    endpoint:'POST /v1/midjourney/generations/video',
+    fields:[
+      { type:'note', text:'可上传起始帧图片生成视频，也可以填写已有 MJ 任务 ID 继续生成视频；task_id 与起始帧图片二选一。结束帧仅在直接上传起始帧时可用。' },
+      { type:'textarea', name:'prompt', label:'视频提示词（可选）', placeholder:'让画面缓慢推进，人物轻微转头，电影感光影...' },
+      { type:'hybrid_image', name:'video_start_images', uploadName:'video_start_images', urlName:'image_urls_text', label:'起始帧图片', accept:'image/*', multiple:false, defaultMode:'upload', dropLabel:'上传起始帧图片', placeholder:'https://example.com/start.png', urlHelp:'填写起始帧 URL 时会直接提交 image_urls。' },
+      { type:'hybrid_image', name:'video_end_images', uploadName:'video_end_images', urlName:'end_url', label:'结束帧图片（可选）', accept:'image/*', multiple:false, defaultMode:'url', dropLabel:'上传结束帧图片', placeholder:'https://example.com/end.png', urlHelp:'结束帧只适用于 image_urls 模式，不要和 task_id 同时使用。' },
+      { type:'row', fields:[
+        { type:'text', name:'task_id', label:'已有 MJ 任务 ID（可选）', placeholder:'task_01JWXXXXXXXXXXXX' },
+        { type:'select', name:'video_index', label:'任务图片序号（task_id 模式）', value:'0', options:[
+          {value:'0', label:'0（第 1 张 / 左上）'},
+          {value:'1', label:'1（第 2 张 / 右上）'},
+          {value:'2', label:'2（第 3 张 / 左下）'},
+          {value:'3', label:'3（第 4 张 / 右下）'}
+        ] }
+      ]},
+      { type:'row', fields:[
+        { type:'select', name:'motion', label:'动态强度', value:'low', options:[{value:'low', label:'low（低运动）'},{value:'high', label:'high（高运动）'}] },
+        { type:'select', name:'video_type', label:'视频规格', value:'480', options:[
+          {value:'480', label:'480'},
+          {value:'720', label:'720'},
+          {value:'480_st', label:'480 起止帧'},
+          {value:'720_st', label:'720 起止帧'}
+        ] }
+      ]},
+      { type:'select', name:'batch_size', label:'生成数量', value:'1', options:['1','2','4'], help:'按文档 batch_size 生成多个视频候选。' }
+    ],
+    actions:[{label:'run ✈ 提交视频', action:'video', style:'primary'}]
   }
 };
 const MJ_SUBMIT_LABELS = {
@@ -6551,6 +6596,7 @@ const MJ_SUBMIT_LABELS = {
   zoom:'提交缩放',
   pan:'提交平移',
   remix:'提交重塑',
+  video:'提交视频',
   modal:'提交 Modal'
 };
 function getMjFloatingAction(){
@@ -6646,13 +6692,13 @@ function syncMjVersionOptions(){
   const current = String(versionEl.value || '').trim();
   versionEl.innerHTML = mjOptionHtml(options, current, 'version');
   const validValues = options.map(opt => typeof opt === 'string' ? opt : String(opt.value || ''));
-  if(!validValues.includes(current)) versionEl.value = isNiji ? 'niji7' : '8.1';
+  if(!validValues.includes(current)) versionEl.value = isNiji ? 'niji7' : '8.2';
 }
 function mjVersionOK(req, version){
   const v = String(version || '').toLowerCase();
   if(!req) return true;
-  if(req === 'v8') return v === '8.1';
-  if(req === 'v7plus') return v === '8.1' || v === '7' || v === 'niji7';
+  if(req === 'v8') return v === '8.2' || v === '8.1';
+  if(req === 'v7plus') return v === '8.2' || v === '8.1' || v === '7' || v === 'niji7';
   if(req === 'stop_v5_6') return v === '6.1' || v === '5.2' || v === '5.1' || v === 'niji6';
   return true;
 }
@@ -6705,6 +6751,8 @@ function initMidjourneyPage(){
       }
       const removeFileBtn = e.target.closest('[data-mj-remove-file][data-mj-remove-field]');
       if(removeFileBtn){ const input = page.querySelector(`input[type="file"][data-mj-field="${removeFileBtn.dataset.mjRemoveField}"]`); removeMjInputFile(input, removeFileBtn.dataset.mjRemoveFile); updateMjFileList(input); return; }
+      const outputThumb = e.target.closest('#mjOutputPreview [data-full-url]');
+      if(outputThumb){ const u = outputThumb.dataset.fullUrl || ''; if(u) showPreview(u, {model:'Midjourney', fullUrl:u}); return; }
       const descThumb = e.target.closest('.mj-describe-thumb[data-full-url]');
       if(descThumb){ const u = descThumb.dataset.fullUrl || ''; if(u) showPreview(u, {model:'Midjourney Describe', fullUrl:u}); return; }
       const submitBtn = e.target.closest('[data-mj-submit-action]');
@@ -6738,6 +6786,30 @@ function renderMidjourneyTab(){
   document.body.classList.toggle('mj-describe-tab-active', mjState.tab === 'describe');
   const desc = $('#mjDescribeOutput');
   if(desc){ desc.classList.toggle('hidden', mjState.tab !== 'describe'); if(mjState.tab === 'describe') loadMjDescribeOutput(); }
+}
+
+function renderMjOutputPreview(ret={}, opts={}){
+  const box = $('#mjOutputPreview');
+  if(!box) return;
+  const videoUrls = Array.from(new Set((Array.isArray(ret.video_urls) ? ret.video_urls : []).map(x=>String(x||'').trim()).filter(Boolean)));
+  const imageUrls = [];
+  const addImage = (u)=>{ u=String(u||'').trim(); if(u && !imageUrls.includes(u)) imageUrls.push(u); };
+  addImage(ret.grid_image_url);
+  (Array.isArray(ret.image_urls) ? ret.image_urls : []).forEach(addImage);
+  if(!imageUrls.length) (Array.isArray(ret.all_image_urls) ? ret.all_image_urls : []).forEach(addImage);
+  const textOutputs = (Array.isArray(ret.text_outputs) ? ret.text_outputs : []).map(x=>String(x||'').trim()).filter(Boolean);
+  const hasContent = videoUrls.length || imageUrls.length || textOutputs.length;
+  box.classList.remove('hidden');
+  box.classList.toggle('empty', !hasContent);
+  if(!hasContent){
+    if(opts.keepEmpty === false){ box.classList.add('hidden'); return; }
+    box.innerHTML = '任务已提交，等待 APIMart 返回图片 / 视频 / 文本结果。';
+    return;
+  }
+  const videoHtml = videoUrls.length ? `<div class="mj-media-grid">${videoUrls.map((u,i)=>`<video controls preload="metadata" src="${escapeHtml(withPublicAccess(u))}" data-mj-video-url="${escapeHtml(u)}" title="Midjourney 视频 ${i+1}"></video>`).join('')}</div>` : '';
+  const imageHtml = imageUrls.length ? `<div class="mj-media-grid">${imageUrls.map((u,i)=>`<img src="${escapeHtml(withPublicAccess(u))}" loading="lazy" data-full-url="${escapeHtml(u)}" alt="Midjourney result ${i+1}" />`).join('')}</div>` : '';
+  const textHtml = textOutputs.length ? `<div class="mj-text-card">${escapeHtml(textOutputs.join('\n\n'))}</div>` : '';
+  box.innerHTML = `<div class="mj-preview-stack">${videoHtml}${imageHtml}${textHtml}</div>`;
 }
 
 async function loadMjDescribeOutput(){
@@ -6808,6 +6880,7 @@ async function submitMjAction(action, extra={}){
     if(!body.api_key) return toast('请先在首页填写并保存 APIMart API Key');
     const ret = await api('/api/mj_submit', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
     mjState.lastJson = ret;
+    renderMjOutputPreview(ret);
     if(ret.multi && Array.isArray(ret.tasks)){
       mjState.lastBatchId = ret.batch_id || mjState.lastBatchId || '';
       updateMjStatus('submitted', 0, `已提交 ${ret.task_count || ret.tasks.length} 个 Describe 子任务`, ret.batch_id || '', ret.batch_id || '');
@@ -6866,6 +6939,7 @@ async function queryMjTask(taskId, localTaskId=''){
     const displayProgress = mjStatusProgress(ret.status || 'processing', ret.progress || 0);
     updateMjStatus(ret.status || 'processing', displayProgress, mjStatusLabel(ret.status || 'processing', displayProgress), ret.batch_name || ret.batch_id || '', ret.task_id || taskId || '');
     mjState.lastJson = ret;
+    renderMjOutputPreview(ret);
     if(mjState.tab === 'describe') loadMjDescribeOutput();
     refreshAll();
     return ret;

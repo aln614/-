@@ -1557,8 +1557,8 @@ body.chat-context-fullscreen .chat-context-fullscreen-btn{
 .mj-status-main{display:flex;gap:8px;flex-wrap:wrap}
 .mj-status-id{display:flex;gap:10px}
 .mj-status-id button{white-space:nowrap}
-.mj-output-preview{min-height:360px;border:1px solid var(--border);border-radius:16px;background:rgba(0,0,0,.2);display:flex;align-items:center;justify-content:center;overflow:hidden;padding:16px;color:var(--muted);text-align:center}
-.mj-output-preview.empty{font-size:14px;line-height:1.7}
+.mj-output-preview{min-height:360px;border:1px solid var(--border);border-radius:16px;background:rgba(0,0,0,.2);display:flex;align-items:center;justify-content:center;overflow:hidden;padding:16px;color:var(--muted);text-align:center;margin:0 0 16px}
+.mj-output-preview.empty{min-height:88px;font-size:14px;line-height:1.7}
 .mj-output-preview .mj-preview-stack{display:flex;flex-direction:column;gap:16px;width:100%}
 .mj-output-preview .mj-media-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;width:100%}
 .mj-output-preview img,.mj-output-preview video{width:100%;height:auto;border-radius:14px;border:1px solid var(--border);background:#000;object-fit:contain;max-height:560px}
