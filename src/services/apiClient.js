@@ -287,9 +287,10 @@ const APIMART_IMAGE_MODELS = [
   'gemini-2.5-flash-image-preview','gemini-2.5-flash-image-preview-official',
   'imagen-4.0-apimart',
   'gpt-image-1-official','gpt-image-1.5-official','gpt-image-2','gpt-image-2-official',
-  'seedream-4.0','seedream-4.5','seedream-5.0-lite',
+  'seedream-4.0','seedream-4.5','seedream-5.0-lite','seedream-5.0-pro',
   'doubao-seedance-4-0','doubao-seedream-4.0','doubao-seedream-4-0',
   'doubao-seedream-5-0-lite','doubao-seedream-5.0-lite',
+  'doubao-seedream-5-0-pro','doubao-seedream-5.0-pro',
   'qwen-image','qwen-image-2.0','z-image-turbo',
   'grok-imagine-1.0','grok-imagine-1.0-edit',
   'grok-imagine-1.5-apimart','grok-imagine-1.0-edit-apimart','grok-imagine-1.5-edit-apimart',
@@ -313,6 +314,14 @@ const SEEDREAM5_LITE_RULE = {
   resolutions: ['2k','3k','4k'], defaultResolution: '2k',
   outputFormats: ['jpeg','png'], defaultOutputFormat: 'jpeg', allowOutputFormat: true,
   allowSequential: true, allowWatermark: true
+};
+const SEEDREAM5_PRO_RULE = {
+  endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 10,
+  nMin: 1, nMax: 1, defaultN: 1,
+  sizes: ['1:1','4:3','3:4','16:9','9:16','3:2','2:3','21:9','auto'], defaultSize: '1:1', noCustomSize: true,
+  resolutions: ['1K','2K'], defaultResolution: '2K',
+  outputFormats: ['jpeg','png'], defaultOutputFormat: 'jpeg', allowOutputFormat: true,
+  allowWatermark: true
 };
 const GROK_IMAGINE_15_RULE = {
   endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 0,
@@ -352,6 +361,9 @@ const APIMART_MODEL_RULES = {
   'seedream-5.0-lite': SEEDREAM5_LITE_RULE,
   'doubao-seedream-5-0-lite': SEEDREAM5_LITE_RULE,
   'doubao-seedream-5.0-lite': SEEDREAM5_LITE_RULE,
+  'seedream-5.0-pro': SEEDREAM5_PRO_RULE,
+  'doubao-seedream-5-0-pro': SEEDREAM5_PRO_RULE,
+  'doubao-seedream-5.0-pro': SEEDREAM5_PRO_RULE,
   'grok-imagine-1.0': GROK_IMAGINE_15_RULE,
   'grok-imagine-1.5-apimart': GROK_IMAGINE_15_RULE,
   'grok-imagine-1.0-edit': GROK_IMAGINE_EDIT_RULE,
@@ -372,7 +384,9 @@ function normalizeRuleResolution(value, rule = DEFAULT_APIMART_IMAGE_RULE) {
   const raw = String(value || rule.defaultResolution || '1k').trim().toLowerCase();
   const map = { '0.5k':'0.5k', '512':'0.5k', '1k':'1k', '1K':'1k', '2k':'2k', '2K':'2k', '3k':'3k', '3K':'3k', '4k':'4k', '4K':'4k' };
   const r = map[raw] || raw;
-  return (rule.resolutions || []).includes(r) ? r : (rule.defaultResolution || (rule.resolutions || ['1k'])[0] || '1k');
+  const available = rule.resolutions || [];
+  const matched = available.find(x => String(x).toLowerCase() === String(r).toLowerCase());
+  return matched || rule.defaultResolution || available[0] || '1k';
 }
 function sanitizeApimartImagePayload(rawPayload = {}, model = '') {
   const rule = getApimartImageRule(model);
@@ -388,6 +402,7 @@ function sanitizeApimartImagePayload(rawPayload = {}, model = '') {
     if (rawSize === 'none') rawSize = rule.defaultSize || '1:1';
     const sizes = rule.sizes || null;
     if (sizes && !sizes.includes(rawSize) && !/^\d+x\d+$/i.test(rawSize)) rawSize = rule.defaultSize || sizes[0] || '1:1';
+    if (sizes && rule.noCustomSize && /^\d+x\d+$/i.test(rawSize)) rawSize = rule.defaultSize || sizes[0] || '1:1';
     if (rule.autoRequiresImage && rawSize === 'auto' && !hasRefs) rawSize = rule.defaultSize || '1:1';
     payload.size = rawSize || rule.defaultSize || 'auto';
   }

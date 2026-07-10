@@ -676,6 +676,7 @@ const APIMART_MODEL_OPTIONS = [
   ['doubao-seedance-4-0','doubao-seedance-4-0 / Seedream-4.0'],
   ['seedream-4.5','Seedream-4.5'],
   ['doubao-seedream-5-0-lite','doubao-seedream-5-0-lite'],
+  ['doubao-seedream-5-0-pro','Seedream-5.0-Pro'],
   ['qwen-image-2.0','Qwen Image 2.0'],
   ['z-image-turbo','Z-Image-Turbo'],
   ['grok-imagine-1.5-apimart','grok-imagine-1.5-apimart'],
@@ -934,16 +935,32 @@ function isOfficialImageModel(model){
 function isSeedream5LiteModel(model){
   return ['doubao-seedream-5-0-lite','doubao-seedream-5.0-lite','seedream-5.0-lite'].includes(imageModelKey(model));
 }
+function isSeedream5ProModel(model){
+  return ['doubao-seedream-5-0-pro','doubao-seedream-5.0-pro','seedream-5.0-pro'].includes(imageModelKey(model));
+}
+function isSeedream5OutputFormatModel(model){
+  return isSeedream5LiteModel(model) || isSeedream5ProModel(model);
+}
 function isMultiNImageModel(model){
   const m = imageModelKey(model);
   return isOfficialImageModel(m) || ['doubao-seedance-4-0','doubao-seedream-4.0','doubao-seedream-4-0','seedream-4.0','seedream-4.5','doubao-seedream-5-0-lite','doubao-seedream-5.0-lite','seedream-5.0-lite','grok-imagine-1.5-apimart','grok-imagine-1.0','grok-imagine-1.5-edit-apimart','grok-imagine-1.0-edit-apimart','grok-imagine-1.0-edit'].includes(m);
 }
+function applySeedream5ProUiGuard(model){
+  if(currentImagePlatform() !== 'apimart' || !isSeedream5ProModel(model)) return;
+  const allowedSizes = new Set(['auto','1:1','4:3','3:4','16:9','9:16','3:2','2:3','21:9']);
+  if($('#size') && !allowedSizes.has(getSizeValue())) applySizeToUI('1:1');
+  if($('#clarity') && !['1K','2K'].includes(String($('#clarity').value || '').toUpperCase())) $('#clarity').value = '2K';
+  if($('#claritySettings')) $('#claritySettings').value = $('#clarity')?.value || '2K';
+  if($('#outputFormat') && !['jpeg','png'].includes(String($('#outputFormat').value || '').toLowerCase())) $('#outputFormat').value = 'jpeg';
+  if($('#imageN')) $('#imageN').value = '1';
+}
 function updateOfficialImageOptions(){
   const platform = currentImagePlatform();
   const model = $('#model')?.value || $('#modelPreset')?.value || '';
+  applySeedream5ProUiGuard(model);
   const grsai = platform === 'grsai';
   const official = !grsai && isOfficialImageModel(model);
-  const showOutput = !grsai && (official || isSeedream5LiteModel(model));
+  const showOutput = !grsai && (official || isSeedream5OutputFormatModel(model));
   const showN = !grsai && isMultiNImageModel(model);
   const showQuality = !grsai && official;
   const row1 = $('#officialImageOptions'); if(row1) row1.style.display = showOutput ? '' : 'none';
@@ -1037,8 +1054,9 @@ function applySizeToUI(sizeValue){
   updateSizeHint();
 }
 function updateSizeHint(){
-  const v = getSizeValue();
   const model = $('#model')?.value || $('#modelPreset')?.value || 'gemini-3.1-flash-image-preview';
+  applySeedream5ProUiGuard(model);
+  const v = getSizeValue();
   const clarity = $('#clarity')?.value || $('#claritySettings')?.value || '1K';
   const actual = resolveModelSize(model, v, clarity);
   $('#customSizeRow').classList.toggle('show', currentImagePlatform() !== 'flow2api' && $('#size').value === 'custom');
@@ -1047,7 +1065,7 @@ function updateSizeHint(){
     $('#sizeHint').textContent = `Flow2API 提交模型：${resolvedModel}`;
     return;
   }
-  const supportNote = String(model||'').startsWith('imagen-4.0') ? '（Imagen-4.0 仅支持文生图，上传参考图会被拦截）' : (imageModelKey(model).includes('grok-imagine') ? '（Grok 生成不传 resolution；Grok Edit 会走 /v1/images/edits）' : '');
+  const supportNote = isSeedream5ProModel(model) ? '（Seedream-5.0-Pro 支持 auto/1:1/4:3/3:4/16:9/9:16/3:2/2:3/21:9，resolution 仅 1K/2K）' : (String(model||'').startsWith('imagen-4.0') ? '（Imagen-4.0 仅支持文生图，上传参考图会被拦截）' : (imageModelKey(model).includes('grok-imagine') ? '（Grok 生成不传 resolution；Grok Edit 会走 /v1/images/edits）' : ''));
   $('#sizeHint').textContent = `当前比例：${v}；APIMart 提交参数 size=${actual}，resolution=${clarity}${supportNote}`;
 }
 
