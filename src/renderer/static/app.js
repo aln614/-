@@ -4815,8 +4815,8 @@ let videoFirstFrameScrollBound = false;
 let videoFirstFrameScrollTimer = 0;
 let videoFirstFramePendingRoot = null;
 const VIDEO_FIRST_FRAME_MAX_ACTIVE = 1;
-const VIDEO_FIRST_FRAME_DELAY_MS = 220;
-const VIDEO_FIRST_FRAME_TIMEOUT_MS = 3500;
+const VIDEO_FIRST_FRAME_DELAY_MS = 80;
+const VIDEO_FIRST_FRAME_TIMEOUT_MS = 8000;
 const VIDEO_FIRST_FRAME_CACHE_LIMIT = 64;
 const VIDEO_FIRST_FRAME_VISIBLE_MARGIN = 18;
 function videoFirstFrameUrl(raw){
@@ -5015,8 +5015,8 @@ function pumpVideoFirstFrameQueue(){
         scheduleVideoFirstFramePump(VIDEO_FIRST_FRAME_DELAY_MS);
       }
     };
-    if(window.requestIdleCallback) window.requestIdleCallback(run, { timeout:900 });
-    else setTimeout(run, 45);
+    if(window.requestIdleCallback) window.requestIdleCallback(run, { timeout:350 });
+    else setTimeout(run, 20);
     break;
   }
 }
@@ -5026,10 +5026,6 @@ function scheduleVideoFirstFramePump(delay = VIDEO_FIRST_FRAME_DELAY_MS){
 }
 function enqueueVideoFirstFrame(el){
   if(!el || !el.isConnected || el.classList.contains('loaded') || el.classList.contains('load-error') || videoFirstFrameQueued.has(el)) return;
-  if(el.dataset.cacheReady === '0'){
-    if(el.closest('#videoManageGrid')) enqueueVideoHotCache(el.dataset.videoId || '');
-    return;
-  }
   const src = videoFirstFrameUrl(el.dataset.src || '');
   if(!src) return;
   if(videoFirstFrameCache.has(src)){
@@ -5124,7 +5120,6 @@ function initLazyVideoFirstFrames(root=document){
   bindVideoFirstFrameScrollRefresh();
   const obs = ensureVideoFirstFrameObserver();
   root.querySelectorAll?.('.video-first-frame[data-src]:not(.video-first-observed):not(.loaded)').forEach(el=>{
-    if(el.dataset.cacheReady === '0') return;
     el.classList.add('video-first-observed');
     obs.observe(el);
   });
@@ -5269,7 +5264,6 @@ function renderVideoLibrary(){
       const more = videoManageVisibleCount < videoTasksCache.length ? `<div class="image-load-more-hint">已显示 ${videoManageVisibleCount} / ${videoTasksCache.length} 个视频，继续向下滚动加载更多...</div>` : '';
       manageBox.innerHTML = groups.map(g=>`<section class="video-day-group video-batch-group" data-video-batch="${escapeHtml(g.key)}">${videoBatchHeadHtml(g)}<div class="video-batch-progress"><i style="width:${g.progress}%"></i></div><div class="video-day-grid">${g.rows.map(v=>renderVideoCard(v,{selectable:true})).join('')}</div></section>`).join('') + more;
       initLazyVideoFirstFrames(manageBox);
-      initVisibleVideoHotCache(manageBox, { observerRoot: $('#page-video-manage') || null });
       manageBox.querySelectorAll('[data-video-batch-select]').forEach(btn=>btn.addEventListener('click', e=>{ e.stopPropagation(); toggleVideoBatchSelection(btn.dataset.videoBatchSelect || ''); }));
     }
   }
@@ -5300,6 +5294,16 @@ function downloadVideoTask(meta){
   document.body.appendChild(a);
   a.click();
   a.remove();
+}
+
+function videoCopyLink(meta = {}){
+  return meta.remote_url || publicCopyUrl(meta.share_url || meta.stream_url || meta.url || meta.download_url || '');
+}
+function selectedVideoLinks(){
+  return videoTasksCache
+    .filter(v=>videoSelectedIds.has(v.id))
+    .map(videoCopyLink)
+    .filter(Boolean);
 }
 
 async function copyVideoFileOrLink(meta = {}){
@@ -5499,7 +5503,13 @@ function setupVideoPage(){
   $('#clearVideoSelectBtn')?.addEventListener('click', ()=>{ videoSelectedIds.clear(); renderVideoLibrary(); });
   $('#exportSelectedVideosBtn')?.addEventListener('click', async()=>{ const ids=[...videoSelectedIds]; if(!ids.length) return toast('请先选择要导出的视频'); try{ const r=await api('/api/video_export_selected',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids, all_owners:isVideoAllOwnersScope()})}); if(r.url) window.open(withPublicAccess(r.url),'_blank'); }catch(e){ toast(e.message||'导出视频失败'); } });
   $('#deleteSelectedVideosBtn')?.addEventListener('click', async()=>{ const ids=[...videoSelectedIds]; if(!ids.length) return toast('请先选择要删除的视频'); if(!confirm(`确定删除选中的 ${ids.length} 个视频吗？本地视频文件也会删除。`)) return; try{ await api('/api/video_delete_selected',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids, all_owners:isVideoAllOwnersScope()})}); videoSelectedIds.clear(); await loadVideoTasks(); toast('已删除选中视频'); }catch(e){ toast(e.message||'删除视频失败'); } });
-  $('#copySelectedVideoLinksBtn')?.addEventListener('click', async()=>{ const links=videoTasksCache.map(v=>v.remote_url || publicCopyUrl(v.share_url||v.stream_url||v.url||v.download_url||'')).filter(Boolean).join('\n'); if(!links) return toast('暂无可复制的视频链接'); await copyTextSmart(links,'全部视频链接'); });
+  $('#copySelectedVideoLinksBtn')?.addEventListener('click', async()=>{
+    if(!videoSelectedIds.size) return toast('请先勾选要复制链接的视频');
+    const links = selectedVideoLinks();
+    if(!links.length) return toast('选中的视频暂无可复制链接');
+    const copied = await copyTextSmart(links.join('\n'), '选中视频链接');
+    if(copied) toast(`已复制 ${links.length} 个视频链接，每个链接单独一行`);
+  });
   $('#openVideoOutputDirBtn')?.addEventListener('click', ()=>toast('视频文件保存在设置中心的输出目录，与图片输出目录一致'));
   $('#closeVideoPreview')?.addEventListener('click', closeVideoPreview);
   $('#videoPreviewModal')?.addEventListener('click', e=>{ if(e.target.id==='videoPreviewModal') closeVideoPreview(); });
