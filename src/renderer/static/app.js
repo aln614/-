@@ -6,6 +6,8 @@ let batches = [];
 let historyBatches = [];
 let selectedImages = new Set();
 let selectedHistoryBatches = new Set();
+let historyVisibleCount = 160;
+let historyLoadMoreObserver = null;
 let currentImageBatch = '';
 let currentBatchFilter = 'all';
 let previewScale = 1;
@@ -654,8 +656,11 @@ function updateBatchDurationBadges(){
     el.textContent = `${label} / ${Math.max(0,(end-start)/1000).toFixed(1)} 秒`;
   });
 }
-setInterval(updateBatchDurationBadges, 1000);
-setInterval(updateMiniTaskElapsedBadges, 1000);
+setInterval(()=>{
+  if(document.hidden) return;
+  if(document.querySelector('.batch-duration')) updateBatchDurationBadges();
+  if(document.querySelector('.mini-task-elapsed')) updateMiniTaskElapsedBadges();
+}, 1000);
 function toast(msg){ const t=$('#toast'); if(!t) return; t.textContent=msg; t.classList.add('show'); clearTimeout(toast._timer); toast._timer=setTimeout(()=>t.classList.remove('show'),2600); }
 window.__copyImageToast = toast;
 
@@ -2334,7 +2339,9 @@ async function refreshAll(){
   refreshAllInFlight = true;
   try{
     const logsActive = $('#page-api')?.classList.contains('active') || $('#page-logs')?.classList.contains('active');
-    const needLogs = logsActive || Date.now() - lastLogsLoadAt > 9000;
+    const needLogs = logsActive
+      ? Date.now() - lastLogsLoadAt > 2500
+      : Date.now() - lastLogsLoadAt > 45000;
     const historyActive = $('#page-history')?.classList.contains('active');
     const batchesPanelActive = $('#batchList')?.closest('.page')?.classList.contains('active');
     const needBatches = !isInlineNoteEditing && (historyActive || batchesPanelActive || (!batches.length && Date.now() - lastBatchesLoadAt > 30000));
@@ -2391,10 +2398,15 @@ async function loadStatus(){
 
 async function loadBatches(opts = {}){
   lastBatchesLoadAt = Date.now();
-  const next = await api('/api/batches');
+  const historyRequest = opts.history === true
+    ? api('/api/history_batches').catch(()=>null)
+    : Promise.resolve(null);
+  const [next, historyRows] = await Promise.all([
+    api('/api/batches?limit=600'),
+    historyRequest
+  ]);
   if(opts.history === true){
-    try { historyBatches = await api('/api/history_batches'); }
-    catch { historyBatches = next.map(b=>({...b,batch_type:'image'})); }
+    historyBatches = Array.isArray(historyRows) ? historyRows : next.map(b=>({...b,batch_type:'image'}));
   }
   const sig = stableSig(next.map(b=>[b.id,b.status,b.task_count,b.success_count,b.fail_count,b.running_count,b.note,b.updated_at]));
   batches = next;
@@ -2615,7 +2627,7 @@ function updateHistorySelectionUi(){
     all.indeterminate = checked > 0 && checked < checks.length;
   }
 }
-function forceRenderHistory(){ lastHistorySignature = ''; renderHistory(); }
+function forceRenderHistory(){ historyVisibleCount = 160; lastHistorySignature = ''; renderHistory(); }
 function isDescribeBatch(b={}){
   try{
     const cfg = JSON.parse(b.config_json || '{}') || {};
@@ -2674,17 +2686,21 @@ function renderHistory(){
     const okFilter = filter === 'all' || status.includes(filter) || (filter === '生成中' && ['等待中','提交生成中','生成中'].includes(status));
     return okFilter && (!q || JSON.stringify(b).toLowerCase().includes(q));
   });
+  const visibleList = list.slice(0, historyVisibleCount);
   selectedHistoryBatches.forEach(id=>{ if(!source.some(b=>b.id === id)) selectedHistoryBatches.delete(id); });
-  const historySig = stableSig([q, filter, list.map(b=>[b.id,b.batch_type,b.status,b.task_count,b.success_count,b.fail_count,b.note,b.updated_at,selectedHistoryBatches.has(b.id)])]);
+  const historySig = stableSig([q, filter, list.length, historyVisibleCount, visibleList.map(b=>[b.id,b.batch_type,b.status,b.task_count,b.success_count,b.fail_count,b.note,b.updated_at,selectedHistoryBatches.has(b.id)])]);
   if(historySig === lastHistorySignature){ updateBatchDurationBadges(); updateHistorySelectionUi(); return; }
   lastHistorySignature = historySig;
-  $('#historyRows').innerHTML = list.map(b=>`<tr data-history-batch-id="${b.id}" class="${selectedHistoryBatches.has(b.id)?'history-row-selected':''}">
+  const moreRow = visibleList.length < list.length
+    ? `<tr id="historyLoadMoreRow"><td colspan="9"><button class="secondary" id="historyLoadMoreBtn" type="button">继续加载（已显示 ${visibleList.length} / ${list.length}）</button></td></tr>`
+    : '';
+  $('#historyRows').innerHTML = visibleList.map(b=>`<tr data-history-batch-id="${b.id}" class="${selectedHistoryBatches.has(b.id)?'history-row-selected':''}">
     <td class="history-select-col"><input type="checkbox" class="history-batch-check" data-history-batch-id="${b.id}" ${selectedHistoryBatches.has(b.id)?'checked':''} /></td>
     <td>${formatBeijingTime(b.created_at)}</td>
     <td class="history-batch-cell ${isVideoBatch(b)?'':'history-edit-note'}" data-id="${b.id}" title="${isVideoBatch(b)?'视频批次':'双击修改备注'}"><div>${escapeHtml(b.name)}</div><div class="small-note">类型：${isVideoBatch(b)?'视频生成 / 视频编辑':(isDescribeBatch(b)?'图生文 / Midjourney Describe':'图片生成')} · 备注：${escapeHtml((b.note||'').trim() || (isVideoBatch(b) ? '视频批次' : '双击添加备注名'))}</div><div class="small-note history-duration-line">${isVideoBatch(b)?`${b.task_count || 0} 个视频任务`:batchDurationMarkup(b)} · 状态：${escapeHtml(b.status || '-')}</div></td>
     <td>${escapeHtml(b.model)}</td><td>${b.size}</td><td>${b.task_count}</td><td>${b.success_count}</td><td>${b.fail_count}</td>
     <td>${historyBatchActions(b)}</td>
-  </tr>`).join('');
+  </tr>`).join('') + moreRow;
   $$('.history-batch-check').forEach(ch=>ch.addEventListener('change',()=>{
     if(ch.checked) selectedHistoryBatches.add(ch.dataset.historyBatchId);
     else selectedHistoryBatches.delete(ch.dataset.historyBatchId);
@@ -2693,6 +2709,21 @@ function renderHistory(){
   $$('.history-edit-note').forEach(el=>el.addEventListener('dblclick',()=>beginInlineNoteEdit(el, el.dataset.id)));
   $$('.history-delete').forEach(btn=>btn.addEventListener('click',()=>deleteBatch(btn.dataset.id, btn)));
   $$('.history-video-delete').forEach(btn=>btn.addEventListener('click',()=>deleteVideoHistoryBatch(btn.dataset.id, btn)));
+  const loadMore = ()=>{
+    if(historyVisibleCount >= list.length) return;
+    historyVisibleCount = Math.min(list.length, historyVisibleCount + 160);
+    lastHistorySignature = '';
+    renderHistory();
+  };
+  $('#historyLoadMoreBtn')?.addEventListener('click', loadMore);
+  if(historyLoadMoreObserver) historyLoadMoreObserver.disconnect();
+  const marker = $('#historyLoadMoreRow');
+  if(marker && 'IntersectionObserver' in window){
+    historyLoadMoreObserver = new IntersectionObserver(entries=>{
+      if(entries.some(entry=>entry.isIntersecting)) loadMore();
+    }, {root:null, rootMargin:'700px 0px'});
+    historyLoadMoreObserver.observe(marker);
+  }
   updateBatchDurationBadges();
   updateHistorySelectionUi();
 }
@@ -4589,7 +4620,8 @@ async function submitVideoTask(){
 }
 async function loadVideoTasks(){
   try{
-    const params = new URLSearchParams({limit:'5000'});
+    const manageActive = $('#page-video-manage')?.classList.contains('active');
+    const params = new URLSearchParams({limit:manageActive ? '5000' : '240'});
     if(isVideoAllOwnersScope()) params.set('all_owners', '1');
     const r = await api('/api/video_tasks?' + params.toString());
     const rows = r.rows || [];
@@ -7024,7 +7056,7 @@ function updateMjStatus(status='pending', progress=0, label='', batchLabel='', t
 function mjStatusFinished(status=''){
   return /completed|succeeded|success|done|finish|failed|fail|error|cancel|已完成|失败|取消/i.test(String(status||''));
 }
-async function queryMjTask(taskId, localTaskId=''){
+async function queryMjTask(taskId, localTaskId='', opts={}){
   try{
     const ret = await api('/api/mj_task', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ task_id:taskId, local_task_id: localTaskId || mjState.lastLocalTaskId || '', api_key: $('#apiKey')?.value?.trim() || $('#videoApiKey')?.value?.trim() || '' }) });
     mjState.lastTaskId = taskId;
@@ -7035,7 +7067,7 @@ async function queryMjTask(taskId, localTaskId=''){
     mjState.lastJson = ret;
     renderMjOutputPreview(ret);
     if(mjState.tab === 'describe') loadMjDescribeOutput();
-    refreshAll();
+    if(!opts.skipRefresh) refreshAll();
     return ret;
   }catch(e){
     updateMjStatus('failed', 0, e.message || '查询失败');
@@ -7060,10 +7092,11 @@ function startMjPollingMulti(tasks=[]){
   const poll = async()=>{
     for(const [taskId, localTaskId] of Array.from(pending.entries())){
       try{
-        const ret = await queryMjTask(taskId, localTaskId);
+        const ret = await queryMjTask(taskId, localTaskId, {skipRefresh:true});
         if(mjStatusFinished(ret.status || '')) pending.delete(taskId);
       }catch{}
     }
+    refreshAll();
     if(!pending.size) clearInterval(mjState.pollingTimer);
   };
   poll();

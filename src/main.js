@@ -5,6 +5,7 @@ const http = require('http');
 const https = require('https');
 const url = require('url');
 const crypto = require('crypto');
+const zlib = require('zlib');
 const { app, BrowserWindow, shell, Menu, clipboard, nativeImage, ipcMain } = require('electron');
 const { spawn } = require('child_process');
 const { initDB, getDB, addLog, listBatches, listImages, listLogs, nowISO, uuid, setNetworkTimeOffset, getNetworkTimeInfo } = require('./services/db');
@@ -250,26 +251,30 @@ function trimLocalHotCacheSoon() {
   const now = Date.now();
   if (now - hotCacheLastTrimAt < 5 * 60 * 1000) return;
   hotCacheLastTrimAt = now;
-  setTimeout(() => {
+  setTimeout(async () => {
     try {
       const files = [];
-      const walk = (dir) => {
-        if (!fs.existsSync(dir)) return;
-        for (const name of fs.readdirSync(dir)) {
-          const p = path.join(dir, name);
+      const walk = async (dir) => {
+        let entries = [];
+        try { entries = await fs.promises.readdir(dir, { withFileTypes:true }); } catch { return; }
+        for (const entry of entries) {
+          const p = path.join(dir, entry.name);
+          if (entry.isDirectory()) {
+            await walk(p);
+            continue;
+          }
           let st = null;
-          try { st = fs.statSync(p); } catch { continue; }
-          if (st.isDirectory()) walk(p);
-          else files.push({ path:p, size:st.size, time:Math.max(st.atimeMs || 0, st.mtimeMs || 0) });
+          try { st = await fs.promises.stat(p); } catch { continue; }
+          files.push({ path:p, size:st.size, time:Math.max(st.atimeMs || 0, st.mtimeMs || 0) });
         }
       };
-      walk(LOCAL_HOT_CACHE_ROOT);
+      await walk(LOCAL_HOT_CACHE_ROOT);
       let total = files.reduce((sum, f) => sum + f.size, 0);
       if (total <= LOCAL_HOT_CACHE_MAX_BYTES) return;
       files.sort((a,b)=>a.time-b.time);
       for (const f of files) {
         if (total <= LOCAL_HOT_CACHE_MAX_BYTES * 0.82) break;
-        try { fs.unlinkSync(f.path); total -= f.size; } catch {}
+        try { await fs.promises.unlink(f.path); total -= f.size; } catch {}
       }
     } catch {}
   }, 1000).unref?.();
@@ -306,12 +311,13 @@ function scheduleLocalHotMedia(filePath) {
     return ret;
   }).catch(()=>{});
 }
-function warmLocalHotCacheForImageRows(rows = []) {
+function warmLocalHotCacheForImageRows(rows = [], opts = {}) {
   const picked = [];
-  for (const row of rows.slice(0, 120)) {
+  for (const row of rows.slice(0, 48)) {
     if (row && row.thumb_path) picked.push(row.thumb_path);
   }
-  for (const row of rows.slice(0, 24)) {
+  const fullLimit = opts.preloadFull === false ? 0 : 6;
+  for (const row of rows.slice(0, fullLimit)) {
     if (row && row.file_path) picked.push(row.file_path);
   }
   Array.from(new Set(picked.filter(Boolean))).forEach(scheduleLocalHotMedia);
@@ -401,7 +407,7 @@ function collectOutputRootsFromStoreData(data = {}) {
   const roots = new Set();
   const addPath = (p) => {
     const root = compactOutputRootFromPath(p);
-    if (root && fs.existsSync(root)) roots.add(root);
+    if (root && !roots.has(root) && fs.existsSync(root)) roots.add(root);
   };
   for (const b of Array.isArray(data.batches) ? data.batches : []) addPath(b.output_dir || '');
   for (const img of Array.isArray(data.images) ? data.images : []) {
@@ -854,8 +860,22 @@ function toCamelConfig(cfg) {
   };
 }
 function send(res, obj, code = 200, extraHeaders = {}) {
-  const body = Buffer.from(JSON.stringify(obj, null, 2), 'utf8');
-  res.writeHead(code, {...BASE_SECURITY_HEADERS, 'Content-Type':'application/json; charset=utf-8', 'Access-Control-Allow-Origin':'*', ...extraHeaders});
+  const body = Buffer.from(JSON.stringify(obj), 'utf8');
+  const headers = {...BASE_SECURITY_HEADERS, 'Content-Type':'application/json; charset=utf-8', 'Access-Control-Allow-Origin':'*', ...extraHeaders};
+  const acceptsGzip = /(?:^|,)\s*gzip\s*(?:,|$)/i.test(String(res.req?.headers?.['accept-encoding'] || ''));
+  if (acceptsGzip && body.length >= 32 * 1024) {
+    zlib.gzip(body, { level:zlib.constants.Z_BEST_SPEED }, (error, compressed) => {
+      if (res.destroyed || res.writableEnded) return;
+      if (!error && compressed) {
+        res.writeHead(code, {...headers, 'Content-Encoding':'gzip', 'Vary':'Accept-Encoding', 'Content-Length':compressed.length});
+        return res.end(compressed);
+      }
+      res.writeHead(code, {...headers, 'Content-Length':body.length});
+      res.end(body);
+    });
+    return;
+  }
+  res.writeHead(code, {...headers, 'Content-Length':body.length});
   res.end(body);
 }
 function sendText(res, txt, type = 'text/plain; charset=utf-8', code = 200) {
@@ -1563,9 +1583,10 @@ async function getAnnouncements(force=false) {
 function ensureVideoStore() {
   const db = getDB();
   const st = db._store;
-  if (!Array.isArray(st.video_tasks)) st.video_tasks = [];
-  if (!Array.isArray(st.public_videos)) st.public_videos = [];
-  db._save();
+  let changed = false;
+  if (!Array.isArray(st.video_tasks)) { st.video_tasks = []; changed = true; }
+  if (!Array.isArray(st.public_videos)) { st.public_videos = []; changed = true; }
+  if (changed) db._save();
   return st;
 }
 function cleanupStaleVideoTasks(owner = '') {
@@ -3288,7 +3309,7 @@ function formatVideoTask(row, opts = {}) {
   row = opts.fast ? row : repairVideoTaskFilePath(row);
   const hasFile = opts.fast ? !!row.file_path : !!(row.file_path && fs.existsSync(row.file_path));
   const stream = hasFile ? `/video-file?id=${encodeURIComponent(row.id)}${opts.allOwners ? '&all_owners=1' : ''}` : '';
-  const cacheReady = hasFile && row.file_path ? fs.existsSync(localHotMediaCachePath(row.file_path)) : false;
+  const cacheReady = !opts.fast && hasFile && row.file_path ? fs.existsSync(localHotMediaCachePath(row.file_path)) : false;
   return { ...row, file_exists: hasFile, video_cache_ready: cacheReady, progress_text: row.progress_text || (row.status === '\u5df2\u5b8c\u6210' ? '\u5df2\u5b8c\u6210' : ''), stream_url: stream, share_url: hasFile ? `/video-share?id=${encodeURIComponent(row.id)}` : '', url: stream || row.remote_url || '', download_url: hasFile ? `/download?path=${encodeURIComponent(row.file_path)}` : (row.remote_url || ''), filename: hasFile ? path.basename(row.file_path) : `${row.id}.mp4` };
 }
 
@@ -3800,25 +3821,51 @@ function scheduleOutputMediaIndex() {
   const timer = setTimeout(() => indexOutputMediaFromConfiguredDir().catch(()=>{}), 2500);
   if (typeof timer.unref === 'function') timer.unref();
 }
-function mirrorRuntimeDataToOutputDir(cfg = readConfig(), opts = {}) {
+let runtimeMirrorInFlight = null;
+let runtimeMirrorPending = null;
+const runtimeMirrorSignatures = new Map();
+async function copyRuntimeMirrorFile(source, destination) {
+  let stat = null;
+  try { stat = await fs.promises.stat(source); } catch { return false; }
+  const key = path.resolve(destination);
+  const signature = `${path.resolve(source)}|${stat.size}|${stat.mtimeMs}`;
+  if (runtimeMirrorSignatures.get(key) === signature) return false;
+  await fs.promises.mkdir(path.dirname(destination), { recursive:true });
+  await fs.promises.copyFile(source, destination);
+  runtimeMirrorSignatures.set(key, signature);
+  return true;
+}
+async function runRuntimeDataMirror(cfg = readConfig(), opts = {}) {
   const dir = runtimeMirrorDir(cfg);
   if (!dir) return false;
   try {
-    ensureDir(path.join(dir, 'data'));
-    if (configPath && fs.existsSync(configPath)) fs.copyFileSync(configPath, path.join(dir, 'config.json'));
+    await fs.promises.mkdir(path.join(dir, 'data'), { recursive:true });
+    if (configPath) await copyRuntimeMirrorFile(configPath, path.join(dir, 'config.json'));
     if (!opts.configOnly) {
       const storeFile = currentStoreFilePath();
-      if (fs.existsSync(storeFile)) fs.copyFileSync(storeFile, path.join(dir, 'data', 'store.json'));
+      await copyRuntimeMirrorFile(storeFile, path.join(dir, 'data', 'store.json'));
       const assetFile = assetDbPath(cfg);
-      if (assetFile && fs.existsSync(assetFile)) {
-        ensureDir(path.join(dir, 'assets_meta'));
-        fs.copyFileSync(assetFile, path.join(dir, 'assets_meta', 'assets_db.json'));
-      }
+      if (assetFile) await copyRuntimeMirrorFile(assetFile, path.join(dir, 'assets_meta', 'assets_db.json'));
     }
     return true;
   } catch {
     return false;
   }
+}
+function mirrorRuntimeDataToOutputDir(cfg = readConfig(), opts = {}) {
+  const request = { cfg:{ ...cfg }, opts:{ configOnly:opts.configOnly === true } };
+  if (runtimeMirrorInFlight) {
+    if (runtimeMirrorPending && runtimeMirrorPending.opts.configOnly === false) request.opts.configOnly = false;
+    runtimeMirrorPending = request;
+    return true;
+  }
+  runtimeMirrorInFlight = runRuntimeDataMirror(request.cfg, request.opts).finally(() => {
+    runtimeMirrorInFlight = null;
+    const pending = runtimeMirrorPending;
+    runtimeMirrorPending = null;
+    if (pending) mirrorRuntimeDataToOutputDir(pending.cfg, pending.opts);
+  });
+  return true;
 }
 function restoreStoreFromOutputMirrorIfCurrentEmpty() {
   try {
@@ -3839,19 +3886,15 @@ function restoreStoreFromOutputMirrorIfCurrentEmpty() {
     return false;
   }
 }
-const historicalOutputRootsCache = { file: '', size: 0, mtime: 0, roots: [] };
+const historicalOutputRootsCache = { file: '', roots: [], loaded: false };
 function historicalOutputRootsFromCurrentStore() {
   const file = currentStoreFilePath();
+  if (historicalOutputRootsCache.loaded && historicalOutputRootsCache.file === file) return historicalOutputRootsCache.roots;
   try {
-    const stat = fs.statSync(file);
-    if (historicalOutputRootsCache.file === file && historicalOutputRootsCache.size === stat.size && historicalOutputRootsCache.mtime === stat.mtimeMs) {
-      return historicalOutputRootsCache.roots;
-    }
     const roots = collectOutputRootsFromStoreFile(file);
     historicalOutputRootsCache.file = file;
-    historicalOutputRootsCache.size = stat.size;
-    historicalOutputRootsCache.mtime = stat.mtimeMs;
     historicalOutputRootsCache.roots = roots;
+    historicalOutputRootsCache.loaded = true;
     return roots;
   } catch {
     return historicalOutputRootsCache.roots || [];
@@ -3938,9 +3981,9 @@ function allowedFileRoots(cfg = readConfig()) {
     updateCacheDir(),
     defaultAssetLibraryDir(cfg)
   ];
-  roots.push(...historicalOutputRootsFromCurrentStore());
   if (cfg.output_dir) roots.push(cfg.output_dir);
   if (Array.isArray(cfg.legacy_output_dirs)) roots.push(...cfg.legacy_output_dirs);
+  roots.push(...historicalOutputRootsFromCurrentStore());
   const resolved = Array.from(new Set(roots.map(r => path.resolve(r)).filter(Boolean)));
   allowedFileRootsCache = { ts: Date.now(), key: cacheKey, roots: resolved };
   return resolved;
@@ -6279,7 +6322,10 @@ async function apiHandler(req, res, parsed) {
     if (method === 'POST' && p === '/api/assets/export_zip') { const body=await readBody(req); const zipPath=assetExportZip(body, local, cfg, deviceOwner); return send(res,{ok:true,url:`/download?path=${encodeURIComponent(zipPath)}`}); }
     if (method === 'GET' && p === '/api/announcements') return send(res, await getAnnouncements(parsed.query.force === '1'));
     if (method === 'GET' && p === '/api/status') { cleanupStaleImageTasksThrottled(deviceOwner); return send(res, { ...appStats(deviceOwner), time_info: getNetworkTimeInfo(), ...hostCumulativeStats(), ...urls(cfg), is_local_client: local, is_public_client: publicHost, device_data_isolation: cfg.device_data_isolation !== false, host_status_visible: true }); }
-    if (method === 'GET' && p === '/api/batches') return send(res, listBatches({ownerId: dataOwner, page: 1, pageSize: local ? 6000 : 1000}).rows.map(normalizeBatch));
+    if (method === 'GET' && p === '/api/batches') {
+      const pageSize = Math.max(1, Math.min(local ? 6000 : 1000, Number(parsed.query.limit || (local ? 6000 : 1000))));
+      return send(res, listBatches({ownerId:dataOwner, page:1, pageSize}).rows.map(normalizeBatch));
+    }
     if (method === 'GET' && p === '/api/history_batches') {
       const scopedOwner = local && parsed.query.all_owners === '1' ? '' : dataOwner;
       const imageRows = listBatches({ownerId: scopedOwner, page: 1, pageSize: local ? 6000 : 1000}).rows.map(b => ({ ...normalizeBatch(b), batch_type:'image' }));
@@ -6322,7 +6368,7 @@ async function apiHandler(req, res, parsed) {
         return true;
       });
       rows = rows.slice(0, pageSize);
-      warmLocalHotCacheForImageRows(rows);
+      warmLocalHotCacheForImageRows(rows, { preloadFull:page === 1 && !hasBatchFilter });
       const fastFormat = fastRequested || (String(parsed.query.panel_only || '') === '1' && !String(parsed.query.batch_id || ''));
       const formattedRows = rows.map(row => formatImage(row, { fast: fastFormat }));
       if (String(parsed.query.meta || '') === '1') {
@@ -6808,4 +6854,4 @@ app.whenReady().then(() => {
   startServer(Number(readConfig().port || 7861));
 });
 app.on('window-all-closed', () => { if (!SERVER_ONLY && process.platform !== 'darwin') app.quit(); });
-app.on('before-quit', () => { try { mirrorRuntimeDataToOutputDir(); } catch {} try { stopTunnelProcess(); } catch {} try { if (queue && typeof queue.clearAllRunning === 'function') queue.clearAllRunning(); } catch {} try { if (server) server.close(); } catch {} });
+app.on('before-quit', () => { try { if (queue && typeof queue.clearAllRunning === 'function') queue.clearAllRunning(); } catch {} try { const db = getDB(); if (db && typeof db._flushSync === 'function') db._flushSync(); } catch {} try { mirrorRuntimeDataToOutputDir(); } catch {} try { stopTunnelProcess(); } catch {} try { if (server) server.close(); } catch {} });

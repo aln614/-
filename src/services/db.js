@@ -5,6 +5,8 @@ let storePath = null;
 let store = null;
 let saveTimer = null;
 let saveDirty = false;
+let saveInFlight = null;
+let saveAgain = false;
 let networkTimeOffsetMs = 0;
 let networkTimeInfo = { source: 'local', offset_ms: 0, synced_at: '', server_time: '', ok: false };
 function setNetworkTimeOffset(offsetMs = 0, info = {}) {
@@ -31,31 +33,72 @@ function initDB(userDataDir) {
   return getDB();
 }
 
-function flushSave() {
-  if (!storePath || !store || !saveDirty) return;
-  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
-  saveDirty = false;
-  fs.mkdirSync(path.dirname(storePath), { recursive: true });
-  const tmp = storePath + '.tmp';
-  // 生产环境不再格式化写入，减少 store.json 体积和磁盘写入时间。
-  fs.writeFileSync(tmp, JSON.stringify(store), 'utf8');
-  fs.renameSync(tmp, storePath);
-}
-function save() {
+function scheduleSave(delayMs = 2200) {
   if (!storePath || !store) return;
   saveDirty = true;
+  if (saveInFlight) {
+    saveAgain = true;
+    return;
+  }
   if (saveTimer) return;
-  saveTimer = setTimeout(() => { try { flushSave(); } catch {} }, 800);
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    flushSaveAsync().catch(() => {});
+  }, Math.max(0, Number(delayMs || 0)));
   if (typeof saveTimer.unref === 'function') saveTimer.unref();
 }
-function forceSave() {
-  if (!storePath || !store) return;
-  saveDirty = true;
-  flushSave();
+
+async function flushSaveAsync() {
+  if (!storePath || !store || !saveDirty) return saveInFlight;
+  if (saveInFlight) {
+    saveAgain = true;
+    return saveInFlight;
+  }
+  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+  saveDirty = false;
+  const target = storePath;
+  const tmp = `${target}.${process.pid}.tmp`;
+  saveInFlight = (async () => {
+    await fs.promises.mkdir(path.dirname(target), { recursive: true });
+    const snapshot = JSON.stringify(store);
+    await fs.promises.writeFile(tmp, snapshot, 'utf8');
+    await fs.promises.rename(tmp, target).catch(async () => {
+      await fs.promises.copyFile(tmp, target);
+      await fs.promises.unlink(tmp).catch(() => {});
+    });
+  })().catch(() => {
+    saveDirty = true;
+  }).finally(() => {
+    saveInFlight = null;
+    if (saveDirty || saveAgain) {
+      saveAgain = false;
+      scheduleSave(900);
+    }
+  });
+  return saveInFlight;
 }
-process.once('exit', () => { try { flushSave(); } catch {} });
-process.once('SIGINT', () => { try { flushSave(); } catch {} process.exit(); });
-process.once('SIGTERM', () => { try { flushSave(); } catch {} process.exit(); });
+
+function flushSaveSync() {
+  if (!storePath || !store || (!saveDirty && !saveAgain)) return;
+  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+  const target = storePath;
+  const tmp = `${target}.${process.pid}.exit.tmp`;
+  saveDirty = false;
+  saveAgain = false;
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(tmp, JSON.stringify(store), 'utf8');
+  try { fs.renameSync(tmp, target); }
+  catch {
+    fs.copyFileSync(tmp, target);
+    try { fs.unlinkSync(tmp); } catch {}
+  }
+}
+
+function save() { scheduleSave(2200); }
+function requestPrioritySave() { scheduleSave(900); }
+process.once('exit', () => { try { flushSaveSync(); } catch {} });
+process.once('SIGINT', () => { try { flushSaveSync(); } catch {} process.exit(); });
+process.once('SIGTERM', () => { try { flushSaveSync(); } catch {} process.exit(); });
 
 function getDB() {
   if (!store) throw new Error('database not initialized');
@@ -69,7 +112,9 @@ function getDB() {
       };
     },
     _store: store,
-    _save: forceSave
+    _save: requestPrioritySave,
+    _flush: flushSaveAsync,
+    _flushSync: flushSaveSync
   };
 }
 
