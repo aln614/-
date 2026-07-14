@@ -3559,6 +3559,247 @@ function legacyRuntimeMirrorDir(cfg = readConfig()) {
 function runtimeMirrorCandidateDirs(cfg = readConfig()) {
   return Array.from(new Set([runtimeMirrorDir(cfg), legacyRuntimeMirrorDir(cfg)].filter(Boolean)));
 }
+
+const chatHistoryCache = new Map();
+const chatHistoryWriteChains = new Map();
+function chatHistoryOwnerKey(owner = '') {
+  return cleanOwner(owner || 'local', false) || 'local';
+}
+function chatHistoryStoragePaths(owner = '', cfg = readConfig()) {
+  const filename = `${chatHistoryOwnerKey(owner)}.json`;
+  const localFile = path.join(DATA_ROOT, 'data', 'chat_history', filename);
+  const outputRuntime = runtimeMirrorDir(cfg);
+  const outputFile = outputRuntime ? path.join(outputRuntime, 'chat_history', filename) : '';
+  return uniqueExistingPaths([localFile, outputFile]);
+}
+function normalizeChatHistoryPayload(payload = {}) {
+  const conversations = Array.isArray(payload.conversations) ? payload.conversations : [];
+  return {
+    version: 1,
+    current_chat_id: String(payload.current_chat_id || ''),
+    updated_at: new Date().toISOString(),
+    conversations: conversations
+      .filter(item => item && typeof item === 'object' && String(item.id || '').trim())
+      .map(item => ({
+        ...item,
+        id: String(item.id || '').slice(0, 160),
+        title: String(item.title || '新聊天').slice(0, 500),
+        created_at: Number(item.created_at || Date.now()),
+        updated_at: Number(item.updated_at || item.created_at || Date.now()),
+        messages: Array.isArray(item.messages)
+          ? item.messages.filter(message => message && typeof message === 'object').map(message => ({ ...message, streaming:false }))
+          : []
+      }))
+      .sort((a, b) => Number(b.updated_at || b.created_at || 0) - Number(a.updated_at || a.created_at || 0))
+  };
+}
+async function readChatHistory(owner = '', cfg = readConfig()) {
+  const key = chatHistoryOwnerKey(owner);
+  const cached = chatHistoryCache.get(key);
+  if (cached) return { ok:true, ...cached, storage:'output' };
+  const candidates = [];
+  for (const file of chatHistoryStoragePaths(key, cfg)) {
+    try {
+      const stat = await fs.promises.stat(file);
+      candidates.push({ file, mtime:stat.mtimeMs });
+    } catch {}
+  }
+  candidates.sort((a, b) => b.mtime - a.mtime);
+  for (const candidate of candidates) {
+    try {
+      const normalized = normalizeChatHistoryPayload(JSON.parse(await fs.promises.readFile(candidate.file, 'utf8')));
+      chatHistoryCache.set(key, normalized);
+      return { ok:true, ...normalized, storage:'output' };
+    } catch {}
+  }
+  const empty = normalizeChatHistoryPayload({ conversations:[], current_chat_id:'' });
+  chatHistoryCache.set(key, empty);
+  return { ok:true, ...empty, storage:'output' };
+}
+async function writeChatHistory(owner = '', payload = {}, cfg = readConfig()) {
+  const key = chatHistoryOwnerKey(owner);
+  const normalized = normalizeChatHistoryPayload(payload);
+  chatHistoryCache.set(key, normalized);
+  const previous = chatHistoryWriteChains.get(key) || Promise.resolve();
+  const write = previous.catch(()=>{}).then(async () => {
+    const json = JSON.stringify(normalized);
+    let written = 0;
+    let lastError = null;
+    for (const file of chatHistoryStoragePaths(key, cfg)) {
+      try {
+        await fs.promises.mkdir(path.dirname(file), { recursive:true });
+        await fs.promises.writeFile(file, json, 'utf8');
+        written += 1;
+      } catch (error) { lastError = error; }
+    }
+    if (!written && lastError) throw lastError;
+    return { ok:true, count:normalized.conversations.length, updated_at:normalized.updated_at };
+  });
+  chatHistoryWriteChains.set(key, write);
+  try { return await write; }
+  finally { if (chatHistoryWriteChains.get(key) === write) chatHistoryWriteChains.delete(key); }
+}
+
+const outputMediaIndexState = {
+  running:false,
+  root:'',
+  scanned_batches:0,
+  scanned_files:0,
+  added_images:0,
+  relinked_images:0,
+  recovered_batches:0,
+  started_at:'',
+  finished_at:'',
+  error:''
+};
+function outputMediaIndexMarkerPath() {
+  return path.join(DATA_ROOT, 'data', 'output_media_index.json');
+}
+function recoveredBatchTime(name = '') {
+  const match = String(name).match(/(20\d{2})-(\d{2})-(\d{2})_(\d{2})_(\d{2})_(\d{2})/);
+  return match ? `${match[1]}-${match[2]}-${match[3]} ${match[4]}:${match[5]}:${match[6]}` : nowISO();
+}
+function shouldRunOutputMediaIndex(root = '', force = false) {
+  if (force) return true;
+  try {
+    const marker = JSON.parse(fs.readFileSync(outputMediaIndexMarkerPath(), 'utf8'));
+    if (pathKey(marker.root || '') !== pathKey(root || '')) return true;
+    return Date.now() - Date.parse(marker.finished_at || 0) > 6 * 60 * 60 * 1000;
+  } catch { return true; }
+}
+async function indexOutputMediaFromConfiguredDir(opts = {}) {
+  if (outputMediaIndexState.running) return { ok:true, ...outputMediaIndexState };
+  const cfg = readConfig();
+  const root = String(cfg.output_dir || '').trim();
+  if (!root) return { ok:false, error:'设置中心尚未配置输出目录' };
+  if (!shouldRunOutputMediaIndex(root, opts.force === true)) return { ok:true, skipped:true, ...outputMediaIndexState };
+  Object.assign(outputMediaIndexState, {
+    running:true, root, scanned_batches:0, scanned_files:0, added_images:0,
+    relinked_images:0, recovered_batches:0, started_at:new Date().toISOString(), finished_at:'', error:''
+  });
+  try {
+    const rootEntries = await fs.promises.readdir(root, { withFileTypes:true });
+    const batchDirs = rootEntries.filter(entry => entry.isDirectory() && /^Batch_/i.test(entry.name));
+    const st = getDB()._store;
+    const batchesByPath = new Map();
+    const batchesByName = new Map();
+    for (const batch of st.batches || []) {
+      if (batch.output_dir) batchesByPath.set(pathKey(batch.output_dir), batch);
+      if (batch.name && !batchesByName.has(String(batch.name).toLowerCase())) batchesByName.set(String(batch.name).toLowerCase(), batch);
+    }
+    const existingPaths = new Set();
+    const imagesByBatchName = new Map();
+    for (const image of st.images || []) {
+      if (image.file_path) existingPaths.add(pathKey(image.file_path));
+      const filename = path.basename(String(image.file_path || '')).toLowerCase();
+      if (image.batch_id && filename) imagesByBatchName.set(`${image.batch_id}|${filename}`, image);
+    }
+    const tasksByBatchIndex = new Map();
+    for (const task of st.tasks || []) tasksByBatchIndex.set(`${task.batch_id}|${Number(task.task_index || 0)}`, task);
+    const recoveredCounts = new Map();
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < batchDirs.length) {
+        const entry = batchDirs[cursor++];
+        const dir = path.join(root, entry.name);
+        let files = [];
+        try {
+          files = (await fs.promises.readdir(dir, { withFileTypes:true }))
+            .filter(file => file.isFile() && /\.(png|jpe?g|webp|gif|bmp|tiff?)$/i.test(file.name));
+        } catch { continue; }
+        outputMediaIndexState.scanned_batches += 1;
+        outputMediaIndexState.scanned_files += files.length;
+        if (!files.length) continue;
+        let batch = batchesByPath.get(pathKey(dir)) || batchesByName.get(entry.name.toLowerCase());
+        if (!batch) {
+          const createdAt = recoveredBatchTime(entry.name);
+          batch = {
+            id:uuid('batch_recovered_'), owner_id:'local', name:entry.name, note:'从输出目录恢复', status:'已完成',
+            model:'', size:'', image_size:'', concurrency:1, retry_times:0, repeat_count:1,
+            task_count:0, success_count:0, fail_count:0, running_count:0, output_dir:dir,
+            config_json:'{}', created_at:createdAt, updated_at:createdAt, finished_at:createdAt, recovered_from_output:true
+          };
+          st.batches.push(batch);
+          batchesByName.set(entry.name.toLowerCase(), batch);
+          outputMediaIndexState.recovered_batches += 1;
+        }
+        if (!batch.output_dir || path.basename(String(batch.output_dir)) === entry.name) batch.output_dir = dir;
+        const ownerId = batch.owner_id || 'local';
+        const taskIndexes = new Set();
+        for (let fileIndex = 0; fileIndex < files.length; fileIndex += 1) {
+          const file = files[fileIndex];
+          const filePath = path.join(dir, file.name);
+          const filenameKey = file.name.toLowerCase();
+          const prefix = /^(\d{1,6})/.exec(file.name);
+          const taskIndex = prefix ? Math.max(1, Number(prefix[1])) : fileIndex + 1;
+          taskIndexes.add(taskIndex);
+          const taskKey = `${batch.id}|${taskIndex}`;
+          let task = tasksByBatchIndex.get(taskKey);
+          if (!task) {
+            const createdAt = batch.created_at || recoveredBatchTime(entry.name);
+            task = {
+              id:uuid('task_recovered_'), batch_id:batch.id, owner_id:ownerId, task_index:taskIndex, prompt:'',
+              main_image_path:'', ref_images_json:'[]', status:'已完成', attempt:1, progress:100,
+              progress_text:'已从输出目录恢复', remote_task_id:'', result_path:filePath,
+              thumb_path:path.join(dir, '_thumbs', `${path.basename(file.name, path.extname(file.name))}.png`),
+              error_message:'', created_at:createdAt, updated_at:createdAt, finished_at:createdAt,
+              recovered_from_output:true
+            };
+            st.tasks.push(task);
+            tasksByBatchIndex.set(taskKey, task);
+          }
+          const exactKey = pathKey(filePath);
+          const thumbPath = path.join(dir, '_thumbs', `${path.basename(file.name, path.extname(file.name))}.png`);
+          if (existingPaths.has(exactKey)) continue;
+          const oldRow = imagesByBatchName.get(`${batch.id}|${filenameKey}`);
+          if (oldRow) {
+            oldRow.file_path = filePath;
+            if (!oldRow.thumb_path || path.basename(path.dirname(oldRow.thumb_path)).toLowerCase() === '_thumbs') oldRow.thumb_path = thumbPath;
+            oldRow.recovered_from_output = true;
+            existingPaths.add(exactKey);
+            outputMediaIndexState.relinked_images += 1;
+            continue;
+          }
+          const createdAt = task.finished_at || task.updated_at || batch.created_at || recoveredBatchTime(entry.name);
+          const row = {
+            id:uuid('img_recovered_'), batch_id:batch.id, task_id:task.id, owner_id:ownerId,
+            file_path:filePath, thumb_path:thumbPath, size_bytes:0, created_at:createdAt,
+            remote_url:'', recovered_from_output:true
+          };
+          st.images.push(row);
+          imagesByBatchName.set(`${batch.id}|${filenameKey}`, row);
+          existingPaths.add(exactKey);
+          outputMediaIndexState.added_images += 1;
+        }
+        recoveredCounts.set(batch.id, Math.max(recoveredCounts.get(batch.id) || 0, taskIndexes.size));
+        if (outputMediaIndexState.scanned_batches % 40 === 0) await new Promise(resolve => setImmediate(resolve));
+      }
+    };
+    await Promise.all(Array.from({ length:Math.min(6, Math.max(1, batchDirs.length)) }, () => worker()));
+    for (const [batchId, count] of recoveredCounts) {
+      const batch = st.batches.find(item => item.id === batchId);
+      if (!batch) continue;
+      batch.task_count = Math.max(Number(batch.task_count || 0), count);
+      if (batch.recovered_from_output) batch.success_count = Math.max(Number(batch.success_count || 0), count);
+    }
+    if (outputMediaIndexState.added_images || outputMediaIndexState.relinked_images || outputMediaIndexState.recovered_batches) getDB()._save();
+    outputMediaIndexState.finished_at = new Date().toISOString();
+    await fs.promises.mkdir(path.dirname(outputMediaIndexMarkerPath()), { recursive:true });
+    await fs.promises.writeFile(outputMediaIndexMarkerPath(), JSON.stringify({ ...outputMediaIndexState, running:false }, null, 2), 'utf8');
+    addLog(`输出目录增量索引完成：扫描 ${outputMediaIndexState.scanned_batches} 个批次，补录 ${outputMediaIndexState.added_images} 张图片，修复 ${outputMediaIndexState.relinked_images} 条路径。`);
+  } catch (error) {
+    outputMediaIndexState.error = error.message || String(error);
+    outputMediaIndexState.finished_at = new Date().toISOString();
+    addLog(`输出目录增量索引失败：${outputMediaIndexState.error}`, { level:'warn' });
+  } finally {
+    outputMediaIndexState.running = false;
+  }
+  return { ok:!outputMediaIndexState.error, ...outputMediaIndexState };
+}
+function scheduleOutputMediaIndex() {
+  const timer = setTimeout(() => indexOutputMediaFromConfiguredDir().catch(()=>{}), 2500);
+  if (typeof timer.unref === 'function') timer.unref();
+}
 function mirrorRuntimeDataToOutputDir(cfg = readConfig(), opts = {}) {
   const dir = runtimeMirrorDir(cfg);
   if (!dir) return false;
@@ -6065,7 +6306,8 @@ async function apiHandler(req, res, parsed) {
       const defaultImageLimit = hasBatchFilter ? (local ? 6000 : 1000) : 300;
       const page = Math.max(1, Number(parsed.query.page || 1));
       const pageSize = Math.max(1, Math.min(local ? 6000 : 1000, Number(parsed.query.limit || parsed.query.page_size || defaultImageLimit)));
-      let rows = listImages({ownerId:dataOwner, batchId: parsed.query.batch_id || '', page, pageSize}).rows;
+      const imagePageResult = listImages({ownerId:dataOwner, batchId: parsed.query.batch_id || '', page, pageSize});
+      let rows = imagePageResult.rows;
       if (String(parsed.query.panel_only || '') === '1') rows = rows.filter(r => !r.hidden_in_recent || (!fastRequested && r.file_path && fs.existsSync(r.file_path)));
       if (String(parsed.query.only_mj || '') === '1') rows = rows.filter(r => (r.mj_source || '') === 'midjourney');
       const seenImageKeys = new Set();
@@ -6082,7 +6324,11 @@ async function apiHandler(req, res, parsed) {
       rows = rows.slice(0, pageSize);
       warmLocalHotCacheForImageRows(rows);
       const fastFormat = fastRequested || (String(parsed.query.panel_only || '') === '1' && !String(parsed.query.batch_id || ''));
-      return send(res, rows.map(row => formatImage(row, { fast: fastFormat })));
+      const formattedRows = rows.map(row => formatImage(row, { fast: fastFormat }));
+      if (String(parsed.query.meta || '') === '1') {
+        return send(res, { ok:true, rows:formattedRows, total:imagePageResult.total, page, page_size:pageSize, has_more:page * pageSize < imagePageResult.total });
+      }
+      return send(res, formattedRows);
     }
     if (method === 'GET' && p === '/api/media_cache_status') {
       const ret = mediaCacheStatus(req, parsed);
@@ -6105,6 +6351,17 @@ async function apiHandler(req, res, parsed) {
     if (method === 'POST' && p === '/api/export_describe_word') { const body=await readBody(req); const docPath=exportDescribeWord(body.batch_id || '', owner); return send(res,{ok:true,url:`/download?path=${encodeURIComponent(docPath)}`}); }
     if (method === 'POST' && p === '/api/export_describe_xlsx') { const body=await readBody(req); const xlsxPath=exportDescribeXlsx(body.batch_id || '', owner); return send(res,{ok:true,url:`/download?path=${encodeURIComponent(xlsxPath)}`}); }
     if (method === 'GET' && p === '/api/chat_models') return send(res, {ok:true, models: APIMART_RESPONSE_CHAT_MODELS, endpoint:'/v1/chat/completions'});
+    if (method === 'GET' && p === '/api/chat_history') return send(res, await readChatHistory(deviceOwner, cfg));
+    if (method === 'POST' && p === '/api/chat_history') {
+      const body = await readBody(req);
+      return send(res, await writeChatHistory(deviceOwner, body, cfg));
+    }
+    if (method === 'GET' && p === '/api/output_media_index_status') return send(res, {ok:true, ...outputMediaIndexState});
+    if (method === 'POST' && p === '/api/reindex_output_media') {
+      if (!local) return send(res, {ok:false,error:'只有主机端可以重新索引输出目录'}, 403);
+      setImmediate(() => indexOutputMediaFromConfiguredDir({ force:true }).catch(()=>{}));
+      return send(res, {ok:true, started:!outputMediaIndexState.running, ...outputMediaIndexState});
+    }
     if (method === 'POST' && p === '/api/chat_completions_stream') {
       const body = await readBody(req);
       if (!local && !String(body.api_key || '').trim()) throw new Error('访问端请先填写本设备自己的 API Key，不能使用主机端 API Key');
@@ -6539,6 +6796,7 @@ app.whenReady().then(() => {
   initDB(app.getPath('userData'));
   cleanupStaleImageTasks('');
   mirrorRuntimeDataToOutputDir();
+  scheduleOutputMediaIndex();
   const mirrorTimer = setInterval(() => mirrorRuntimeDataToOutputDir(), 60 * 1000);
   if (typeof mirrorTimer.unref === 'function') mirrorTimer.unref();
   if (restoredOutputMirror) addLog(`检测到当前任务库为空，已自动从输出目录 ${OUTPUT_RUNTIME_DATA_DIR_NAME} 恢复程序缓存。`, { level:'warn' });

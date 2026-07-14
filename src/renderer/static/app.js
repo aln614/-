@@ -45,6 +45,7 @@ let imageGridEventsBound = false;
 let imageGridScrollBound = false;
 let imageGridScrollRoot = null;
 let imageGridScrollTimer = 0;
+let imageLoadMoreObserver = null;
 let miniImagesCache = [];
 let miniImagesFetchedAt = 0;
 let miniImagesFetchPromise = null;
@@ -91,7 +92,10 @@ let aiOrbDragging = false;
 let aiOrbDrag = {sx:0, sy:0, sl:0, st:0};
 const CHAT_CONFIG_KEY = 'local_api_image_generator_chat_config_v1498';
 const CHAT_HISTORY_KEY = 'local_api_image_generator_chat_conversations_v1498';
-const CHAT_TTL_MS = 2 * 24 * 60 * 60 * 1000;
+let chatHistoryHydrated = false;
+let chatHistorySyncTimer = 0;
+let chatHistorySyncing = false;
+let chatHistorySyncQueued = false;
 const CLIENT_CONFIG_KEY = 'local_api_image_generator_client_config_v1498';
 const CURRENT_SETTINGS_KEY = 'LAIG_CLIENT_SETTINGS_V1';
 const PUBLIC_ACCESS_KEY = 'local_api_image_generator_public_access_v1498';
@@ -1235,23 +1239,70 @@ function syncChatConfigFromHome(){
   if($('#chatApiHint')) $('#chatApiHint').textContent = `使用设置中心 API：${$('#apiEndpoint')?.value || 'https://api.apimart.ai'} · /v1/chat/completions`;
 }
 function pruneChatConversations(list){
-  const now = Date.now();
-  return (list || []).filter(c => (now - Number(c.updated_at || c.created_at || 0)) <= CHAT_TTL_MS);
+  return (Array.isArray(list) ? list : [])
+    .filter(c => c && typeof c === 'object' && String(c.id || '').trim())
+    .map(c => ({...c, messages:Array.isArray(c.messages) ? c.messages : []}))
+    .sort((a,b)=>Number(b.updated_at || b.created_at || 0) - Number(a.updated_at || a.created_at || 0));
 }
 function loadChatConversations(){
   try{ chatConversations = JSON.parse(localStorage.getItem(CHAT_HISTORY_KEY) || '[]'); }catch(e){ chatConversations = []; }
   chatConversations = pruneChatConversations(chatConversations);
-  if(!chatConversations.length) createNewChat(false);
+  if(!chatConversations.length) createNewChat(false, false);
   if(!currentChatId || !chatConversations.some(c=>c.id===currentChatId)) currentChatId = chatConversations[0]?.id || '';
-  persistChatHistory();
+  hydrateChatHistoryFromOutput().catch(e=>console.warn('读取永久聊天记录失败，继续使用本机缓存', e));
 }
-function persistChatHistory(){
+function mergeChatConversationLists(localList=[], remoteList=[]){
+  const merged = new Map();
+  [...remoteList, ...localList].forEach(c=>{
+    if(!c?.id) return;
+    const old = merged.get(c.id);
+    if(!old || Number(c.updated_at || c.created_at || 0) >= Number(old.updated_at || old.created_at || 0)) merged.set(c.id, c);
+  });
+  let rows = pruneChatConversations([...merged.values()]);
+  if(rows.length > 1) rows = rows.filter(c => (c.messages || []).length || c.title !== '新聊天');
+  return rows;
+}
+async function hydrateChatHistoryFromOutput(){
+  const localRows = pruneChatConversations(chatConversations);
+  const ret = await api('/api/chat_history');
+  const remoteRows = pruneChatConversations(ret?.conversations || []);
+  chatConversations = mergeChatConversationLists(localRows, remoteRows);
+  if(!chatConversations.length) createNewChat(false, false);
+  const preferred = String(ret?.current_chat_id || currentChatId || '');
+  currentChatId = chatConversations.some(c=>c.id===preferred) ? preferred : (chatConversations[0]?.id || '');
+  chatHistoryHydrated = true;
+  persistChatHistory({immediate:true});
+  renderChatList();
+  renderChat();
+}
+async function flushChatHistorySync(){
+  if(!chatHistoryHydrated){ chatHistorySyncQueued = true; return; }
+  if(chatHistorySyncing){ chatHistorySyncQueued = true; return; }
+  chatHistorySyncing = true;
+  chatHistorySyncQueued = false;
+  const payload = { current_chat_id:currentChatId, conversations:chatConversations };
+  try{
+    await api('/api/chat_history', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+  }catch(e){
+    console.warn('聊天记录永久保存失败，已保留本机缓存', e);
+  }finally{
+    chatHistorySyncing = false;
+    if(chatHistorySyncQueued){ chatHistorySyncQueued = false; queueChatHistorySync(500); }
+  }
+}
+function queueChatHistorySync(delay=450){
+  if(!chatHistoryHydrated){ chatHistorySyncQueued = true; return; }
+  clearTimeout(chatHistorySyncTimer);
+  chatHistorySyncTimer = window.setTimeout(()=>{ chatHistorySyncTimer = 0; flushChatHistorySync(); }, Math.max(0, Number(delay || 0)));
+}
+function persistChatHistory(opts={}){
   chatConversations = pruneChatConversations(chatConversations);
-  try{ localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(chatConversations.slice(0, 80))); }catch(e){
-    // 本地缓存容量不足时，降级只保留最近 20 个聊天的文字内容。
-    const compact = chatConversations.slice(0,20).map(c=>({...c, messages:(c.messages||[]).slice(-30).map(m=>({role:m.role,text:m.text,thinkSeconds:m.thinkSeconds,created_at:m.created_at}))}));
+  try{ localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(chatConversations)); }catch(e){
+    // 浏览器本地只作为快速启动缓存；完整记录始终写入输出目录。
+    const compact = chatConversations.slice(0,20).map(c=>({...c, messages:(c.messages||[]).slice(-50).map(m=>({role:m.role,text:m.text,thinkSeconds:m.thinkSeconds,created_at:m.created_at}))}));
     try{ localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(compact)); }catch(_e){}
   }
+  queueChatHistorySync(opts.immediate ? 0 : 450);
 }
 function getCurrentChat(){
   let c = chatConversations.find(x=>x.id===currentChatId);
@@ -1263,14 +1314,14 @@ function chatTitleFromText(text){
   const t = (text || '').replace(/\s+/g,' ').trim();
   return t ? t.slice(0, 24) : '新聊天';
 }
-function createNewChat(render = true){
+function createNewChat(render = true, persist = true){
   const now = Date.now();
   const c = {id:'chat-' + Math.random().toString(36).slice(2) + now.toString(36), title:'新聊天', created_at:now, updated_at:now, messages:[]};
   chatConversations.unshift(c);
   currentChatId = c.id;
   chatImages = [];
   chatMessages = c.messages;
-  persistChatHistory();
+  if(persist) persistChatHistory();
   if(render){ renderChatList(); renderChat(); }
   return c;
 }
@@ -1326,12 +1377,22 @@ function renderChat(){
         if(String(a.type||'').startsWith('image/') && a.data){ return `<div class="chat-msg-file image"><img loading="lazy" src="${a.data}" data-preview="${a.data}"><span>${escapeHtml(a.name||'图片')}</span></div>`; }
         return `<div class="chat-msg-file"><b>${fileIcon(a)}</b><span>${escapeHtml(a.name||'文件')} · ${prettyBytes(a.size)}</span></div>`;
       }).join('')}</div>` : '';
-      return `<div class="chat-msg ${m.role}"><div class="chat-role">${m.role === 'user' ? '你' : 'AI'}</div><div class="chat-bubble">${escapeHtml(m.text || '').replace(/\n/g,'<br>')}${attachHtml}${think}<div class="chat-time">${escapeHtml(time)}</div></div></div>`;
+      return `<div class="chat-msg ${m.role}"><div class="chat-role">${m.role === 'user' ? '你' : 'AI'}</div><div class="chat-bubble"><div class="chat-message-text">${escapeHtml(m.text || '').replace(/\n/g,'<br>')}</div>${attachHtml}${think}<div class="chat-time">${escapeHtml(time)}</div></div></div>`;
     }).join('');
     $$('#chatMessages img[data-preview]').forEach(img=>img.addEventListener('click',()=>showPreview(img.dataset.preview)));
   }
   box.scrollTop = box.scrollHeight;
   renderChatAttachments();
+}
+function updateStreamingChatMessage(message){
+  const box = $('#chatMessages');
+  const row = box?.querySelector('.chat-msg.assistant:last-of-type');
+  const text = row?.querySelector('.chat-message-text');
+  if(!row || !text){ renderChat(); return; }
+  text.innerHTML = escapeHtml(message?.text || '').replace(/\n/g,'<br>');
+  const time = row.querySelector('.chat-time');
+  if(time) time.textContent = new Date(Number(message?.created_at || Date.now())).toLocaleTimeString();
+  box.scrollTop = box.scrollHeight;
 }
 function renderChatAttachments(){
   const box = $('#chatAttachments');
@@ -1504,7 +1565,7 @@ async function sendChat(){
         if(ev.done || nowMs - lastPaint > 120){
           lastPaint = nowMs;
           chatMessages = c.messages;
-          renderChat();
+          updateStreamingChatMessage(assistantMessage);
           updateThinkingBadge(`Stream 输出中 ${elapsed.toFixed(1)}s`);
         }
       });
@@ -2677,6 +2738,12 @@ function bindImageGridEvents(){
   grid.addEventListener('error', e=>{
     const img = e.target.closest?.('.image-card img');
     if(!img) return;
+    const full = img.dataset.fullUrl || img.closest('.image-card')?.dataset.url || '';
+    if(full && img.dataset.fullFallback !== '1' && img.src !== new URL(full, location.href).href){
+      img.dataset.fullFallback = '1';
+      img.src = withPublicAccess(full);
+      return;
+    }
     const remote = img.dataset.remoteUrl || img.closest('.image-card')?.dataset.remoteUrl || '';
     if(remote && img.dataset.remoteFallback !== '1' && img.src !== remote){
       img.dataset.remoteFallback = '1';
@@ -2713,6 +2780,16 @@ function bindImageInfiniteScroll(){
   root.__laigImageScrollHandler = onScroll;
   root.addEventListener('scroll', onScroll, {passive:true});
 }
+function observeImageLoadMore(){
+  const grid = $('#imageGrid');
+  const sentinel = $('#imageLoadMoreSentinel');
+  if(!grid || !sentinel || !imageHasMore) return;
+  if(imageLoadMoreObserver) imageLoadMoreObserver.disconnect();
+  imageLoadMoreObserver = new IntersectionObserver(entries=>{
+    if(entries.some(entry=>entry.isIntersecting) && imageHasMore && !imageLoading) loadImages({append:true});
+  }, {root:grid, rootMargin:'900px 0px', threshold:0.01});
+  imageLoadMoreObserver.observe(sentinel);
+}
 async function loadImages(opts = {}){
   const append = opts.append === true;
   if(imageLoading) return;
@@ -2730,37 +2807,54 @@ async function loadImages(opts = {}){
   }
   imageLoading = true;
   try{
-    const params = new URLSearchParams({fast:'1', limit:String(IMAGE_PAGE_SIZE), page:String(imagePage)});
+    const params = new URLSearchParams({fast:'1', meta:'1', limit:String(IMAGE_PAGE_SIZE), page:String(imagePage)});
     if(currentImageBatch) params.set('batch_id', currentImageBatch);
-    const imgs = await api('/api/images?' + params.toString());
+    const ret = await api('/api/images?' + params.toString());
+    const imgs = Array.isArray(ret) ? ret : (Array.isArray(ret?.rows) ? ret.rows : []);
     imageRowsCache = append ? imageRowsCache.concat(imgs) : imgs;
-    imageHasMore = Array.isArray(imgs) && imgs.length >= IMAGE_PAGE_SIZE;
+    imageHasMore = typeof ret?.has_more === 'boolean' ? ret.has_more : (Array.isArray(imgs) && imgs.length >= IMAGE_PAGE_SIZE);
     if(imageHasMore) imagePage += 1;
-    renderImages(imageRowsCache);
+    renderImages(append ? imgs : imageRowsCache, {append});
   }finally{
     imageLoading = false;
+    observeImageLoadMore();
   }
 }
-function renderImages(imgs){
-  imageMetaMap = new Map();
-  const rows = Array.isArray(imgs) ? imgs : [];
-  $('#imageGrid').innerHTML = rows.map(img=>{
-    const thumb = img.thumb_url || img.url || img.remote_url || ''; 
-    const full = img.full_url || img.original_url || img.url || img.remote_url || ''; 
-    const remote = img.remote_url || '';
-    const meta = imageRowToPreviewMeta(img);
-    imageMetaMap.set(img.id, meta);
-    const selected = selectedImages.has(img.id) ? 'selected' : '';
-    const missing = img.missing || !(thumb || full);
-    const media = missing ? '<div class="img-fallback active">文件缺失</div>' : '<img loading="lazy" decoding="async" src="' + thumb + '" draggable="false" data-full-url="' + full + '" data-remote-url="' + remote + '" data-id="' + img.id + '" alt="" title="点击预览原图 / 右键复制 url 或提示词"><div class="img-fallback">图片加载失败</div>';
-    return '<div class="image-card ' + selected + (missing ? ' missing' : '') + '" draggable="' + (!missing) + '" data-id="' + img.id + '" data-url="' + full + '" data-thumb-url="' + thumb + '" data-remote-url="' + remote + '" title="点击预览原图，Ctrl/Shift 多选"><div class="check">' + (selectedImages.has(img.id) ? '✓' : '') + '</div>' + media + '<div class="cap">' + escapeHtml(img.filename) + '</div></div>';
-  }).join('') || '<div class="card">暂无图片</div>';
-  if(imageHasMore) $('#imageGrid').insertAdjacentHTML('beforeend', '<div class="image-load-more-hint">继续向下滚动加载更多图片...</div>');
+function imageCardMarkup(img){
+  const thumb = img.thumb_url || img.url || img.remote_url || '';
+  const full = img.full_url || img.original_url || img.url || img.remote_url || '';
+  const remote = img.remote_url || '';
+  const meta = imageRowToPreviewMeta(img);
+  imageMetaMap.set(img.id, meta);
+  const selected = selectedImages.has(img.id) ? 'selected' : '';
+  const missing = img.missing || !(thumb || full);
+  const media = missing ? '<div class="img-fallback active">文件缺失</div>' : '<img loading="lazy" decoding="async" src="' + thumb + '" draggable="false" data-full-url="' + full + '" data-remote-url="' + remote + '" data-id="' + img.id + '" alt="" title="点击预览原图 / 右键复制 url 或提示词"><div class="img-fallback">图片加载失败</div>';
+  return '<div class="image-card ' + selected + (missing ? ' missing' : '') + '" draggable="' + (!missing) + '" data-id="' + img.id + '" data-url="' + full + '" data-thumb-url="' + thumb + '" data-remote-url="' + remote + '" title="点击预览原图，Ctrl/Shift 多选"><div class="check">' + (selectedImages.has(img.id) ? '✓' : '') + '</div>' + media + '<div class="cap">' + escapeHtml(img.filename) + '</div></div>';
 }
-function toggleImage(id){ if(selectedImages.has(id)) selectedImages.delete(id); else selectedImages.add(id); renderImages(imageRowsCache); }
-$('#selectAllBtn').addEventListener('click',()=>{ imageRowsCache.forEach(i=>selectedImages.add(i.id)); renderImages(imageRowsCache); });
-$('#clearSelectBtn').addEventListener('click',()=>{ selectedImages.clear(); renderImages(imageRowsCache); });
-$('#invertSelectBtn').addEventListener('click',()=>{ imageRowsCache.forEach(i=> selectedImages.has(i.id) ? selectedImages.delete(i.id) : selectedImages.add(i.id)); renderImages(imageRowsCache); });
+function renderImages(imgs, opts={}){
+  const rows = Array.isArray(imgs) ? imgs : [];
+  const grid = $('#imageGrid');
+  if(!grid) return;
+  grid.querySelector('#imageLoadMoreSentinel')?.remove();
+  if(opts.append){
+    if(rows.length) grid.insertAdjacentHTML('beforeend', rows.map(imageCardMarkup).join(''));
+  }else{
+    grid.innerHTML = rows.map(imageCardMarkup).join('') || '<div class="card">暂无图片</div>';
+  }
+  if(imageHasMore) grid.insertAdjacentHTML('beforeend', '<div class="image-load-more-hint" id="imageLoadMoreSentinel">继续向下滚动加载更多图片...</div>');
+}
+function syncImageSelectionUI(){
+  $$('#imageGrid .image-card').forEach(card=>{
+    const selected = selectedImages.has(card.dataset.id);
+    card.classList.toggle('selected', selected);
+    const check = card.querySelector('.check');
+    if(check) check.textContent = selected ? '✓' : '';
+  });
+}
+function toggleImage(id){ if(selectedImages.has(id)) selectedImages.delete(id); else selectedImages.add(id); syncImageSelectionUI(); }
+$('#selectAllBtn').addEventListener('click',()=>{ imageRowsCache.forEach(i=>selectedImages.add(i.id)); syncImageSelectionUI(); });
+$('#clearSelectBtn').addEventListener('click',()=>{ selectedImages.clear(); syncImageSelectionUI(); });
+$('#invertSelectBtn').addEventListener('click',()=>{ imageRowsCache.forEach(i=> selectedImages.has(i.id) ? selectedImages.delete(i.id) : selectedImages.add(i.id)); syncImageSelectionUI(); });
 $('#exportSelectedBtn').addEventListener('click',async()=>{
   if(!selectedImages.size) return alert('先选择图片');
   const r = await api('/api/export_selected_zip',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({batch_id:currentImageBatch || '',image_ids:[...selectedImages]})});
