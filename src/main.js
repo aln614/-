@@ -1609,6 +1609,19 @@ function cleanupStaleVideoTasks(owner = '') {
   if (changed) getDB()._save();
   return changed;
 }
+function repairLegacyGeminiOmniVideoFailures() {
+  const st = ensureVideoStore();
+  let changed = false;
+  for (const row of st.video_tasks || []) {
+    if (String(row.model || '').toLowerCase() !== 'gemini-omni-flash-preview') continue;
+    if (!/interaction status=failed/i.test(String(row.error_message || row.raw_error_message || ''))) continue;
+    row.raw_error_message = row.raw_error_message || row.error_message;
+    row.error_message = 'Gemini Omni Flash 上游交互失败：旧任务可能混用了“续写/延长”和“编辑原视频”指令，或携带了该模型不支持的 duration/size 参数。程序现已按官方接口修复，并会在失败重试时自动精简为纯视频编辑指令。';
+    changed = true;
+  }
+  if (changed) getDB()._save();
+  return changed;
+}
 function pickTaskIdFromApimart(obj={}) {
   const candidates = [];
   const push = v => { if (v !== undefined && v !== null && String(v).trim()) candidates.push(String(v).trim()); };
@@ -2031,7 +2044,7 @@ function registerApimartVideoRules(items = []) {
   }
 }
 registerApimartVideoRules([
-  { model:'gemini-omni-flash-preview', label:'Gemini Omni Flash Preview', resolutions:['720p'], defaultResolution:'720p', aspectRatios:['16:9','9:16'], defaultAspectRatio:'16:9', durationRange:[3,10], defaultDuration:6, supportsImageUrls:true, supportsVideoUrls:true, videoParam:'video_urls', maxImageCount:16, maxVideoCount:1, durationWithVideo:true },
+  { model:'gemini-omni-flash-preview', label:'Gemini Omni Flash Preview', resolutions:['720p'], defaultResolution:'720p', aspectRatios:['16:9','9:16'], defaultAspectRatio:'16:9', supportsImageUrls:true, supportsVideoUrls:true, videoParam:'video_urls', maxImageCount:16, maxVideoCount:1, supportsDuration:false, supportsSizeCompat:false, supportsSeed:false },
   { model:'doubao-seedance-1-5-pro', label:'Doubao Seedance 1.5 Pro', resolutions:['480p','720p','1080p'], defaultResolution:'720p', aspectRatios:['16:9','9:16','1:1'], durationRange:[4,12], supportsImageUrls:false, supportsImageWithRoles:true, supportsLastFrame:true },
   { model:'doubao-seedance-2.0', label:'Doubao Seedance 2.0', resolutions:['480p','720p','1080p','4k'], aspectRatios:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'], durationRange:[4,15], supportsImageUrls:true, supportsVideoUrls:true, supportsImageWithRoles:true, supportsLastFrame:true },
   { model:'doubao-seedance-2.0-fast', label:'Doubao Seedance 2.0 Fast', resolutions:['480p','720p'], aspectRatios:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'], durationRange:[4,15], supportsImageUrls:true, supportsVideoUrls:true, supportsImageWithRoles:true, supportsLastFrame:true },
@@ -2645,9 +2658,23 @@ async function pollApimartVideoTask(taskId, apiKey, localTaskId) {
     task.status_payload = status;
     task.updated_at = nowISO();
     if (sText === 'failed' || sText === 'cancelled') {
+      let failureStatus = status;
+      try {
+        const single = await getJsonApimart(`/tasks/${encodeURIComponent(taskId)}`, apiKey, 120000);
+        if (single) {
+          failureStatus = single;
+          task.status_payload = single;
+        }
+      } catch (detailError) {
+        task.last_error = detailError.message || String(detailError);
+      }
       task.status = '失败';
       task.progress_text = '任务失败';
-      task.error_message = pickApimartTaskErrorMessage(status, '视频任务失败');
+      task.raw_error_message = pickApimartTaskErrorMessage(failureStatus, '视频任务失败');
+      task.error_message = task.raw_error_message;
+      if (/interaction status=failed/i.test(task.error_message) && String(task.model || '').toLowerCase() === 'gemini-omni-flash-preview') {
+        task.error_message = 'Gemini Omni Flash 上游交互失败：请求已通过 APIMart 参数校验，但 Google 视频处理阶段拒绝或中止。请缩短并简化编辑指令，避免把“续写/延长视频”和“编辑原视频”混在同一个任务中；也可能是临时内容审核或上游故障。';
+      }
       task.finished_at = nowISO();
       getDB()._save();
       addLog(`视频任务失败：${task.error_message}`, { ownerId: task.owner_id, level:'error' });
@@ -2988,6 +3015,25 @@ async function createFlow2VideoBatch(body, ownerId) {
   return { ok:true, count:rows.length, video_count:sourceVideos.length, prompt_count:originalPrompts.length, success:rows.length, fail:0, rows:rows.map(formatVideoTask) };
 }
 
+function compactGeminiOmniEditPrompt(input = '') {
+  let text = String(input || '').replace(/\r/g, '\n').trim();
+  if (!text) return '';
+  text = text
+    .replace(/^【[^】]*(?:续写|结尾节点|负面提示)[^】]*】\s*/i, '')
+    .split(/(?:^|\n)\s*(?:【?\s*)?(?:负面提示词|Negative Prompt|Chinese Explanation|中文解说)(?:\s*】)?\s*[:：]?/i)[0]
+    .replace(/结尾\s*\d+\s*秒\s*(?:续写|延长)|结尾节点提示词|续写视频|延长视频/gi, '编辑原视频')
+    .replace(/\n{2,}/g, '\n')
+    .replace(/[ \t]+/g, ' ')
+    .trim();
+  if (!/^编辑原视频[。,.，]/.test(text)) text = `编辑原视频。${text}`;
+  if (text.length > 420) {
+    const clipped = text.slice(0, 420);
+    const sentenceEnd = Math.max(clipped.lastIndexOf('。'), clipped.lastIndexOf('！'), clipped.lastIndexOf('；'));
+    text = (sentenceEnd >= 180 ? clipped.slice(0, sentenceEnd + 1) : clipped).trim();
+  }
+  return text;
+}
+
 async function retryApimartVideoRow(row, body, ownerId, req, cfg, error) {
   if (!row) return null;
   const retryLimit = Math.max(0, Number(row.retry_times ?? body.retry_times ?? 0));
@@ -2999,6 +3045,33 @@ async function retryApimartVideoRow(row, body, ownerId, req, cfg, error) {
   row.updated_at = nowISO();
   if (!permanent && retryCount < retryLimit) {
     const nextRetry = retryCount + 1;
+    const isGeminiInteractionFailure = String(row.model || '').toLowerCase() === 'gemini-omni-flash-preview'
+      && !!(row.local_video_path || row.video_url || body.local_video_path || body.video_url)
+      && /interaction status=failed|Gemini Omni Flash 上游交互失败/i.test(String(row.raw_error_message || row.error_message || ''))
+      && body._gemini_omni_prompt_fallback !== true;
+    if (isGeminiInteractionFailure) {
+      const compactPrompt = compactGeminiOmniEditPrompt(body.prompt || row.prompt || '');
+      if (compactPrompt && compactPrompt !== String(body.prompt || row.prompt || '').trim()) {
+        row.original_prompt = row.original_prompt || row.prompt || body.prompt || '';
+        row.prompt = compactPrompt;
+        row.retry_count = nextRetry;
+        row.retry_times = retryLimit;
+        row.status = '重试中';
+        row.progress = Math.max(1, Number(row.progress || 0));
+        row.progress_text = `Gemini 编辑指令精简重试 ${nextRetry}/${retryLimit}`;
+        row.error_message = '';
+        row.updated_at = nowISO();
+        getDB()._save();
+        addLog(`Gemini Omni interaction 失败，已自动改为纯视频编辑指令并在同一任务重试 ${nextRetry}/${retryLimit}：${row.id}`, { ownerId, level:'warn' });
+        return createApimartVideoTask({
+          ...body,
+          prompt:compactPrompt,
+          prompts:compactPrompt,
+          retry_times:retryLimit,
+          _gemini_omni_prompt_fallback:true
+        }, ownerId, req, cfg, row);
+      }
+    }
     row.retry_count = nextRetry;
     row.retry_times = retryLimit;
     row.status = '重试中';
@@ -3074,7 +3147,7 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
   try {
     row.status = '提交中'; row.progress = 2; row.progress_text = '正在提交到 APIMart'; row.updated_at = nowISO(); getDB()._save();
     const localVideoPath = prebuiltLocalVideoPath || row.local_video_path || (videoItem ? dataUrlToFile(videoItem, ownerId) : '');
-    const videoUrl = videoUrlInput || (localVideoPath ? await buildPublicVideoUrlAuto(localVideoPath, cfg, ownerId, req) : '');
+    let videoUrl = videoUrlInput || (localVideoPath ? await buildPublicVideoUrlAuto(localVideoPath, cfg, ownerId, req) : '');
     const imageUrls = Array.isArray(body.ref_image_urls) ? body.ref_image_urls.filter(Boolean) : [];
     if (!imageUrls.length) {
       for (const img of refImages) {
@@ -3101,7 +3174,7 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
       aspect_ratio: normalizeVideoAspectRatio(body.aspect_ratio, videoModel)
     };
     // APIMart 文档说明 size 是 aspect_ratio 的兼容字段。部分网关/控制台会读取 size，保持二者一致可提高兼容性。
-    payload.size = payload.aspect_ratio;
+    if (rule.supportsSizeCompat !== false) payload.size = payload.aspect_ratio;
     const normalizedResolution = payload.resolution;
     if (rule.modeFromResolution) {
       payload.mode = payload.resolution === '4k' ? '4k' : (payload.resolution === '1080p' ? 'pro' : 'std');
@@ -3125,13 +3198,24 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
       payload.generation_type = (videoUrl || mode === 'multi_reference' || imageUrls.length > 1) ? 'reference' : 'frame';
     }
     if (videoUrl) {
-      await probePublicVideoUrl(videoUrl);
+      try {
+        await probePublicVideoUrl(videoUrl);
+      } catch (probeError) {
+        const canRenewTunnel = !!localVideoPath
+          && (cfg.public_provider || 'cloudflare') !== 'manual'
+          && /HTTP 5\d\d|超时|fetch failed|socket|ECONN|network/i.test(String(probeError?.message || probeError || ''));
+        if (!canRenewTunnel) throw probeError;
+        addLog(`公网视频通道失效，正在自动重建：${probeError.message || probeError}`, { ownerId, level:'warn' });
+        await restartPublicTunnelForVideoReference(readConfig());
+        videoUrl = await buildPublicVideoUrlAuto(localVideoPath, readConfig(), ownerId, req);
+        await probePublicVideoUrl(videoUrl);
+      }
       if (rule.videoParam === 'video_url') payload.video_url = videoUrl;
       else payload.video_urls = [videoUrl];
     }
-    if (!videoUrl || rule.durationWithVideo) payload.duration = normalizeVideoDuration(body.duration, rule.defaultDuration || 6, payload.model);
+    if (rule.supportsDuration !== false && (!videoUrl || rule.durationWithVideo)) payload.duration = normalizeVideoDuration(body.duration, rule.defaultDuration || 6, payload.model);
     const seed = optionalInt(body.seed);
-    if (seed !== undefined) payload.seed = seed;
+    if (seed !== undefined && rule.supportsSeed !== false) payload.seed = seed;
     row.resolution = normalizedResolution;
     row.aspect_ratio = payload.aspect_ratio;
     row.duration = payload.duration || '';
@@ -3141,11 +3225,12 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
     row.video_url = videoUrl;
     row.reference_public_url = videoUrl;
     row.local_video_path = localVideoPath;
+    row.submission_payload = payload;
     if (sourceVideoName) row.source_video_name = sourceVideoName;
     if (body.source_video_duration) row.source_video_duration = body.source_video_duration;
     row.updated_at = nowISO(); getDB()._save();
     let ret;
-    addLog(`视频请求参数：endpoint=/videos/generations model=${payload.model} resolution=${payload.resolution} aspect=${payload.aspect_ratio} duration=${payload.duration || '参考视频模式'} images=${(payload.image_urls||[]).length} videos=${(payload.video_urls||[]).length}`, { ownerId });
+    addLog(`视频请求参数：endpoint=/videos/generations model=${payload.model} resolution=${payload.resolution} aspect=${payload.aspect_ratio} duration=${payload.duration || (rule.supportsDuration === false ? '模型自动' : '参考视频模式')} images=${(payload.image_urls||[]).length} videos=${(payload.video_urls||[]).length}`, { ownerId });
     try {
       ret = await postJsonApimart('/videos/generations', apiKey, payload, 30000);
       addLog(`视频接口返回：${JSON.stringify(ret).slice(0, 1000)}`, { ownerId });
@@ -5030,18 +5115,18 @@ function extractPublicUrl(text) {
   const m = String(text || '').match(/https:\/\/[a-zA-Z0-9._-]+\.(trycloudflare\.com|ngrok-free\.app|ngrok\.io|ngrok\.app|loca\.lt|localhost\.run)[^\s]*/);
   return m ? m[0].replace(/["'<>)]*$/, '') : '';
 }
-function stopTunnelProcess() {
+function stopTunnelProcess(opts = {}) {
   if (tunnelProcess) {
     try { tunnelProcess.kill(); } catch {}
     tunnelProcess = null;
   }
   tunnelState.running = false;
   tunnelState.provider = '';
-  saveConfig({ public_enabled: false, public_url: '' });
+  if (!opts.preserveConfig) saveConfig({ public_enabled: false, public_url: '' });
 }
 function startTunnelProcess(body = {}) {
   const cfg0 = readConfig();
-  if (tunnelProcess) stopTunnelProcess();
+  if (tunnelProcess) stopTunnelProcess({ preserveConfig:true });
   const provider = body.provider || cfg0.public_provider || 'cloudflare';
   const port = Number(cfg0.port || 7861);
   const access = String(body.public_password || cfg0.public_password || '').trim() || Math.random().toString(36).slice(2, 10);
@@ -5051,7 +5136,9 @@ function startTunnelProcess(body = {}) {
     public_password: access,
     public_permission: body.public_permission || cfg0.public_permission || 'generate',
     cloudflared_path: body.cloudflared_path || cfg0.cloudflared_path || 'cloudflared',
-    ngrok_path: body.ngrok_path || cfg0.ngrok_path || 'ngrok'
+    ngrok_path: body.ngrok_path || cfg0.ngrok_path || 'ngrok',
+    // Temporary tunnel URLs cannot be reused after the child process exits.
+    public_url: provider === 'manual' ? (cfg0.public_url || '') : ''
   });
   tunnelState = { running: true, provider, url: nextCfg.public_url || '', logs: [], last_error: '' };
   if (provider === 'manual') {
@@ -5105,19 +5192,35 @@ async function waitForPublicTunnelUrl(timeoutMs = 35000) {
   return '';
 }
 async function ensurePublicAccessForVideoReference(req, cfg) {
-  let base = normalizeExternalPublicOrigin((cfg.public_url || tunnelState.url || '').trim());
-  if (base) return base;
-  // V13.3：本地上传参考视频时，如果公网未开启，自动尝试开启公网，避免用户手动去公网访问页启动。
-  // 访问密码仍然使用公网访问页里的设置；public-video 临时直链不要求网页登录密码，不影响 APIMart 读取。
   const provider = cfg.public_provider || 'cloudflare';
+  let base = normalizeExternalPublicOrigin((cfg.public_url || tunnelState.url || '').trim());
   if (provider === 'manual') {
+    if (base) return base;
     throw new Error('参考视频需要公网 HTTPS 直链。当前是手动公网模式，但没有填写有效公网地址，请先在“公网访问”里填写 https 公网地址。');
   }
+  // The saved trycloudflare/ngrok URL belongs to the previous child process.
+  // Reuse a temporary URL only when this process still owns a live tunnel.
+  if (tunnelProcess && tunnelState.running) {
+    if (base) return base;
+    base = await waitForPublicTunnelUrl(12000);
+    if (base) return base;
+  }
+  // V13.3：本地上传参考视频时，如果公网未开启，自动尝试开启公网，避免用户手动去公网访问页启动。
+  // 访问密码仍然使用公网访问页里的设置；public-video 临时直链不要求网页登录密码，不影响 APIMart 读取。
   const ret = startTunnelProcess({ provider, public_password: cfg.public_password || '', public_permission: cfg.public_permission || 'generate' });
   if (ret && ret.ok === false) throw new Error('自动开启公网访问失败：' + (ret.error || ret.last_error || '未知错误'));
   addLog('视频生成需要公网参考视频链接，已自动尝试开启公网访问', { ownerId:'local' });
   base = await waitForPublicTunnelUrl(35000);
   if (!base) throw new Error('已自动尝试开启公网访问，但还没有获取到 https 公网链接。请确认 cloudflared 已安装，或到“公网访问”页面查看日志。公网网页访问需要密码，但 /public-video 临时视频直链会自动跳过密码供 APIMart 读取。');
+  return base;
+}
+async function restartPublicTunnelForVideoReference(cfg = readConfig()) {
+  const provider = cfg.public_provider || 'cloudflare';
+  if (provider === 'manual') throw new Error('手动公网地址不可用，请更换为可访问的 HTTPS 地址。');
+  const ret = startTunnelProcess({ provider, public_password:cfg.public_password || '', public_permission:cfg.public_permission || 'generate' });
+  if (ret && ret.ok === false) throw new Error('重新建立公网视频通道失败：' + (ret.error || ret.last_error || '未知错误'));
+  const base = await waitForPublicTunnelUrl(35000);
+  if (!base) throw new Error('已重新启动公网通道，但没有获取到新的 HTTPS 地址。');
   return base;
 }
 async function buildPublicVideoUrlAuto(filePath, cfg, ownerId='', req=null) {
@@ -6840,6 +6943,7 @@ app.whenReady().then(() => {
   const restoredLegacyStore = restoredOutputMirror ? false : restoreStoreFromLegacyIfCurrentEmpty();
   if (!restoredLegacyStore) rememberHistoricalOutputRootsFromStoreFile(path.join(DATA_ROOT, 'data', 'store.json'));
   initDB(app.getPath('userData'));
+  repairLegacyGeminiOmniVideoFailures();
   cleanupStaleImageTasks('');
   mirrorRuntimeDataToOutputDir();
   scheduleOutputMediaIndex();
@@ -6852,6 +6956,18 @@ app.whenReady().then(() => {
   queue.recoverInterruptedBatches();
   if (!SERVER_ONLY) createWindow();
   startServer(Number(readConfig().port || 7861));
+  const startupPublicCfg = readConfig();
+  if (startupPublicCfg.public_enabled && (startupPublicCfg.public_provider || 'cloudflare') !== 'manual') {
+    const tunnelRestoreTimer = setTimeout(() => {
+      const latest = readConfig();
+      startTunnelProcess({
+        provider:latest.public_provider || 'cloudflare',
+        public_password:latest.public_password || '',
+        public_permission:latest.public_permission || 'generate'
+      });
+    }, 1800);
+    if (typeof tunnelRestoreTimer.unref === 'function') tunnelRestoreTimer.unref();
+  }
 });
 app.on('window-all-closed', () => { if (!SERVER_ONLY && process.platform !== 'darwin') app.quit(); });
-app.on('before-quit', () => { try { if (queue && typeof queue.clearAllRunning === 'function') queue.clearAllRunning(); } catch {} try { const db = getDB(); if (db && typeof db._flushSync === 'function') db._flushSync(); } catch {} try { mirrorRuntimeDataToOutputDir(); } catch {} try { stopTunnelProcess(); } catch {} try { if (server) server.close(); } catch {} });
+app.on('before-quit', () => { try { if (queue && typeof queue.clearAllRunning === 'function') queue.clearAllRunning(); } catch {} try { const db = getDB(); if (db && typeof db._flushSync === 'function') db._flushSync(); } catch {} try { mirrorRuntimeDataToOutputDir(); } catch {} try { stopTunnelProcess({ preserveConfig:true }); } catch {} try { if (server) server.close(); } catch {} });

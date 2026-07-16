@@ -4280,12 +4280,13 @@ function registerApimartVideoUiRules(items = []){
       durations:item.durations || videoRange(item.durationMin || 4, item.durationMax || 10),
       defaultDuration:String(item.defaultDuration || 5),
       note:item.note || '',
-      durationWithVideo:item.durationWithVideo === true
+      durationWithVideo:item.durationWithVideo === true,
+      supportsDuration:item.supportsDuration !== false
     };
   });
 }
 registerApimartVideoUiRules([
-  { model:'gemini-omni-flash-preview', label:'Gemini Omni Flash Preview', resolutions:['720p'], defaultResolution:'720p', aspects:['16:9','9:16'], defaultAspect:'16:9', durationMin:3, durationMax:10, defaultDuration:6, note:'支持文生视频、图生视频和上传视频编辑；图片最多 16 张，视频最多 1 个。', durationWithVideo:true },
+  { model:'gemini-omni-flash-preview', label:'Gemini Omni Flash Preview', resolutions:['720p'], defaultResolution:'720p', aspects:['16:9','9:16'], defaultAspect:'16:9', durationMin:3, durationMax:10, defaultDuration:6, note:'支持文生视频、图生视频和上传视频编辑；输出 720p / 24fps，时长由模型自动决定（3–10 秒）。', supportsDuration:false },
   { model:'doubao-seedance-1-5-pro', label:'Doubao Seedance 1.5 Pro', resolutions:['480p','720p','1080p'], defaultResolution:'720p', aspects:['16:9','9:16','1:1'], durationMin:4, durationMax:12 },
   { model:'doubao-seedance-2.0', label:'Doubao Seedance 2.0', resolutions:['480p','720p','1080p','4k'], aspects:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'], durationMin:4, durationMax:15 },
   { model:'doubao-seedance-2.0-fast', label:'Doubao Seedance 2.0 Fast', resolutions:['480p','720p'], aspects:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'], durationMin:4, durationMax:15 },
@@ -4526,8 +4527,8 @@ function syncVideoApiKeyToHome(value=''){
 function hasReferenceVideo(){ return !!(videoFilesData.length || ($('#videoUrlInput')?.value || '').trim()); }
 function updateVideoDurationVisibility(){
   const rule = currentVideoPlatform() === 'apimart' ? currentApimartVideoRule() : {};
-  const refVideo = (hasReferenceVideo() || currentVideoModeValue() === 'video_edit') && !rule.durationWithVideo;
-  $('#videoDurationWrap')?.classList.toggle('hidden', refVideo);
+  const hideDuration = rule.supportsDuration === false || ((hasReferenceVideo() || currentVideoModeValue() === 'video_edit') && !rule.durationWithVideo);
+  $('#videoDurationWrap')?.classList.toggle('hidden', hideDuration);
   updateVideoModeUI();
 }
 function splitVideoPromptInput(){
@@ -4606,8 +4607,9 @@ async function submitVideoTask(){
   }
   const platformCfg = loadClientConfig(platform) || {};
   const body = { video_platform:platform, api_endpoint:platform === 'flow2api' ? (platformCfg.api_endpoint || 'http://127.0.0.1:38000') : 'https://api.apimart.ai', api_key:apiKey, video_model:$('#videoModel')?.value || '', video_mode:currentVideoModeValue(), seed:$('#videoSeed')?.value?.trim() || '', copies:Number($('#videoRepeatCount')?.value || 1), retry_times:Number($('#videoRetryTimes')?.value || 0), prompts:$('#videoPrompt').value, prompt_multiline_tasks: $('#videoPromptMultilineTasks') ? $('#videoPromptMultilineTasks').checked : false, resolution:$('#videoResolution').value, aspect_ratio:$('#videoAspect').value, video_url:$('#videoUrlInput').value.trim(), video_files:videoFilesData, ref_images:videoRefImages };
-  const apimartDurationWithVideo = platform === 'apimart' && currentApimartVideoRule().durationWithVideo === true;
-  if(!refVideoMode || apimartDurationWithVideo) body.duration = $('#videoDuration').value;
+  const apimartRule = platform === 'apimart' ? currentApimartVideoRule() : null;
+  const apimartDurationWithVideo = apimartRule?.durationWithVideo === true;
+  if(platform !== 'apimart' || (apimartRule?.supportsDuration !== false && (!refVideoMode || apimartDurationWithVideo))) body.duration = $('#videoDuration').value;
   $('#startVideoBtn').disabled = true; $('#startVideoBtn').textContent = '批量提交中...';
   try{
     const r = await api('/api/video_batch_submit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
