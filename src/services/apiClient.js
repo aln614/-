@@ -1162,13 +1162,21 @@ const APIMART_RESPONSE_CHAT_MODELS = [
   { id: 'gemini-3-pro-preview', name: 'Gemini · gemini-3-pro-preview' },
 
   // Claude
+  { id: 'claude-sonnet-5', name: 'Claude · claude-sonnet-5' },
+  { id: 'claude-fable-5', name: 'Claude · claude-fable-5' },
   { id: 'claude-opus-4-8', name: 'Claude · claude-opus-4-8' },
   { id: 'claude-opus-4-7', name: 'Claude · claude-opus-4-7' },
   { id: 'claude-sonnet-4-6-thinking', name: 'Claude · claude-sonnet-4-6-thinking' },
   { id: 'claude-opus-4-6', name: 'Claude · claude-opus-4-6' },
   { id: 'claude-opus-4-6-thinking', name: 'Claude · claude-opus-4-6-thinking' },
+  { id: 'claude-opus-4-5-20251101', name: 'Claude · claude-opus-4-5-20251101' },
+  { id: 'claude-opus-4-5-20251101-thinking', name: 'Claude · claude-opus-4-5-20251101-thinking' },
+  { id: 'claude-haiku-4-5-20251001', name: 'Claude · claude-haiku-4-5-20251001' },
+  { id: 'claude-haiku-4-5-20251001-thinking', name: 'Claude · claude-haiku-4-5-20251001-thinking' },
+  { id: 'claude-sonnet-4-5-20250929', name: 'Claude · claude-sonnet-4-5-20250929' },
   { id: 'claude-sonnet-4-5-20250929-thinking', name: 'Claude · claude-sonnet-4-5-20250929-thinking' },
   { id: 'claude-sonnet-4-6', name: 'Claude · claude-sonnet-4-6' },
+  { id: 'claude-3-7-sonnet-20250219-thinking', name: 'Claude · claude-3-7-sonnet-20250219-thinking' },
   { id: 'claude-opus-4.1', name: 'Claude · claude-opus-4.1' },
   { id: 'claude-opus-4', name: 'Claude · claude-opus-4' },
   { id: 'claude-sonnet-4', name: 'Claude · claude-sonnet-4' },
@@ -1255,6 +1263,96 @@ const APIMART_RESPONSE_CHAT_MODELS = [
   { id: 'hunyuan-turbo', name: 'Hunyuan · hunyuan-turbo' },
   { id: 'hunyuan-large', name: 'Hunyuan · hunyuan-large' }
 ];
+
+const APIMART_CHAT_MARKETPLACE_URL = 'https://api.apimart.ai/api/marketplace/models';
+const APIMART_CHAT_CATALOG_TTL_MS = 6 * 60 * 60 * 1000;
+let apimartLiveChatModels = [];
+let apimartChatModelsUpdatedAt = 0;
+let apimartChatModelsRefreshPromise = null;
+let apimartChatModelsLastError = '';
+
+function chatModelFamily(id = '', vendor = '') {
+  const model = String(id || '').toLowerCase();
+  if (/^(gpt-|chatgpt-|o\d)/.test(model)) return 'GPT';
+  if (model.startsWith('gemini-')) return 'Gemini';
+  if (model.startsWith('claude-')) return 'Claude';
+  if (model.startsWith('deepseek-')) return 'DeepSeek';
+  if (/^(kimi-|moonshot-)/.test(model)) return 'Kimi';
+  if (model.startsWith('qwen')) return 'Qwen';
+  if (model.startsWith('glm-')) return 'GLM';
+  if (model.startsWith('minimax-')) return 'MiniMax';
+  if (model.startsWith('grok-')) return 'Grok';
+  if (/^(mistral-|codestral-)/.test(model)) return 'Mistral';
+  if (model.startsWith('llama-')) return 'Llama';
+  return String(vendor || 'Other').trim() || 'Other';
+}
+
+function normalizeMarketplaceChatModels(rows = []) {
+  const familyOrder = ['GPT','Gemini','Claude','DeepSeek','Kimi','Qwen','GLM','MiniMax','Grok','Mistral','Llama','Other'];
+  const unique = new Map();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const id = String(row?.model_name || row?.id || '').trim();
+    if (!id || String(row?.media_type || 'chat').toLowerCase() !== 'chat' || /^text-embedding/i.test(id)) continue;
+    const family = chatModelFamily(id, row?.vendor?.name || '');
+    unique.set(id.toLowerCase(), {
+      id,
+      name:`${family} · ${id}`,
+      family,
+      created_at:Number(row?.created_at || 0)
+    });
+  }
+  return [...unique.values()]
+    .sort((a, b) => {
+      const aGroup = familyOrder.indexOf(a.family);
+      const bGroup = familyOrder.indexOf(b.family);
+      const groupDiff = (aGroup < 0 ? familyOrder.length : aGroup) - (bGroup < 0 ? familyOrder.length : bGroup);
+      if (groupDiff) return groupDiff;
+      if (b.created_at !== a.created_at) return b.created_at - a.created_at;
+      return a.id.localeCompare(b.id);
+    })
+    .map(({id, name}) => ({id, name}));
+}
+
+async function refreshApimartChatModels(proxyUrl = '', force = false) {
+  if (!force && apimartLiveChatModels.length && Date.now() - apimartChatModelsUpdatedAt < APIMART_CHAT_CATALOG_TTL_MS) {
+    return apimartLiveChatModels;
+  }
+  if (apimartChatModelsRefreshPromise) return apimartChatModelsRefreshPromise;
+  apimartChatModelsRefreshPromise = (async () => {
+    const first = await getJson(`${APIMART_CHAT_MARKETPLACE_URL}?type=chat&page_size=100&page=1`, '', proxyUrl);
+    const firstData = first?.data || {};
+    const rows = Array.isArray(firstData.models) ? [...firstData.models] : [];
+    const pageCount = Math.max(1, Math.min(5, Math.ceil(Number(firstData.total || rows.length) / 100)));
+    if (pageCount > 1) {
+      const rest = await Promise.all(Array.from({length:pageCount - 1}, (_, i) =>
+        getJson(`${APIMART_CHAT_MARKETPLACE_URL}?type=chat&page_size=100&page=${i + 2}`, '', proxyUrl)
+      ));
+      for (const page of rest) rows.push(...(Array.isArray(page?.data?.models) ? page.data.models : []));
+    }
+    const normalized = normalizeMarketplaceChatModels(rows);
+    if (!normalized.length) throw new Error('APIMart 聊天模型目录为空');
+    apimartLiveChatModels = normalized;
+    apimartChatModelsUpdatedAt = Date.now();
+    apimartChatModelsLastError = '';
+    return apimartLiveChatModels;
+  })().catch(err => {
+    apimartChatModelsLastError = String(err?.message || err || 'unknown_error');
+    return apimartLiveChatModels.length ? apimartLiveChatModels : APIMART_RESPONSE_CHAT_MODELS;
+  }).finally(() => { apimartChatModelsRefreshPromise = null; });
+  return apimartChatModelsRefreshPromise;
+}
+
+function getApimartChatModels(proxyUrl = '') {
+  const stale = !apimartLiveChatModels.length || Date.now() - apimartChatModelsUpdatedAt >= APIMART_CHAT_CATALOG_TTL_MS;
+  if (stale && !apimartChatModelsRefreshPromise) refreshApimartChatModels(proxyUrl).catch(()=>{});
+  return {
+    models:apimartLiveChatModels.length ? apimartLiveChatModels : APIMART_RESPONSE_CHAT_MODELS,
+    source:apimartLiveChatModels.length ? 'apimart_marketplace' : 'built_in',
+    refreshing:!!apimartChatModelsRefreshPromise,
+    updated_at:apimartChatModelsUpdatedAt || null,
+    error:apimartChatModelsLastError
+  };
+}
 
 function responseTextBlockTypeForRole(role) {
   // APIMart /v1/responses follows OpenAI Responses content rules:
@@ -1419,7 +1517,7 @@ function pickChatCompletionText(data) {
     for (const key of ['choices','message','content','candidates','parts','output','data','result','response']) walk(x[key]);
   };
   walk(root);
-  return found.join('\n').trim();
+  return [...new Set(found.map(text => String(text || '').trim()).filter(Boolean))].join('\n').trim();
 }
 
 function normalizeApimartTextBase(input){
@@ -1533,4 +1631,4 @@ async function grsaiTool({ baseUrl, apiKey, action, model, extra = {}, queryApiK
   return postJson(base + path, apiKey, payload);
 }
 
-module.exports = { generateOne, grsaiTool, chatCompletion, APIMART_RESPONSE_CHAT_MODELS, sizeToAspect, resolveModelSize, GPT_IMAGE_2_VIP_SIZES, GPT_IMAGE_2_SIZES, APIMART_IMAGE_MODELS, APIMART_MODEL_RULES, getApimartImageRule };
+module.exports = { generateOne, grsaiTool, chatCompletion, APIMART_RESPONSE_CHAT_MODELS, getApimartChatModels, refreshApimartChatModels, sizeToAspect, resolveModelSize, GPT_IMAGE_2_VIP_SIZES, GPT_IMAGE_2_SIZES, APIMART_IMAGE_MODELS, APIMART_MODEL_RULES, getApimartImageRule };

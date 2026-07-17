@@ -1157,6 +1157,12 @@ async function loadChatModels(){
     if(models.length){
       chatModelCatalog = models;
       renderChatModelPresetOptions($('#chatModelSearch')?.value || '');
+      if(ret.refreshing && !loadChatModels._refreshTimer){
+        loadChatModels._refreshTimer = setTimeout(()=>{
+          loadChatModels._refreshTimer = null;
+          loadChatModels();
+        }, 2200);
+      }
       return;
     }
   }catch(e){

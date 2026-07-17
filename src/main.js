@@ -10,7 +10,7 @@ const { app, BrowserWindow, shell, Menu, clipboard, nativeImage, ipcMain } = req
 const { spawn } = require('child_process');
 const { initDB, getDB, addLog, listBatches, listImages, listLogs, nowISO, uuid, setNetworkTimeOffset, getNetworkTimeInfo } = require('./services/db');
 const { TaskQueue } = require('./services/taskQueue');
-const { grsaiTool, chatCompletion, APIMART_RESPONSE_CHAT_MODELS } = require('./services/apiClient');
+const { grsaiTool, chatCompletion, getApimartChatModels, refreshApimartChatModels } = require('./services/apiClient');
 const { safeName, ensureDir, makeDirs, createThumb, downloadToFile } = require('./services/cache');
 
 let mainWindow = null;
@@ -6499,7 +6499,10 @@ async function apiHandler(req, res, parsed) {
     if (method === 'GET' && p === '/api/mj_describe_batch') { return send(res, describeBatchRows(String(parsed.query.batch_id || ''), owner)); }
     if (method === 'POST' && p === '/api/export_describe_word') { const body=await readBody(req); const docPath=exportDescribeWord(body.batch_id || '', owner); return send(res,{ok:true,url:`/download?path=${encodeURIComponent(docPath)}`}); }
     if (method === 'POST' && p === '/api/export_describe_xlsx') { const body=await readBody(req); const xlsxPath=exportDescribeXlsx(body.batch_id || '', owner); return send(res,{ok:true,url:`/download?path=${encodeURIComponent(xlsxPath)}`}); }
-    if (method === 'GET' && p === '/api/chat_models') return send(res, {ok:true, models: APIMART_RESPONSE_CHAT_MODELS, endpoint:'/v1/chat/completions'});
+    if (method === 'GET' && p === '/api/chat_models') {
+      const catalog = getApimartChatModels(cfg.apimart_proxy_url || '');
+      return send(res, {ok:true, ...catalog, endpoint:'/v1/chat/completions'});
+    }
     if (method === 'GET' && p === '/api/chat_history') return send(res, await readChatHistory(deviceOwner, cfg));
     if (method === 'POST' && p === '/api/chat_history') {
       const body = await readBody(req);
@@ -6713,6 +6716,8 @@ function startServer(port, retryCount = 0) {
     saveConfig({port:Number(currentPort || 7861)});
     addLog(`Desktop WebUI server started on http://127.0.0.1:${currentPort}`, {ownerId:'local'});
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.loadURL(`http://127.0.0.1:${currentPort}`);
+    const chatCatalogTimer = setTimeout(() => refreshApimartChatModels(readConfig().apimart_proxy_url || '').catch(()=>{}), 1200);
+    if (typeof chatCatalogTimer.unref === 'function') chatCatalogTimer.unref();
   });
 }
 
