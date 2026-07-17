@@ -338,6 +338,10 @@ async function connectWS() {
             tokenQueue = tokenQueue.then(() => handleGetToken(data)).catch(err => {
                 console.error("[Flow2API] Queue Error:", err);
             });
+        } else if (data.type === "submit_flow") {
+            tokenQueue = tokenQueue.then(() => handleSubmitFlow(data)).catch(err => {
+                console.error("[Flow2API] Flow submit queue error:", err);
+            });
         }
     };
 
@@ -437,7 +441,8 @@ async function handleGetToken(data) {
             ws.send(JSON.stringify({
                 req_id: data.req_id,
                 status: successResponse.status,
-                token: successResponse.token
+                token: successResponse.token,
+                tab_id: tokenTabId
             }));
         } else {
             ws.send(JSON.stringify({
@@ -461,6 +466,65 @@ async function handleGetToken(data) {
                 console.log("[Flow2API] Error closing tab:", e);
             }
         }
+    }
+}
+
+async function handleSubmitFlow(data) {
+    try {
+        const projectMatch = String(data.url || "").match(/\/projects\/([^/]+)\//);
+        const projectNeedle = projectMatch ? `/project/${projectMatch[1]}` : "";
+        let targetTab = data.tab_id ? await getTab(Number(data.tab_id)) : null;
+        if (!targetTab || !String(targetTab.url || "").startsWith("https://labs.google/fx/tools/flow")) {
+            const flowTabs = await queryTabs({ url: ["https://labs.google/fx/tools/flow*"] });
+            targetTab = flowTabs.find(tab => projectNeedle && String(tab.url || "").includes(projectNeedle))
+                || flowTabs.find(tab => tab.active)
+                || flowTabs.sort((a, b) => Number(b.lastAccessed || 0) - Number(a.lastAccessed || 0))[0];
+        }
+        if (!targetTab || !targetTab.id) {
+            throw new Error("No signed-in Google Flow tab is available for request submit.");
+        }
+
+        const results = await chrome.scripting.executeScript({
+            target: { tabId: targetTab.id },
+            world: "MAIN",
+            func: async (url, payload, atToken, timeoutMs) => {
+                const controller = new AbortController();
+                const timer = setTimeout(() => controller.abort(), timeoutMs);
+                try {
+                    const response = await fetch(url, {
+                        method: "POST",
+                        headers: {
+                            authorization: `Bearer ${atToken}`,
+                            "content-type": "application/json"
+                        },
+                        body: JSON.stringify(payload),
+                        signal: controller.signal
+                    });
+                    const text = await response.text();
+                    return { ok: response.ok, status: response.status, text };
+                } catch (error) {
+                    return { ok: false, status: 0, text: "", error: String(error) };
+                } finally {
+                    clearTimeout(timer);
+                }
+            },
+            args: [data.url, data.json_data, data.at_token, 120000]
+        });
+        const result = results && results[0] ? results[0].result : null;
+        if (!result) {
+            throw new Error("Google Flow tab did not return a request result.");
+        }
+        ws.send(JSON.stringify({
+            req_id: data.req_id,
+            status: "success",
+            result
+        }));
+    } catch (error) {
+        ws.send(JSON.stringify({
+            req_id: data.req_id,
+            status: "error",
+            error: error && error.message ? error.message : String(error)
+        }));
     }
 }
 

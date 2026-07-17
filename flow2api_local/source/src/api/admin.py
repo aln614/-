@@ -176,6 +176,16 @@ def _guess_impersonate_from_user_agent(user_agent: str) -> str:
     except Exception:
         return "chrome120"
 
+    if major >= 146:
+        return "chrome146"
+    if major >= 145:
+        return "chrome145"
+    if major >= 142:
+        return "chrome142"
+    if major >= 136:
+        return "chrome136"
+    if major >= 131:
+        return "chrome131"
     if major >= 124:
         return "chrome124"
     if major >= 120:

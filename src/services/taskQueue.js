@@ -13,6 +13,23 @@ function parseTimeMs(v) {
 }
 function elapsedMsSince(v) { return Math.max(0, Date.now() - parseTimeMs(v)); }
 function taskTimeoutMs(cfg) { return Math.max(1000, Number(cfg.timeoutMs || 0) || 20 * 60 * 1000); }
+function isFlowRiskCooldownError(err) {
+  const text = String(err && (err.message || err) || '').toLowerCase();
+  return text.includes('recaptcha') && (
+    text.includes('risk') ||
+    text.includes('cooldown') ||
+    text.includes('unusual_activity') ||
+    text.includes('风控') ||
+    text.includes('冷却')
+  );
+}
+function flowRiskBackoffMs(err) {
+  const text = String(err && (err.message || err) || '');
+  const match = text.match(/(?:remaining|还剩(?:约)?|剩余)[^0-9]{0,16}([0-9]{1,4})\s*(?:s|秒)?/i);
+  const seconds = match ? Number(match[1]) + 2 : 47;
+  return Math.max(15_000, Math.min(300_000, seconds * 1000));
+}
+function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
 class TaskQueue extends EventEmitter {
   constructor() {
@@ -22,6 +39,21 @@ class TaskQueue extends EventEmitter {
     this.resetToken = 0;
     this.progressUpdateCache = new Map();
     this.claimedTasks = new Set();
+    this.flow2ApiBackoffUntil = 0;
+    this.flow2ApiRiskStreak = 0;
+  }
+
+  async waitForFlow2ApiBackoff(batchId, taskId, token) {
+    while (Date.now() < this.flow2ApiBackoffUntil) {
+      if (token !== this.resetToken || this.stopFlags.has(batchId)) return false;
+      const remainingSeconds = Math.max(1, Math.ceil((this.flow2ApiBackoffUntil - Date.now()) / 1000));
+      const db = getDB();
+      db.prepare('UPDATE tasks SET progress=?, progress_text=?, updated_at=? WHERE id=?')
+        .run(1, `Flow2API 会话恢复中，约 ${remainingSeconds} 秒后自动重试`, nowISO(), taskId);
+      this.emit('changed');
+      await sleep(Math.min(1000, Math.max(100, this.flow2ApiBackoffUntil - Date.now())));
+    }
+    return true;
   }
 
   clearAllRunning() {
@@ -214,6 +246,11 @@ class TaskQueue extends EventEmitter {
           this.emit('changed');
           continue;
         }
+        const flow2apiMode = String(cfg.imageApiPlatform || '').toLowerCase() === 'flow2api';
+        if (flow2apiMode && this.flow2ApiBackoffUntil > Date.now()) {
+          const canContinue = await this.waitForFlow2ApiBackoff(batchId, task.id, token);
+          if (!canContinue) return;
+        }
         const attempt = Number(task.attempt || 0) + (task.status === '生成中' && task.remote_task_id ? 0 : 1);
         const nextStatus = task.remote_task_id ? '生成中' : '提交生成中';
         const platformName = String(cfg.imageApiPlatform || '').toLowerCase() === 'flow2api' ? '本地 Flow2API' : 'APIMart';
@@ -287,17 +324,34 @@ class TaskQueue extends EventEmitter {
         })();
         db._save();
         addLog(`任务 ${task.task_index} 完成${extraImages.length ? '，额外保存 ' + extraImages.length + ' 张' : ''}`, { ownerId: task.owner_id, batchId });
+        if (flow2apiMode) {
+          this.flow2ApiRiskStreak = 0;
+          this.flow2ApiBackoffUntil = 0;
+        }
         } catch (err) {
         if (token !== this.resetToken || this.stopFlags.has(batchId)) return;
         const maxRetry = Number(batch.retry_times || cfg.retryTimes || 0);
         const timedOut = elapsedMsSince(task.recovery_started_at || task.created_at) >= taskTimeoutMs(cfg);
-        const shouldRetry = !timedOut && attempt <= maxRetry;
+        const flowRiskCooldown = flow2apiMode && isFlowRiskCooldownError(err);
+        if (flowRiskCooldown) {
+          this.flow2ApiRiskStreak = Math.min(4, this.flow2ApiRiskStreak + 1);
+          const adaptiveBackoff = Math.min(300_000, 45_000 * (2 ** (this.flow2ApiRiskStreak - 1)));
+          this.flow2ApiBackoffUntil = Math.max(
+            this.flow2ApiBackoffUntil,
+            Date.now() + Math.max(flowRiskBackoffMs(err), adaptiveBackoff)
+          );
+        }
+        const shouldRetry = !timedOut && (flowRiskCooldown || attempt <= maxRetry);
+        const nextAttempt = flowRiskCooldown ? Math.max(0, attempt - 1) : attempt;
+        const retryError = flowRiskCooldown
+          ? 'Flow2API reCAPTCHA 会话正在恢复，任务将在当前批次内自动重试'
+          : (err.message || String(err));
         db.transaction(() => {
-          db.prepare('UPDATE tasks SET status=?, error_message=?, updated_at=? WHERE id=?').run(shouldRetry ? '等待中' : '失败', timedOut ? `单任务累计超时：${Math.round(elapsedMsSince(task.recovery_started_at || task.created_at)/1000)} 秒` : (err.message || String(err)), nowISO(), task.id);
+          db.prepare('UPDATE tasks SET status=?, attempt=?, error_message=?, updated_at=? WHERE id=?').run(shouldRetry ? '等待中' : '失败', nextAttempt, timedOut ? `单任务累计超时：${Math.round(elapsedMsSince(task.recovery_started_at || task.created_at)/1000)} 秒` : retryError, nowISO(), task.id);
           db.prepare('UPDATE batches SET fail_count=fail_count+?, running_count=MAX(running_count-1,0), updated_at=? WHERE id=?').run(shouldRetry ? 0 : 1, nowISO(), batchId);
         })();
         db._save();
-        addLog(`任务 ${task.task_index} ${shouldRetry ? '失败重试' : '失败'}：${err.message}`, { ownerId: task.owner_id, batchId, level: shouldRetry ? 'warning' : 'error' });
+        addLog(`任务 ${task.task_index} ${shouldRetry ? '失败重试' : '失败'}：${retryError}`, { ownerId: task.owner_id, batchId, level: shouldRetry ? 'warning' : 'error' });
       }
       this.emit('changed');
       } finally {

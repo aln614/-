@@ -17,5 +17,6 @@ services:
       - DISPLAY=:99
       - XVFB_SCREEN=1440x900x24
       - PERSONAL_BROWSER_HEADLESS=0
+      - PERSONAL_BROWSER_USER_DATA_DIR=/app/data/browser_profile
     shm_size: "2gb"
     restart: unless-stopped

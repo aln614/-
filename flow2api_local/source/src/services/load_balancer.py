@@ -29,15 +29,16 @@ class LoadBalancer:
         self._risk_cooldowns: Dict[int, Dict[str, object]] = {}
         self._risk_cooldown_lock = asyncio.Lock()
 
-    async def cooldown_token(self, token_id: Optional[int], seconds: int = 1800, reason: str = ""):
+    async def cooldown_token(self, token_id: Optional[int], seconds: Optional[int] = None, reason: str = ""):
         """Temporarily avoid a token after Flow risk-control rejection."""
         if token_id is None:
             return
 
         try:
-            normalized_seconds = max(300, min(3600, int(seconds)))
+            configured_seconds = config.flow_risk_cooldown_seconds
+            normalized_seconds = max(15, min(300, int(seconds if seconds is not None else configured_seconds)))
         except Exception:
-            normalized_seconds = 1800
+            normalized_seconds = 45
 
         async with self._risk_cooldown_lock:
             until = time.time() + normalized_seconds
@@ -49,6 +50,13 @@ class LoadBalancer:
             f"[LOAD_BALANCER] Token {token_id} 已进入 Flow 风控冷却 "
             f"{normalized_seconds}s, reason={reason or 'flow_risk_control'}"
         )
+
+    async def clear_token_cooldown(self, token_id: Optional[int]):
+        """Clear stale in-memory risk state after the browser session has recovered."""
+        if token_id is None:
+            return
+        async with self._risk_cooldown_lock:
+            self._risk_cooldowns.pop(int(token_id), None)
 
     async def _get_risk_cooldown_remaining(self, token_id: Optional[int]) -> int:
         if token_id is None:

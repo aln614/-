@@ -1522,7 +1522,7 @@ class GenerationHandler:
         try:
             await self.load_balancer.cooldown_token(
                 token.id,
-                seconds=1800,
+                seconds=config.flow_risk_cooldown_seconds,
                 reason="recaptcha_evaluation_failed",
             )
         except Exception as exc:

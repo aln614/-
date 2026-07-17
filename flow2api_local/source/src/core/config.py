@@ -91,6 +91,15 @@ class Config:
         except Exception:
             return 3
 
+    @property
+    def flow_risk_cooldown_seconds(self) -> int:
+        """Short account-level backoff after an upstream reCAPTCHA rejection."""
+        value = self._config.get("flow", {}).get("risk_cooldown_seconds", 45)
+        try:
+            return max(15, min(300, int(value)))
+        except Exception:
+            return 45
+
     def set_flow_max_retries(self, retries: int):
         """Set flow max retries"""
         if "flow" not in self._config:

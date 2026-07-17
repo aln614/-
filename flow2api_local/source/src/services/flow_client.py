@@ -243,7 +243,7 @@ class FlowClient:
                         headers=headers,
                         proxy=proxy_url,
                         timeout=request_timeout,
-                        impersonate="chrome124"
+                        impersonate="chrome146"
                     )
                 else:  # POST
                     response = await session.post(
@@ -252,7 +252,7 @@ class FlowClient:
                         json=json_data,
                         proxy=proxy_url,
                         timeout=request_timeout,
-                        impersonate="chrome124"
+                        impersonate="chrome146"
                     )
 
                 duration_ms = (time.time() - start_time) * 1000
@@ -505,16 +505,25 @@ class FlowClient:
             or "recaptcha evaluation failed" in error_lower
         )
 
-    async def _activate_flow_risk_pause(self, error_message: str, seconds: int = 1800):
+    async def _activate_flow_risk_pause(self, error_message: str, seconds: Optional[int] = None):
         if not self._is_flow_risk_error_text(error_message):
             return
-        pause_seconds = max(300, min(3600, int(seconds or 1800)))
+        try:
+            configured_seconds = config.flow_risk_cooldown_seconds
+            pause_seconds = max(15, min(300, int(seconds if seconds is not None else configured_seconds)))
+        except Exception:
+            pause_seconds = 45
         async with self._flow_risk_lock:
             self._flow_risk_until = max(self._flow_risk_until, time.time() + pause_seconds)
             self._flow_risk_reason = str(error_message or "flow_risk_control")[:240]
         debug_logger.log_warning(
             f"[FLOW RISK] Google Flow reCAPTCHA risk pause {pause_seconds}s: {self._flow_risk_reason}"
         )
+
+    async def _clear_flow_risk_pause(self):
+        async with self._flow_risk_lock:
+            self._flow_risk_until = 0.0
+            self._flow_risk_reason = ""
 
     async def _wait_flow_risk_pause(self) -> int:
         async with self._flow_risk_lock:
@@ -592,10 +601,87 @@ class FlowClient:
         url: str,
         json_data: Dict[str, Any],
         at: str,
-        attempt_trace: Optional[Dict[str, Any]] = None
+        attempt_trace: Optional[Dict[str, Any]] = None,
+        browser_ref: Optional[Union[int, str]] = None,
     ) -> Dict[str, Any]:
         """图片生成请求使用更短超时，并在网络超时时快速重试。"""
         request_timeout = config.flow_image_request_timeout
+
+        browser_ref_text = str(browser_ref or "").strip()
+        if browser_ref_text.startswith("extension:"):
+            from .browser_captcha_extension import ExtensionCaptchaService
+
+            token_id_text = browser_ref_text.split(":", 1)[1].strip()
+            extension_token_id = int(token_id_text) if token_id_text.isdigit() else None
+            service = await ExtensionCaptchaService.get_instance(self.db)
+            started_at = time.time()
+            try:
+                result = await service.request_flow_api(
+                    url=url,
+                    json_data=json_data,
+                    at_token=at,
+                    timeout=request_timeout,
+                    token_id=extension_token_id,
+                )
+                if isinstance(attempt_trace, dict):
+                    attempt_trace.setdefault("http_attempts", []).append({
+                        "attempt": 1,
+                        "route": "extension_chrome_tab",
+                        "timeout_seconds": request_timeout,
+                        "used_media_proxy": False,
+                        "duration_ms": int((time.time() - started_at) * 1000),
+                        "success": True,
+                    })
+                return result
+            except Exception as exc:
+                if isinstance(attempt_trace, dict):
+                    attempt_trace.setdefault("http_attempts", []).append({
+                        "attempt": 1,
+                        "route": "extension_chrome_tab",
+                        "timeout_seconds": request_timeout,
+                        "used_media_proxy": False,
+                        "duration_ms": int((time.time() - started_at) * 1000),
+                        "success": False,
+                        "error": str(exc)[:240],
+                    })
+                raise
+
+        if config.captcha_method == "personal" and browser_ref:
+            from .browser_captcha_personal import BrowserCaptchaService
+
+            service = await BrowserCaptchaService.get_instance(self.db)
+            started_at = time.time()
+            try:
+                result = await service.request_flow_api(
+                    slot_id=str(browser_ref),
+                    url=url,
+                    json_data=json_data,
+                    at_token=at,
+                    timeout_seconds=request_timeout,
+                )
+                if isinstance(attempt_trace, dict):
+                    attempt_trace.setdefault("http_attempts", []).append({
+                        "attempt": 1,
+                        "route": "captcha_browser_tab",
+                        "timeout_seconds": request_timeout,
+                        "used_media_proxy": False,
+                        "duration_ms": int((time.time() - started_at) * 1000),
+                        "success": True,
+                    })
+                return result
+            except Exception as exc:
+                if isinstance(attempt_trace, dict):
+                    attempt_trace.setdefault("http_attempts", []).append({
+                        "attempt": 1,
+                        "route": "captcha_browser_tab",
+                        "timeout_seconds": request_timeout,
+                        "used_media_proxy": False,
+                        "duration_ms": int((time.time() - started_at) * 1000),
+                        "success": False,
+                        "error": str(exc)[:240],
+                    })
+                raise
+
         total_attempts = max(1, config.flow_image_timeout_retry_count + 1)
         retry_delay = config.flow_image_timeout_retry_delay
 
@@ -1191,6 +1277,7 @@ class FlowClient:
                         json_data=json_data,
                         at=at,
                         attempt_trace=attempt_trace,
+                        browser_ref=browser_id,
                     )
                 finally:
                     if submit_gate_acquired:
@@ -2831,9 +2918,12 @@ class FlowClient:
             "recaptcha evaluation failed",
         ))
         if unusual_activity:
+            # The personal/browser captcha service has already rebuilt or
+            # quarantined the rejected tab above. Keep a short settle window
+            # instead of blocking the only local account for 30 minutes.
             await self._activate_flow_risk_pause(error_str)
             debug_logger.log_warning(
-                f"{log_prefix} hit Google Flow reCAPTCHA risk control; stop retrying this request and cool down."
+                f"{log_prefix} hit Google Flow reCAPTCHA risk control; browser recovery finished and a short backoff is active."
             )
             return False
         retry_delay = min(45, 12 * (retry_attempt + 1)) if unusual_activity else 1
@@ -2908,6 +2998,20 @@ class FlowClient:
             error_reason: 已归类的错误原因
             error_message: 原始错误文本
         """
+        browser_ref_text = str(browser_id or "").strip()
+        if browser_ref_text.startswith("extension:"):
+            try:
+                from .browser_captcha_extension import ExtensionCaptchaService
+                service = await ExtensionCaptchaService.get_instance(self.db)
+                await service.report_flow_error(
+                    project_id=project_id or "",
+                    error_reason=error_reason or "",
+                    error_message=error_message or "",
+                )
+            except Exception:
+                pass
+            return
+
         if config.captcha_method == "browser":
             try:
                 from .browser_captcha import BrowserCaptchaService
@@ -2955,6 +3059,8 @@ class FlowClient:
 
     async def _notify_browser_captcha_request_finished(self, browser_id: Optional[Union[int, str]] = None):
         """通知有头浏览器：上游图片/视频请求已结束，可关闭对应打码浏览器。"""
+        if str(browser_id or "").strip().startswith("extension:"):
+            return
         if config.captcha_method == "browser":
             try:
                 from .browser_captcha import BrowserCaptchaService
@@ -3247,7 +3353,7 @@ class FlowClient:
                     token_id=token_id
                 )
                 self._set_request_fingerprint(None)
-                return token, None
+                return token, f"extension:{token_id or ''}" if token else None
             except Exception as e:
                 debug_logger.log_error(f"[reCAPTCHA Extension] 错误: {str(e)}")
                 self._set_request_fingerprint(None)
@@ -3277,7 +3383,7 @@ class FlowClient:
                     )
                     if extension_token:
                         self._set_request_fingerprint(None)
-                        return extension_token, None
+                        return extension_token, f"extension:{token_id or ''}"
                     debug_logger.log_warning("[reCAPTCHA] Chrome Flow 会话未返回 token，回退内置浏览器")
 
                 from .browser_captcha_personal import BrowserCaptchaService
@@ -3293,7 +3399,9 @@ class FlowClient:
                     )
                 else:
                     token = await service.get_token(project_id, action, token_id=token_id)
-                debug_logger.log_info(f"[reCAPTCHA] get_token 返回: {token[:50] if token else None}...")
+                debug_logger.log_info(
+                    f"[reCAPTCHA] get_token 返回: {'成功，长度=' + str(len(token)) if token else '空'}"
+                )
                 fingerprint = service.get_last_fingerprint() if token else None
                 self._set_request_fingerprint(fingerprint if token else None)
                 # Keep the exact worker/slot so upstream failures can quarantine
@@ -3460,9 +3568,9 @@ class FlowClient:
                     create_data["task"]["minScore"] = min_score
 
                 if proxy:
-                    result = await session.post(create_url, json=create_data, impersonate="chrome124", proxy=proxy)
+                    result = await session.post(create_url, json=create_data, impersonate="chrome146", proxy=proxy)
                 else:
-                    result = await session.post(create_url, json=create_data, impersonate="chrome124", proxies=proxies)
+                    result = await session.post(create_url, json=create_data, impersonate="chrome146", proxies=proxies)
 
                 debug_logger.log_info(f"[reCAPTCHA {method}] createTask response status: {result.status_code}")
                 result_json = result.json()
@@ -3483,9 +3591,9 @@ class FlowClient:
                     }
                     # 根据代理类型使用不同参数
                     if proxy:
-                        result = await session.post(get_url, json=get_data, impersonate="chrome124", proxy=proxy)
+                        result = await session.post(get_url, json=get_data, impersonate="chrome146", proxy=proxy)
                     else:
-                        result = await session.post(get_url, json=get_data, impersonate="chrome124", proxies=proxies)
+                        result = await session.post(get_url, json=get_data, impersonate="chrome146", proxies=proxies)
                     result_json = result.json()
 
                     debug_logger.log_info(f"[reCAPTCHA {method}] polling #{i+1}: {result_json}")

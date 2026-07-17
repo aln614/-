@@ -57,6 +57,7 @@ def resolve_effective_personal_max_resident_tabs(value) -> int:
 
 PERSONAL_COOKIE_PREBIND_URL = "about:blank"
 PERSONAL_LABS_BOOTSTRAP_URL = "https://labs.google/fx/api/auth/providers"
+PERSONAL_FLOW_PROJECT_URL_TEMPLATE = "https://labs.google/fx/tools/flow/project/{project_id}"
 PERSONAL_COOKIE_TARGET_URLS = (
     "https://labs.google/",
     "https://www.google.com/",
@@ -6801,7 +6802,14 @@ class BrowserCaptchaService:
             return False
 
     @staticmethod
-    def _is_labs_bootstrap_url(url: str) -> bool:
+    def _resolve_labs_bootstrap_url(project_id: Optional[str] = None) -> str:
+        normalized_project_id = re.sub(r"[^A-Za-z0-9_-]", "", str(project_id or "").strip())
+        if normalized_project_id:
+            return PERSONAL_FLOW_PROJECT_URL_TEMPLATE.format(project_id=normalized_project_id)
+        return PERSONAL_LABS_BOOTSTRAP_URL
+
+    @staticmethod
+    def _is_labs_bootstrap_url(url: str, project_id: Optional[str] = None) -> bool:
         normalized_url = str(url or "").strip()
         if not normalized_url:
             return False
@@ -6813,10 +6821,22 @@ class BrowserCaptchaService:
 
         host = str(parsed.netloc or "").strip().lower()
         path = str(parsed.path or "").strip()
-        return host == "labs.google" and path.rstrip("/") == "/fx/api/auth/providers"
+        if host != "labs.google":
+            return False
 
-    async def _open_labs_bootstrap_page(self, tab, *, label: str) -> bool:
+        expected_url = BrowserCaptchaService._resolve_labs_bootstrap_url(project_id)
+        expected_path = urlparse(expected_url).path.rstrip("/")
+        return path.rstrip("/") == expected_path
+
+    async def _open_labs_bootstrap_page(
+        self,
+        tab,
+        *,
+        label: str,
+        project_id: Optional[str] = None,
+    ) -> bool:
         """在 cookie 绑定之后再首跳 labs.google，避免首轮 anchor/reload 丢 cookie。"""
+        target_url = self._resolve_labs_bootstrap_url(project_id)
         async def _describe_surface(stage: str) -> tuple[str, str]:
             current_url = ""
             ready_state = ""
@@ -6851,7 +6871,7 @@ class BrowserCaptchaService:
 
         async def _confirm_labs_surface(reason: str, *, stage: str) -> bool:
             current_url, ready_state = await _describe_surface(stage)
-            if self._is_labs_bootstrap_url(current_url) and ready_state in {"interactive", "complete"}:
+            if self._is_labs_bootstrap_url(current_url, project_id) and ready_state in {"interactive", "complete"}:
                 debug_logger.log_warning(
                     "[BrowserCaptcha] labs 引导页命令超时，但页面已落到目标地址 "
                     f"(label={label}, reason={reason}, url={current_url}, "
@@ -6869,7 +6889,7 @@ class BrowserCaptchaService:
         try:
             await self._tab_get(
                 tab,
-                PERSONAL_LABS_BOOTSTRAP_URL,
+                target_url,
                 label=f"labs_bootstrap_get:{label}",
                 timeout_seconds=self._navigation_timeout_seconds,
             )
@@ -6888,7 +6908,7 @@ class BrowserCaptchaService:
             return await _confirm_labs_surface("document_not_ready", stage="document_not_ready")
 
         current_url, ready_state = await _describe_surface("document_ready")
-        if self._is_labs_bootstrap_url(current_url):
+        if self._is_labs_bootstrap_url(current_url, project_id):
             debug_logger.log_info(
                 "[BrowserCaptcha] 已进入 labs 引导页 "
                 f"(label={label}, url={current_url}, ready_state={ready_state or '<empty>'})"
@@ -9600,7 +9620,18 @@ class BrowserCaptchaService:
             return
 
         async def _recover_current_slot():
-            if self._is_force_fresh_browser_restart_error(error_text):
+            force_fresh_error = self._is_force_fresh_browser_restart_error(error_text)
+            if force_fresh_error and streak < 3:
+                # Keep the signed-in project page and browser profile stable.
+                # Clearing storage or rotating identity after the first risk
+                # rejection makes subsequent reCAPTCHA scores less trustworthy.
+                debug_logger.log_warning(
+                    f"[BrowserCaptcha] project_id={project_id}, slot={resolved_slot_id} "
+                    f"Flow 风控第 {streak} 次，保留当前真实项目页会话等待退避重试"
+                )
+                return
+
+            if force_fresh_error:
                 debug_logger.log_warning(
                     f"[BrowserCaptcha] project_id={project_id}, slot={resolved_slot_id} "
                     "命中特定 Flow 风控错误，已标记当前 slot 不再复用；浏览器 fresh profile 轮换会等待当前并发 drain 后立即执行"
@@ -10319,10 +10350,9 @@ class BrowserCaptchaService:
             f"browser_solve_count={browser_solve_count}"
             "）"
         )
-        await self._maybe_execute_pending_fresh_profile_restart(
-            project_id,
-            source="resident_solve_success",
-        )
+        # The token is bound to the browser session that minted it. Do not
+        # restart that session before the caller has submitted the token to
+        # Flow. A pending rotation is handled before the next solve instead.
         return token
 
     # ========== 主要 API ==========
@@ -10843,7 +10873,11 @@ class BrowserCaptchaService:
                 force=True,
             )
 
-            if not await self._open_labs_bootstrap_page(tab, label=f"resident_init:{slot_id}"):
+            if not await self._open_labs_bootstrap_page(
+                tab,
+                label=f"resident_init:{slot_id}",
+                project_id=project_id,
+            ):
                 debug_logger.log_error(
                     f"[BrowserCaptcha] 打开 labs 引导页失败 (slot={slot_id}, project={project_id}, token_id={token_id})"
                 )
@@ -10983,7 +11017,11 @@ class BrowserCaptchaService:
                         force=True,
                     )
 
-                    if not await self._open_labs_bootstrap_page(tab, label=f"legacy:{project_id}"):
+                    if not await self._open_labs_bootstrap_page(
+                        tab,
+                        label=f"legacy:{project_id}",
+                        project_id=project_id,
+                    ):
                         debug_logger.log_error("[BrowserCaptcha] [Legacy] 打开 labs 引导页失败")
                         return None
 
@@ -11015,11 +11053,8 @@ class BrowserCaptchaService:
                             "[BrowserCaptcha] [Legacy] ✅ Token获取成功"
                             f"（耗时 {duration_ms:.0f}ms, browser_solve_count={browser_solve_count}）"
                         )
-                        await self._maybe_execute_pending_fresh_profile_restart(
-                            project_id,
-                            token_id=token_id,
-                            source="legacy_solve_success",
-                        )
+                        # Defer any pending profile rotation until the next
+                        # solve so this token remains valid for its submit.
                         return token
 
                     debug_logger.log_error("[BrowserCaptcha] [Legacy] Token获取失败（返回null）")
@@ -11048,6 +11083,80 @@ class BrowserCaptchaService:
         if not self._last_fingerprint:
             return None
         return dict(self._last_fingerprint)
+
+    async def request_flow_api(
+        self,
+        slot_id: str,
+        url: str,
+        json_data: Dict[str, Any],
+        at_token: str,
+        timeout_seconds: int = 60,
+    ) -> Dict[str, Any]:
+        """Submit through the tab that minted the reCAPTCHA token."""
+        normalized_slot_id = str(slot_id or "").strip()
+        async with self._resident_lock:
+            resident_info = self._resident_tabs.get(normalized_slot_id)
+        if resident_info is None or not resident_info.tab:
+            raise RuntimeError(f"captcha browser slot is unavailable: {normalized_slot_id or 'empty'}")
+
+        safe_url = json.dumps(str(url), ensure_ascii=False)
+        safe_payload = json.dumps(json_data, ensure_ascii=False, separators=(",", ":"))
+        safe_token = json.dumps(str(at_token), ensure_ascii=False)
+        request_timeout_ms = max(5_000, min(180_000, int(timeout_seconds or 60) * 1000))
+        script = f"""
+            (async () => {{
+                const controller = new AbortController();
+                const timer = setTimeout(() => controller.abort(), {request_timeout_ms});
+                try {{
+                    const response = await fetch({safe_url}, {{
+                        method: "POST",
+                        headers: {{
+                            "authorization": "Bearer " + {safe_token},
+                            "content-type": "application/json"
+                        }},
+                        body: JSON.stringify({safe_payload}),
+                        signal: controller.signal
+                    }});
+                    const text = await response.text();
+                    return {{ ok: response.ok, status: response.status, text }};
+                }} catch (error) {{
+                    return {{ ok: false, status: 0, text: "", error: String(error) }};
+                }} finally {{
+                    clearTimeout(timer);
+                }}
+            }})()
+        """
+        async with resident_info.solve_lock:
+            result = await self._tab_evaluate(
+                resident_info.tab,
+                script,
+                label=f"flow_api_submit:{normalized_slot_id}",
+                timeout_seconds=(request_timeout_ms / 1000) + 10,
+                await_promise=True,
+                return_by_value=True,
+            )
+        if not isinstance(result, dict):
+            raise RuntimeError("captcha browser returned an invalid Flow response")
+        if result.get("error"):
+            raise RuntimeError(f"captcha browser Flow request failed: {result.get('error')}")
+        raw_text = str(result.get("text") or "")
+        try:
+            payload = json.loads(raw_text) if raw_text else {}
+        except Exception:
+            payload = {"raw": raw_text[:2000]}
+        status = int(result.get("status") or 0)
+        if status >= 400 or not bool(result.get("ok")):
+            error_info = payload.get("error") if isinstance(payload, dict) else None
+            reason = ""
+            if isinstance(error_info, dict):
+                for detail in error_info.get("details") or []:
+                    if isinstance(detail, dict) and detail.get("reason"):
+                        reason = str(detail.get("reason"))
+                        break
+                message = str(error_info.get("message") or "")
+                reason = f"{reason}: {message}".strip(": ")
+            raise RuntimeError(reason or f"Flow browser request returned HTTP {status}: {raw_text[:500]}")
+        return payload
 
     async def _clear_browser_cache(self):
         """清理浏览器全部缓存"""
@@ -13258,6 +13367,30 @@ class _PersonalBrowserPoolService:
             if fingerprint:
                 return fingerprint
         return None
+
+    async def request_flow_api(
+        self,
+        slot_id: str,
+        url: str,
+        json_data: Dict[str, Any],
+        at_token: str,
+        timeout_seconds: int = 60,
+    ) -> Dict[str, Any]:
+        await self._ensure_workers()
+        worker_index = self._parse_worker_index_from_slot_id(slot_id)
+        if worker_index is None and self._last_successful_worker_index is not None:
+            worker_index = self._last_successful_worker_index
+        if worker_index is None and len(self._workers) == 1:
+            worker_index = 0
+        if worker_index is None or not (0 <= worker_index < len(self._workers)):
+            raise RuntimeError(f"no captcha browser worker owns slot: {slot_id}")
+        return await self._workers[worker_index].request_flow_api(
+            slot_id=slot_id,
+            url=url,
+            json_data=json_data,
+            at_token=at_token,
+            timeout_seconds=timeout_seconds,
+        )
 
     async def get_custom_token(
         self,

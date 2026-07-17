@@ -27,6 +27,7 @@ class ExtensionCaptchaService:
         self.db = db
         self.active_connections: list[ExtensionConnection] = []
         self.pending_requests: dict[str, tuple[asyncio.Future, WebSocket]] = {}
+        self.last_token_tabs: dict[str, int] = {}
 
     @classmethod
     async def get_instance(cls, db=None) -> "ExtensionCaptchaService":
@@ -317,6 +318,12 @@ class ExtensionCaptchaService:
             result = await asyncio.wait_for(future, timeout=timeout)
 
             if result.get("status") == "success":
+                tab_id = result.get("tab_id")
+                try:
+                    if tab_id is not None:
+                        self.last_token_tabs[route_key] = int(tab_id)
+                except (TypeError, ValueError):
+                    pass
                 return result.get("token")
 
             error_msg = result.get("error")
@@ -329,6 +336,73 @@ class ExtensionCaptchaService:
         except Exception as e:
             debug_logger.log_error(f"[Extension Captcha] Communication error: {e}")
             return None
+        finally:
+            self.pending_requests.pop(req_id, None)
+
+    async def request_flow_api(
+        self,
+        url: str,
+        json_data: Dict[str, Any],
+        at_token: str,
+        timeout: int = 60,
+        token_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Submit Flow API from the Chrome tab that minted the token."""
+        if not self.active_connections:
+            raise RuntimeError("Chrome Extension not connected or Google Labs tab not open.")
+
+        route_key = await self._resolve_route_key(token_id)
+        conn = self._select_connection(route_key)
+        if conn is None:
+            available = self._describe_routes() or "none"
+            raise RuntimeError(
+                f"No Chrome Extension connection matches token_id={token_id} route_key='{route_key}'. "
+                f"Available route keys: {available}"
+            )
+
+        req_id = f"req_{uuid.uuid4().hex}"
+        future = asyncio.get_running_loop().create_future()
+        self.pending_requests[req_id] = (future, conn.websocket)
+        request_data = {
+            "type": "submit_flow",
+            "req_id": req_id,
+            "url": url,
+            "json_data": json_data,
+            "at_token": at_token,
+            "tab_id": self.last_token_tabs.get(route_key),
+            "route_key": route_key,
+        }
+
+        try:
+            await conn.websocket.send_text(json.dumps(request_data, ensure_ascii=False))
+            response = await asyncio.wait_for(future, timeout=max(10, int(timeout or 60)))
+            if response.get("status") != "success":
+                raise RuntimeError(response.get("error") or "Chrome Flow request failed")
+
+            transport = response.get("result")
+            if not isinstance(transport, dict):
+                raise RuntimeError("Chrome extension returned an invalid Flow response")
+            if transport.get("error"):
+                raise RuntimeError(f"Chrome Flow request failed: {transport.get('error')}")
+
+            raw_text = str(transport.get("text") or "")
+            try:
+                payload = json.loads(raw_text) if raw_text else {}
+            except Exception:
+                payload = {"raw": raw_text[:2000]}
+            status = int(transport.get("status") or 0)
+            if status >= 400 or not bool(transport.get("ok")):
+                error_info = payload.get("error") if isinstance(payload, dict) else None
+                reason = ""
+                if isinstance(error_info, dict):
+                    for detail in error_info.get("details") or []:
+                        if isinstance(detail, dict) and detail.get("reason"):
+                            reason = str(detail.get("reason"))
+                            break
+                    message = str(error_info.get("message") or "")
+                    reason = f"{reason}: {message}".strip(": ")
+                raise RuntimeError(reason or f"Chrome Flow request returned HTTP {status}: {raw_text[:500]}")
+            return payload
         finally:
             self.pending_requests.pop(req_id, None)
 

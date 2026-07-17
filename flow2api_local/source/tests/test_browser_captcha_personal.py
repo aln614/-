@@ -167,7 +167,7 @@ class BrowserCaptchaPersonalTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.service._last_health_probe_ok)
         self.assertEqual(self.service._tab_evaluate.await_count, 1)
 
-    async def test_force_fresh_flow_error_defers_sync_browser_restart_until_drain(self):
+    async def test_force_fresh_flow_error_preserves_session_before_threshold(self):
         tab = _ClosableFakeTab()
         resident_info = ResidentTabInfo(
             tab=tab,
@@ -181,6 +181,38 @@ class BrowserCaptchaPersonalTests(unittest.IsolatedAsyncioTestCase):
         self.service._resident_tabs["slot-1"] = resident_info
         self.service._project_resident_affinity["project-1"] = "slot-1"
         self.service._token_resident_affinity["1"] = "slot-1"
+        self.service._maybe_execute_pending_fresh_profile_restart = AsyncMock(return_value=False)
+        self.service._restart_browser_for_project = AsyncMock(return_value=True)
+
+        await self.service.report_flow_error(
+            "project-1",
+            "reCAPTCHA 验证失败",
+            error_message="Flow API request failed: PUBLIC_ERROR_UNUSUAL_ACTIVITY: reCAPTCHA evaluation failed",
+            token_id=1,
+            slot_id="slot-1",
+        )
+
+        self.assertNotIn("slot-1", self.service._resident_unavailable_slots)
+        self.assertFalse(self.service._fresh_profile_restart_pending)
+        self.assertFalse(self.service._fresh_profile_restart_force_pending)
+        self.service._restart_browser_for_project.assert_not_awaited()
+        self.service._maybe_execute_pending_fresh_profile_restart.assert_not_awaited()
+
+    async def test_force_fresh_flow_error_rotates_session_at_threshold(self):
+        tab = _ClosableFakeTab()
+        resident_info = ResidentTabInfo(
+            tab=tab,
+            slot_id="slot-1",
+            project_id="project-1",
+            token_id=1,
+        )
+        resident_info.recaptcha_ready = True
+        self.service.browser = types.SimpleNamespace(stopped=False)
+        self.service._initialized = True
+        self.service._resident_tabs["slot-1"] = resident_info
+        self.service._project_resident_affinity["project-1"] = "slot-1"
+        self.service._token_resident_affinity["1"] = "slot-1"
+        self.service._resident_error_streaks["slot-1"] = 2
         self.service._maybe_execute_pending_fresh_profile_restart = AsyncMock(return_value=False)
         self.service._restart_browser_for_project = AsyncMock(return_value=True)
 

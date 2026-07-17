@@ -17,6 +17,11 @@ RUN apt-get update \
         xvfb \
     && rm -rf /var/lib/apt/lists/*
 
+# The upstream base image still pins curl-cffi 0.7.x (Chrome 124 TLS).
+# Match the headed Chromium generation closely to keep reCAPTCHA and submit
+# fingerprints in the same browser family.
+RUN pip install --no-cache-dir --root-user-action=ignore "curl-cffi==0.15.0"
+
 # 标准官方镜像已经包含 Python 依赖；这里只补充 headed 模式所需的 Chromium。
 RUN python -m playwright install --with-deps chromium
 
