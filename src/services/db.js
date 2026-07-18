@@ -211,6 +211,23 @@ function runSQL(s, args) {
   if (s.startsWith('UPDATE tasks SET status=?, attempt=?, progress=?, progress_text=?, updated_at=? WHERE id=?')) {
     const [status, attempt, progress, progress_text, updated, id] = args; const t = store.tasks.find(x=>x.id===id); if (t) { t.status=status; t.attempt=attempt; t.progress=Number(progress||0); t.progress_text=progress_text||''; t.updated_at=updated; save(); return {changes:1}; }
   }
+  if (s.startsWith('UPDATE tasks SET status=?, attempt=?, error_message=?, updated_at=? WHERE id=?')) {
+    const [status, attempt, error_message, updated, id] = args;
+    const t = store.tasks.find(x=>x.id===id);
+    if (t) {
+      t.status = status;
+      t.attempt = Number(attempt || 0);
+      t.error_message = error_message || '';
+      t.updated_at = updated;
+      if (status === '失败') {
+        t.progress = 100;
+        t.progress_text = error_message || '失败';
+        t.finished_at = t.finished_at || updated;
+      }
+      save();
+      return {changes:1};
+    }
+  }
   if (s.startsWith('UPDATE tasks SET status=?, attempt=?, updated_at=? WHERE id=?')) {
     const [status, attempt, updated, id] = args; const t = store.tasks.find(x=>x.id===id); if (t) { t.status=status; t.attempt=attempt; t.updated_at=updated; save(); return {changes:1}; }
   }

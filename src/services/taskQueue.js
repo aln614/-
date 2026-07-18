@@ -4,6 +4,7 @@ const { EventEmitter } = require('events');
 const { getDB, nowISO, uuid, addLog } = require('./db');
 const { generateOne } = require('./apiClient');
 const { makeDirs, safeName, createThumb, ensureDir } = require('./cache');
+const { isTerminalGenerationError } = require('./taskErrors');
 
 function parseTimeMs(v) {
   if (!v) return Date.now();
@@ -39,6 +40,7 @@ class TaskQueue extends EventEmitter {
     this.resetToken = 0;
     this.progressUpdateCache = new Map();
     this.claimedTasks = new Set();
+    this.batchTaskCache = new Map();
     this.flow2ApiBackoffUntil = 0;
     this.flow2ApiRiskStreak = 0;
   }
@@ -61,6 +63,7 @@ class TaskQueue extends EventEmitter {
     for (const batchId of this.running.keys()) this.stopFlags.add(batchId);
     this.running.clear();
     this.claimedTasks.clear();
+    this.batchTaskCache.clear();
     this.emit('changed');
   }
 
@@ -201,6 +204,10 @@ class TaskQueue extends EventEmitter {
       if (!batch) return;
       const cfg = JSON.parse(batch.config_json || '{}');
       const concurrency = Math.max(1, Number(batch.concurrency || cfg.concurrency || 1));
+      const batchTasks = (db._store.tasks || [])
+        .filter(task => task.batch_id === batchId)
+        .sort((a, b) => Number(a.task_index) - Number(b.task_index));
+      this.batchTaskCache.set(batchId, batchTasks);
       db.prepare('UPDATE batches SET status=?, updated_at=? WHERE id=?').run('生成中', nowISO(), batchId);
       this.emit('changed');
       addLog(`批次开始生成，并发：${concurrency}`, { ownerId: batch.owner_id, batchId });
@@ -210,7 +217,9 @@ class TaskQueue extends EventEmitter {
       if (token !== this.resetToken) return;
       const finalBatch = db.prepare('SELECT * FROM batches WHERE id=?').get(batchId);
       if (finalBatch.status !== '已停止') {
-        const status = finalBatch.fail_count > 0 && finalBatch.success_count < finalBatch.task_count ? '部分完成' : '已完成';
+        const status = Number(finalBatch.fail_count || 0) >= Number(finalBatch.task_count || 0) && Number(finalBatch.success_count || 0) === 0
+          ? '失败'
+          : (finalBatch.fail_count > 0 && finalBatch.success_count < finalBatch.task_count ? '部分完成' : '已完成');
         db.prepare('UPDATE batches SET status=?, running_count=0, finished_at=?, updated_at=? WHERE id=?').run(status, nowISO(), nowISO(), batchId);
         addLog(`批次结束：成功 ${finalBatch.success_count}，失败 ${finalBatch.fail_count}`, { ownerId: batch.owner_id, batchId });
       }
@@ -219,6 +228,7 @@ class TaskQueue extends EventEmitter {
       if (token === this.resetToken) {
         this.running.delete(batchId);
         this.stopFlags.delete(batchId);
+        this.batchTaskCache.delete(batchId);
       }
     }
   }
@@ -226,10 +236,10 @@ class TaskQueue extends EventEmitter {
   async worker(batchId, token = this.resetToken) {
     const db = getDB();
     while (!this.stopFlags.has(batchId) && token === this.resetToken) {
-      const candidates = (db._store.tasks || [])
-        .filter(t => t.batch_id === batchId && (t.status === '等待中' || (t.status === '生成中' && String(t.remote_task_id || '') !== '')))
-        .sort((a,b)=>Number(a.task_index)-Number(b.task_index));
-      const task = candidates.find(t => !this.claimedTasks.has(t.id));
+      const candidates = this.batchTaskCache.get(batchId) || [];
+      const task = candidates.find(t =>
+        !this.claimedTasks.has(t.id) && (t.status === '等待中' || (t.status === '生成中' && String(t.remote_task_id || '') !== ''))
+      );
       if (!task) break;
       this.claimedTasks.add(task.id);
       try {
@@ -333,6 +343,7 @@ class TaskQueue extends EventEmitter {
         const maxRetry = Number(batch.retry_times || cfg.retryTimes || 0);
         const timedOut = elapsedMsSince(task.recovery_started_at || task.created_at) >= taskTimeoutMs(cfg);
         const flowRiskCooldown = flow2apiMode && isFlowRiskCooldownError(err);
+        const terminalError = isTerminalGenerationError(err);
         if (flowRiskCooldown) {
           this.flow2ApiRiskStreak = Math.min(4, this.flow2ApiRiskStreak + 1);
           const adaptiveBackoff = Math.min(300_000, 45_000 * (2 ** (this.flow2ApiRiskStreak - 1)));
@@ -341,8 +352,10 @@ class TaskQueue extends EventEmitter {
             Date.now() + Math.max(flowRiskBackoffMs(err), adaptiveBackoff)
           );
         }
-        const shouldRetry = !timedOut && (flowRiskCooldown || attempt <= maxRetry);
-        const nextAttempt = flowRiskCooldown ? Math.max(0, attempt - 1) : attempt;
+        const shouldRetry = !timedOut && !terminalError && (flowRiskCooldown || attempt <= maxRetry);
+        const nextAttempt = flowRiskCooldown
+          ? Math.max(0, attempt - 1)
+          : (String(task.remote_task_id || '').trim() ? attempt + 1 : attempt);
         const retryError = flowRiskCooldown
           ? 'Flow2API reCAPTCHA 会话正在恢复，任务将在当前批次内自动重试'
           : (err.message || String(err));
