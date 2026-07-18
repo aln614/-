@@ -4337,7 +4337,7 @@ registerApimartVideoUiRules([
   { model:'viduq3-mix', label:'Vidu Q3 Mix', resolutions:['720p','1080p'], durationMin:1, durationMax:16 },
   { model:'viduq3-pro', label:'Vidu Q3 Pro', resolutions:['540p','720p','1080p'], durationMin:1, durationMax:16 },
   { model:'viduq3-turbo', label:'Vidu Q3 Turbo', resolutions:['540p','720p','1080p'], durationMin:1, durationMax:16 },
-  { model:'grok-imagine-1.5-video-apimart', label:'Grok Imagine 1.5 Video', resolutions:['480p','720p'], defaultResolution:'480p', durationMin:3, durationMax:15 },
+  { model:'grok-imagine-1.5-video-apimart', label:'Grok Imagine 1.5 Video', resolutions:['480p','720p'], defaultResolution:'480p', durationMin:6, durationMax:30, defaultDuration:6 },
   { model:'pixverse-v6', label:'Pixverse v6', resolutions:['360p','540p','720p','1080p'], durationMin:1, durationMax:15 }
 ]);
 const APIMART_VIDEO_MODEL_GROUPS_UI = [

@@ -2083,7 +2083,7 @@ registerApimartVideoRules([
   { model:'viduq3-mix', label:'Vidu Q3 Mix', resolutions:['720p','1080p'], durationRange:[1,16], supportsImageUrls:true },
   { model:'viduq3-pro', label:'Vidu Q3 Pro', resolutions:['540p','720p','1080p'], durationRange:[1,16], supportsImageUrls:true, supportsLastFrame:true },
   { model:'viduq3-turbo', label:'Vidu Q3 Turbo', resolutions:['540p','720p','1080p'], durationRange:[1,16], supportsImageUrls:true, supportsLastFrame:true },
-  { model:'grok-imagine-1.5-video-apimart', label:'Grok Imagine 1.5 Video', resolutions:['480p','720p'], defaultResolution:'480p', durationRange:[3,15], supportsImageUrls:true },
+  { model:'grok-imagine-1.5-video-apimart', label:'Grok Imagine 1.5 Video', resolutions:['480p','720p'], defaultResolution:'480p', durationRange:[6,30], defaultDuration:6, supportsImageUrls:true },
   { model:'pixverse-v6', label:'Pixverse v6', resolutions:['360p','540p','720p','1080p'], durationRange:[1,15], supportsImageUrls:true, supportsVideoUrls:true },
   { model:'Omni-Flash-Ext', label:'Omni Flash Ext', resolutions:['720p','1080p','4k'], aspectRatios:['16:9','9:16','1:1','4:3','3:4'], defaultAspectRatio:'9:16', durations:[4,6,8,10], defaultDuration:6, supportsImageUrls:true, supportsVideoUrls:true, videoParam:'video_urls', allowedImageCounts:[0,1,3] }
 ]);
