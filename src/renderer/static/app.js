@@ -5795,6 +5795,210 @@ function setupSmartTooltips(){
 }
 setupSmartTooltips();
 
+const SHORTCUT_DEFAULTS = Object.freeze({
+  open_app:'Ctrl+Alt+A',
+  toggle_asset_library:'Ctrl+Shift+A',
+  toggle_prompt_library:'Ctrl+Shift+P'
+});
+const SHORTCUT_LABELS = Object.freeze({
+  open_app:'打开 / 关闭程序',
+  toggle_asset_library:'打开 / 关闭资产库',
+  toggle_prompt_library:'打开 / 关闭提示词库'
+});
+const SHORTCUT_BLOCKED = new Set(['Ctrl+C','Ctrl+V','Ctrl+X','Ctrl+Z','Ctrl+S','Alt+F4','Ctrl+Alt+Delete']);
+const shortcutState = {
+  loaded:false,
+  recording:'',
+  globalRegistered:false,
+  persisted:{ enabled:true, settings:{...SHORTCUT_DEFAULTS} },
+  draft:{ enabled:true, settings:{...SHORTCUT_DEFAULTS} }
+};
+
+function cloneShortcutConfig(config=shortcutState.persisted){
+  return { enabled:config.enabled !== false, settings:{...SHORTCUT_DEFAULTS,...(config.settings || {})} };
+}
+function shortcutDisplay(value=''){ return String(value || '').split('+').join(' + '); }
+function normalizeShortcutText(value=''){
+  const parts = String(value || '').replace(/\s+/g,'').split('+').filter(Boolean);
+  const modifiers = new Set();
+  let key = '';
+  for(const part of parts){
+    const lower = part.toLowerCase();
+    if(['ctrl','control','controlorcommand','commandorcontrol'].includes(lower)) modifiers.add('Ctrl');
+    else if(['alt','option'].includes(lower)) modifiers.add('Alt');
+    else if(lower === 'shift') modifiers.add('Shift');
+    else if(['cmd','command','meta','super'].includes(lower)) modifiers.add('Cmd');
+    else if(!key && /^[a-z]$/i.test(part)) key = part.toUpperCase();
+    else if(!key && /^[0-9]$/.test(part)) key = part;
+    else if(!key && /^f(?:[1-9]|1[0-2])$/i.test(part)) key = part.toUpperCase();
+    else if(!key && ['delete','del'].includes(lower)) key = 'Delete';
+    else return '';
+  }
+  if(!key || !modifiers.size) return '';
+  return ['Ctrl','Alt','Shift','Cmd'].filter(item=>modifiers.has(item)).concat(key).join('+');
+}
+function shortcutFromKeyboardEvent(event){
+  const modifiers = [];
+  if(event.ctrlKey) modifiers.push('Ctrl');
+  if(event.altKey) modifiers.push('Alt');
+  if(event.shiftKey) modifiers.push('Shift');
+  if(event.metaKey) modifiers.push('Cmd');
+  let key = '';
+  if(/^Key[A-Z]$/i.test(event.code || '')) key = event.code.slice(3).toUpperCase();
+  else if(/^Digit[0-9]$/.test(event.code || '')) key = event.code.slice(5);
+  else if(/^F(?:[1-9]|1[0-2])$/i.test(event.key || '')) key = event.key.toUpperCase();
+  else if((event.key || '').toLowerCase() === 'delete') key = 'Delete';
+  return key && modifiers.length ? normalizeShortcutText(modifiers.concat(key).join('+')) : '';
+}
+function shortcutValidationError(settings={}){
+  const values = [];
+  for(const action of Object.keys(SHORTCUT_DEFAULTS)){
+    const value = normalizeShortcutText(settings[action]);
+    if(!value) return `${SHORTCUT_LABELS[action]}：必须至少包含一个修饰键，并使用字母、数字或 F1-F12。`;
+    if(SHORTCUT_BLOCKED.has(value)) return `${shortcutDisplay(value)} 是系统常用或高风险快捷键，请更换。`;
+    values.push(value);
+  }
+  if(new Set(values).size !== values.length) return '该快捷键已被使用，请重新设置。';
+  return '';
+}
+function setShortcutMessage(message='', type=''){
+  const el = $('#shortcutSettingsMessage');
+  if(!el) return;
+  el.textContent = message;
+  el.classList.toggle('error', type === 'error');
+  el.classList.toggle('success', type === 'success');
+}
+function renderShortcutSettings(){
+  const list = $('#shortcutSettingsList');
+  if(!list) return;
+  list.innerHTML = Object.keys(SHORTCUT_DEFAULTS).map(action=>{
+    const recording = shortcutState.recording === action;
+    const value = shortcutState.draft.settings[action] || '';
+    return `<div class="shortcut-setting-row${recording?' recording':''}" data-shortcut-action="${action}">
+      <div class="shortcut-setting-name"><b>${SHORTCUT_LABELS[action]}</b><small>${action==='open_app'?'系统全局':'仅程序窗口内'}</small></div>
+      <kbd>${recording?'请按下新的快捷键组合...':escapeHtml(shortcutDisplay(value))}</kbd>
+      <button class="secondary shortcut-edit-btn" type="button" data-shortcut-edit="${action}">${recording?'录制中':'修改'}</button>
+      <button class="shortcut-reset-btn" type="button" data-shortcut-reset="${action}">恢复默认</button>
+    </div>`;
+  }).join('');
+  if($('#shortcutsEnabled')) $('#shortcutsEnabled').checked = shortcutState.draft.enabled !== false;
+}
+async function loadShortcutSettings(){
+  if(!isLocalClient){ $('#shortcutSettingsBtn')?.classList.add('hidden'); return; }
+  const ret = await api('/api/shortcuts');
+  shortcutState.persisted = {
+    enabled:ret.shortcuts_enabled !== false,
+    settings:{...SHORTCUT_DEFAULTS,...(ret.shortcut_settings || {})}
+  };
+  shortcutState.draft = cloneShortcutConfig(shortcutState.persisted);
+  shortcutState.globalRegistered = ret.global_registered === true;
+  shortcutState.loaded = true;
+  renderShortcutSettings();
+  if(shortcutState.persisted.enabled && !shortcutState.globalRegistered) setShortcutMessage('打开 / 关闭程序快捷键未注册：当前组合可能被系统或其他软件占用。','error');
+}
+async function openShortcutSettings(){
+  if(!isLocalClient) return;
+  shortcutState.recording = '';
+  setShortcutMessage('');
+  try{ await loadShortcutSettings(); }
+  catch(error){ setShortcutMessage(error.message || '快捷键配置加载失败','error'); }
+  $('#shortcutSettingsLayer')?.classList.add('active');
+  $('#shortcutSettingsLayer')?.setAttribute('aria-hidden','false');
+  renderShortcutSettings();
+}
+function closeShortcutSettings(){
+  shortcutState.recording = '';
+  shortcutState.draft = cloneShortcutConfig(shortcutState.persisted);
+  $('#shortcutSettingsLayer')?.classList.remove('active');
+  $('#shortcutSettingsLayer')?.setAttribute('aria-hidden','true');
+  renderShortcutSettings();
+}
+function floatingLayerIsFrontmost(selector){
+  const layer = $(selector);
+  if(!layer?.classList.contains('active')) return false;
+  const targetZ = Number(layer.style.zIndex || getComputedStyle(layer).zIndex || 0);
+  return ['#assetLibraryLayer','#promptLibraryLayer'].every(other=>{
+    const el = $(other);
+    return other === selector || !el?.classList.contains('active') || Number(el.style.zIndex || getComputedStyle(el).zIndex || 0) <= targetZ;
+  });
+}
+function toggleAssetLibraryShortcut(){
+  if($('#assetLibraryLayer')?.classList.contains('active')){
+    if(!floatingLayerIsFrontmost('#assetLibraryLayer')) bringFloatingLayer('#assetLibraryLayer','#assetLibraryWindow');
+    else closeAssetLibrary();
+  }else openAssetLibrary();
+}
+function togglePromptLibraryShortcut(){
+  if($('#promptLibraryLayer')?.classList.contains('active')){
+    if(!floatingLayerIsFrontmost('#promptLibraryLayer')) bringFloatingLayer('#promptLibraryLayer','#promptLibraryWindow');
+    else closePromptLibrary();
+  }else openPromptLibrary();
+}
+async function saveShortcutSettings(){
+  const error = shortcutValidationError(shortcutState.draft.settings);
+  if(error) return setShortcutMessage(error,'error');
+  const normalized = Object.fromEntries(Object.entries(shortcutState.draft.settings).map(([key,value])=>[key,normalizeShortcutText(value)]));
+  const saveBtn = $('#shortcutSettingsSaveBtn');
+  if(saveBtn) saveBtn.disabled = true;
+  setShortcutMessage('正在保存并应用快捷键...');
+  try{
+    const ret = await api('/api/shortcuts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({shortcuts_enabled:shortcutState.draft.enabled,shortcut_settings:normalized})});
+    shortcutState.persisted = {enabled:ret.shortcuts_enabled !== false,settings:{...SHORTCUT_DEFAULTS,...ret.shortcut_settings}};
+    shortcutState.draft = cloneShortcutConfig(shortcutState.persisted);
+    shortcutState.globalRegistered = ret.global_registered === true;
+    shortcutState.recording = '';
+    renderShortcutSettings();
+    setShortcutMessage(shortcutState.persisted.enabled ? '快捷键已保存并生效。' : '快捷键已关闭并保存。','success');
+  }catch(error){ setShortcutMessage(error.message || '快捷键保存失败','error'); }
+  finally{ if(saveBtn) saveBtn.disabled = false; }
+}
+function setupShortcutSettings(){
+  if(!isLocalClient){ $('#shortcutSettingsBtn')?.classList.add('hidden'); return; }
+  $('#shortcutSettingsBtn')?.addEventListener('click',openShortcutSettings);
+  $('#shortcutSettingsCloseBtn')?.addEventListener('click',closeShortcutSettings);
+  $('#shortcutSettingsSaveBtn')?.addEventListener('click',saveShortcutSettings);
+  $('#shortcutRestoreAllBtn')?.addEventListener('click',()=>{ shortcutState.recording=''; shortcutState.draft.settings={...SHORTCUT_DEFAULTS}; setShortcutMessage('已恢复默认组合，点击“保存设置”后生效。'); renderShortcutSettings(); });
+  $('#shortcutsEnabled')?.addEventListener('change',event=>{ shortcutState.draft.enabled=event.target.checked; setShortcutMessage(event.target.checked?'点击“保存设置”后启用快捷键。':'点击“保存设置”后关闭全部快捷键。'); });
+  $('#shortcutSettingsList')?.addEventListener('click',event=>{
+    const edit = event.target.closest('[data-shortcut-edit]')?.dataset.shortcutEdit;
+    const reset = event.target.closest('[data-shortcut-reset]')?.dataset.shortcutReset;
+    if(edit){ shortcutState.recording=edit; setShortcutMessage('请按下新的快捷键组合，按 Esc 取消录制。'); renderShortcutSettings(); }
+    if(reset){ shortcutState.recording=''; shortcutState.draft.settings[reset]=SHORTCUT_DEFAULTS[reset]; setShortcutMessage(`${SHORTCUT_LABELS[reset]}已恢复默认，保存后生效。`); renderShortcutSettings(); }
+  });
+  $('#shortcutSettingsLayer')?.addEventListener('click',event=>{ if(event.target.id==='shortcutSettingsLayer') closeShortcutSettings(); });
+  document.addEventListener('keydown',event=>{
+    if(shortcutState.recording){
+      event.preventDefault(); event.stopPropagation();
+      if(event.key === 'Escape'){
+        shortcutState.recording='';
+        setShortcutMessage('已取消快捷键录制。');
+        renderShortcutSettings();
+        return;
+      }
+      if(['Control','Shift','Alt','Meta'].includes(event.key)) return;
+      const value = shortcutFromKeyboardEvent(event);
+      if(!value) return setShortcutMessage('请同时按下 Ctrl / Alt / Shift / Cmd 与字母、数字或 F1-F12。','error');
+      if(SHORTCUT_BLOCKED.has(value)) return setShortcutMessage(`${shortcutDisplay(value)} 是系统常用或高风险快捷键，请更换。`,'error');
+      const duplicate = Object.entries(shortcutState.draft.settings).find(([action,current])=>action!==shortcutState.recording && normalizeShortcutText(current)===value);
+      if(duplicate) return setShortcutMessage('该快捷键已被使用，请重新设置。','error');
+      shortcutState.draft.settings[shortcutState.recording]=value;
+      shortcutState.recording='';
+      setShortcutMessage('已记录新组合，点击“保存设置”后生效。');
+      renderShortcutSettings();
+      return;
+    }
+    if(!isLocalClient || !shortcutState.persisted.enabled) return;
+    const value = shortcutFromKeyboardEvent(event);
+    if(!value) return;
+    if(value === normalizeShortcutText(shortcutState.persisted.settings.toggle_asset_library)){
+      event.preventDefault(); event.stopPropagation(); toggleAssetLibraryShortcut();
+    }else if(value === normalizeShortcutText(shortcutState.persisted.settings.toggle_prompt_library)){
+      event.preventDefault(); event.stopPropagation(); togglePromptLibraryShortcut();
+    }
+  },true);
+  loadShortcutSettings().catch(()=>{});
+}
+
 
 
 
@@ -7319,6 +7523,7 @@ async function startup(){
     await refreshAll();
     setupVideoPage();
     bindImageApiPlatformSwitch();
+    setupShortcutSettings();
     setupPromptLibrary();
     setupAssetLibrary();
     setupAnnouncements();

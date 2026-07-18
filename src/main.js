@@ -6,7 +6,7 @@ const https = require('https');
 const url = require('url');
 const crypto = require('crypto');
 const zlib = require('zlib');
-const { app, BrowserWindow, shell, Menu, clipboard, nativeImage, ipcMain } = require('electron');
+const { app, BrowserWindow, Tray, shell, Menu, clipboard, nativeImage, ipcMain, globalShortcut } = require('electron');
 const { spawn } = require('child_process');
 const { initDB, getDB, addLog, listBatches, listImages, listLogs, nowISO, uuid, setNetworkTimeOffset, getNetworkTimeInfo } = require('./services/db');
 const { TaskQueue } = require('./services/taskQueue');
@@ -18,6 +18,9 @@ let server = null;
 let queue = null;
 let configPath = null;
 let currentPort = 7860;
+let activeOpenAppShortcut = '';
+let isAppQuitting = false;
+let tray = null;
 let lastMidjourneyImageRepairAt = 0;
 let tunnelProcess = null;
 let tunnelState = { running: false, provider: '', url: '', logs: [], last_error: '' };
@@ -41,6 +44,12 @@ const OUTPUT_MJ_DIR_NAME = 'TENYING_AI_1_0_Midjourney';
 const OUTPUT_RUNTIME_DATA_DIR_NAME = '运行数据目录';
 const LEGACY_OUTPUT_RUNTIME_DATA_DIR_NAME = '.TENYING_AI_RuntimeData';
 const DEFAULT_UPDATE_REPO = 'aln614/-';
+const DEFAULT_SHORTCUT_SETTINGS = Object.freeze({
+  open_app: 'Ctrl+Alt+A',
+  toggle_asset_library: 'Ctrl+Shift+A',
+  toggle_prompt_library: 'Ctrl+Shift+P'
+});
+const BLOCKED_SHORTCUTS = new Set(['Ctrl+C','Ctrl+V','Ctrl+X','Ctrl+Z','Ctrl+S','Alt+F4','Ctrl+Alt+Delete']);
 try { app.setAppUserModelId('com.local.api.image.generator.webui.v14_9_8'); } catch {}
 
 // V7.4：清除软件所有数据会同时清除本机配置、API Key、浏览器本地缓存和运行数据。
@@ -530,6 +539,8 @@ const DEFAULT_CONFIG = {
   announcement_custom_enabled: false,
   asset_library_dir: '',
   legacy_output_dirs: [],
+  shortcuts_enabled: true,
+  shortcut_settings: { ...DEFAULT_SHORTCUT_SETTINGS },
   update_repo: DEFAULT_UPDATE_REPO,
   update_last_check: null
 };
@@ -592,6 +603,115 @@ function normalizeImageApiEndpoint(input) {
   return s || 'https://api.apimart.ai';
 }
 
+function normalizeShortcutAccelerator(value = '') {
+  const parts = String(value || '').replace(/\s+/g, '').split('+').filter(Boolean);
+  const modifiers = new Set();
+  let key = '';
+  for (const rawPart of parts) {
+    const lower = rawPart.toLowerCase();
+    if (lower === 'ctrl' || lower === 'control' || lower === 'controlorcommand' || lower === 'commandorcontrol') modifiers.add('Ctrl');
+    else if (lower === 'alt' || lower === 'option') modifiers.add('Alt');
+    else if (lower === 'shift') modifiers.add('Shift');
+    else if (lower === 'cmd' || lower === 'command' || lower === 'meta' || lower === 'super') modifiers.add('Cmd');
+    else {
+      if (key) return '';
+      if (/^[a-z]$/i.test(rawPart)) key = rawPart.toUpperCase();
+      else if (/^[0-9]$/.test(rawPart)) key = rawPart;
+      else if (/^f(?:[1-9]|1[0-2])$/i.test(rawPart)) key = rawPart.toUpperCase();
+      else if (lower === 'delete' || lower === 'del') key = 'Delete';
+      else return '';
+    }
+  }
+  if (!key || !modifiers.size) return '';
+  return ['Ctrl','Alt','Shift','Cmd'].filter(item => modifiers.has(item)).concat(key).join('+');
+}
+
+function validateShortcutConfiguration(input = {}, strict = false) {
+  const enabled = input.shortcuts_enabled !== false;
+  const source = input.shortcut_settings && typeof input.shortcut_settings === 'object' ? input.shortcut_settings : {};
+  const settings = {};
+  try {
+    for (const key of Object.keys(DEFAULT_SHORTCUT_SETTINGS)) {
+      const raw = Object.prototype.hasOwnProperty.call(source, key) ? source[key] : (strict ? '' : DEFAULT_SHORTCUT_SETTINGS[key]);
+      const normalized = normalizeShortcutAccelerator(raw);
+      if (!normalized) throw new Error('快捷键必须包含修饰键，并使用字母、数字或 F1-F12。');
+      if (BLOCKED_SHORTCUTS.has(normalized)) throw new Error(`${normalized} 是系统常用或高风险快捷键，请更换。`);
+      settings[key] = normalized;
+    }
+    if (new Set(Object.values(settings)).size !== Object.keys(settings).length) throw new Error('三个快捷键不能重复，请重新设置。');
+    return { shortcuts_enabled: enabled, shortcut_settings: settings, repaired: false };
+  } catch (error) {
+    if (strict) throw error;
+    return { shortcuts_enabled: true, shortcut_settings: { ...DEFAULT_SHORTCUT_SETTINGS }, repaired: true };
+  }
+}
+
+function bringMainWindowToFront() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  try { mainWindow.setSkipTaskbar(false); } catch {}
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  if (typeof mainWindow.moveTop === 'function') mainWindow.moveTop();
+  mainWindow.focus();
+  try {
+    mainWindow.setAlwaysOnTop(true, 'floating');
+    const releaseTopTimer = setTimeout(() => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setAlwaysOnTop(false);
+    }, 180);
+    if (typeof releaseTopTimer.unref === 'function') releaseTopTimer.unref();
+  } catch {}
+}
+
+function hideMainWindowToTray() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  try { mainWindow.setSkipTaskbar(true); } catch {}
+  mainWindow.hide();
+}
+
+function toggleMainWindowFromShortcut() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isVisible() && !mainWindow.isMinimized()) hideMainWindowToTray();
+  else bringMainWindowToFront();
+}
+
+function createTray() {
+  if (SERVER_ONLY || tray) return;
+  const iconPath = path.join(__dirname, '..', 'assets', 'rocket.ico');
+  tray = new Tray(iconPath);
+  tray.setToolTip(readConfig().app_name || APP_DISPLAY_NAME);
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label:'打开主窗口', click:bringMainWindowToFront },
+    { label:'隐藏到托盘', click:hideMainWindowToTray },
+    { type:'separator' },
+    { label:'退出程序', click:()=>{ isAppQuitting = true; app.quit(); } }
+  ]));
+  tray.on('click', bringMainWindowToFront);
+  tray.on('double-click', bringMainWindowToFront);
+}
+
+function replaceOpenAppShortcut(accelerator = '') {
+  if (SERVER_ONLY || !app.isReady()) return true;
+  const next = String(accelerator || '').trim();
+  if (next && next === activeOpenAppShortcut && globalShortcut.isRegistered(next)) return true;
+  if (next) {
+    try { if (!globalShortcut.register(next, toggleMainWindowFromShortcut)) return false; }
+    catch { return false; }
+  }
+  if (activeOpenAppShortcut && activeOpenAppShortcut !== next) {
+    try { globalShortcut.unregister(activeOpenAppShortcut); } catch {}
+  }
+  activeOpenAppShortcut = next;
+  return true;
+}
+
+function registerConfiguredOpenAppShortcut() {
+  const shortcutConfig = validateShortcutConfiguration(readConfig());
+  const accelerator = shortcutConfig.shortcuts_enabled ? shortcutConfig.shortcut_settings.open_app : '';
+  const ok = replaceOpenAppShortcut(accelerator);
+  if (!ok) addLog(`全局快捷键注册失败：${accelerator} 已被系统或其他软件占用。`, { level:'warn' });
+  return ok;
+}
+
 function initConfig() {
   configPath = path.join(app.getPath('userData'), 'config.json');
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
@@ -641,6 +761,10 @@ function readConfig() {
     migrated.legacy_output_dirs = Array.isArray(migrated.legacy_output_dirs)
       ? Array.from(new Set(migrated.legacy_output_dirs.map(r => String(r || '').trim()).filter(Boolean)))
       : [];
+    const shortcutConfig = validateShortcutConfiguration(migrated);
+    migrated.shortcuts_enabled = shortcutConfig.shortcuts_enabled;
+    migrated.shortcut_settings = shortcutConfig.shortcut_settings;
+    delete migrated.repaired;
     if (SERVER_ONLY) {
       if (!String(migrated.output_dir || '').trim()) migrated.output_dir = process.env.LAIG_OUTPUT_DIR || '/data/output';
       if (!String(migrated.asset_library_dir || '').trim() && process.env.LAIG_ASSET_DIR) migrated.asset_library_dir = process.env.LAIG_ASSET_DIR;
@@ -678,6 +802,10 @@ function saveConfig(partial) {
   next.legacy_output_dirs = Array.isArray(next.legacy_output_dirs)
     ? Array.from(new Set(next.legacy_output_dirs.map(r => String(r || '').trim()).filter(Boolean)))
     : [];
+  const shortcutConfig = validateShortcutConfiguration(next);
+  next.shortcuts_enabled = shortcutConfig.shortcuts_enabled;
+  next.shortcut_settings = shortcutConfig.shortcut_settings;
+  delete next.repaired;
   next.announcement_custom_enabled = next.announcement_custom_enabled === true;
   if (!next.port) next.port = 7860;
   fs.writeFileSync(configPath, JSON.stringify(next, null, 2), 'utf8');
@@ -6422,6 +6550,34 @@ async function apiHandler(req, res, parsed) {
   // 公网访问已通过密码后，按局域网逻辑使用；不再用只读模式阻止上传/生成。
   try {
     if (method === 'GET' && p === '/api/health') return send(res, {ok:true, time: nowISO(), app: cfg.app_name, ...urls(cfg)});
+    if (method === 'GET' && p === '/api/shortcuts') {
+      if (!local) return send(res, {ok:false,error:'快捷键只能在主机程序中配置'}, 403);
+      const shortcutConfig = validateShortcutConfiguration(cfg);
+      const accelerator = shortcutConfig.shortcut_settings.open_app;
+      const globalRegistered = shortcutConfig.shortcuts_enabled && !SERVER_ONLY
+        ? activeOpenAppShortcut === accelerator && globalShortcut.isRegistered(accelerator)
+        : false;
+      return send(res, {ok:true, shortcuts_enabled:shortcutConfig.shortcuts_enabled, shortcut_settings:shortcutConfig.shortcut_settings, defaults:{...DEFAULT_SHORTCUT_SETTINGS}, global_registered:globalRegistered});
+    }
+    if (method === 'POST' && p === '/api/shortcuts') {
+      if (!local) return send(res, {ok:false,error:'快捷键只能在主机程序中配置'}, 403);
+      const body = await readBody(req);
+      let shortcutConfig;
+      try { shortcutConfig = validateShortcutConfiguration(body, true); }
+      catch (error) { return send(res, {ok:false,error:error.message || '快捷键配置无效'}, 400); }
+      const previousShortcut = activeOpenAppShortcut;
+      const nextShortcut = shortcutConfig.shortcuts_enabled ? shortcutConfig.shortcut_settings.open_app : '';
+      if (!replaceOpenAppShortcut(nextShortcut)) {
+        return send(res, {ok:false,error:'当前快捷键被系统或其他软件占用，请更换。'}, 409);
+      }
+      try {
+        saveConfig({shortcuts_enabled:shortcutConfig.shortcuts_enabled, shortcut_settings:shortcutConfig.shortcut_settings});
+      } catch (error) {
+        replaceOpenAppShortcut(previousShortcut);
+        return send(res, {ok:false,error:error.message || '快捷键设置保存失败'}, 500);
+      }
+      return send(res, {ok:true, shortcuts_enabled:shortcutConfig.shortcuts_enabled, shortcut_settings:shortcutConfig.shortcut_settings, defaults:{...DEFAULT_SHORTCUT_SETTINGS}, global_registered:shortcutConfig.shortcuts_enabled ? globalShortcut.isRegistered(shortcutConfig.shortcut_settings.open_app) : false});
+    }
     if (method === 'GET' && p === '/api/config') {
       const u = urls(cfg);
       if (publicHost) u.public_url = requestOrigin(req) || u.public_url;
@@ -7017,6 +7173,11 @@ function createWindow() {
       }
     } catch {}
   });
+  mainWindow.on('close', event => {
+    if (isAppQuitting) return;
+    event.preventDefault();
+    hideMainWindowToTray();
+  });
   mainWindow.on('closed', () => { mainWindow = null; });
 }
 // V14.1: 不再使用全局单实例锁。不同版本使用不同 appId，可与旧版本同时打开；端口被占用时会自动顺延。
@@ -7038,7 +7199,11 @@ app.whenReady().then(() => {
   startNetworkTimeSync();
   queue = new TaskQueue();
   queue.recoverInterruptedBatches();
-  if (!SERVER_ONLY) createWindow();
+  if (!SERVER_ONLY) {
+    createWindow();
+    createTray();
+    registerConfiguredOpenAppShortcut();
+  }
   startServer(Number(readConfig().port || 7861));
   const startupPublicCfg = readConfig();
   if (startupPublicCfg.public_enabled && (startupPublicCfg.public_provider || 'cloudflare') !== 'manual') {
@@ -7054,4 +7219,10 @@ app.whenReady().then(() => {
   }
 });
 app.on('window-all-closed', () => { if (!SERVER_ONLY && process.platform !== 'darwin') app.quit(); });
-app.on('before-quit', () => { try { if (queue && typeof queue.clearAllRunning === 'function') queue.clearAllRunning(); } catch {} try { const db = getDB(); if (db && typeof db._flushSync === 'function') db._flushSync(); } catch {} try { mirrorRuntimeDataToOutputDir(); } catch {} try { stopTunnelProcess({ preserveConfig:true }); } catch {} try { if (server) server.close(); } catch {} });
+app.on('activate', () => {
+  if (SERVER_ONLY) return;
+  if (!mainWindow || mainWindow.isDestroyed()) createWindow();
+  bringMainWindowToFront();
+});
+app.on('before-quit', () => { isAppQuitting = true; try { if (queue && typeof queue.clearAllRunning === 'function') queue.clearAllRunning(); } catch {} try { const db = getDB(); if (db && typeof db._flushSync === 'function') db._flushSync(); } catch {} try { mirrorRuntimeDataToOutputDir(); } catch {} try { stopTunnelProcess({ preserveConfig:true }); } catch {} try { if (server) server.close(); } catch {} });
+app.on('will-quit', () => { try { globalShortcut.unregisterAll(); } catch {} activeOpenAppShortcut = ''; try { if (tray && !tray.isDestroyed()) tray.destroy(); } catch {} tray = null; });
