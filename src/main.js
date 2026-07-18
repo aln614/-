@@ -1999,11 +1999,11 @@ const APIMART_VIDEO_MODEL_RULES = {
     label: 'Omni Flash',
     model: 'Omni-Flash-Ext',
     endpoint: '/v1/videos/generations', taskQuery: 'batch',
-    resolutions: ['720p','1080p','4k'], defaultResolution: '1080p',
-    aspectRatios: ['16:9','9:16','1:1','4:3','3:4'], defaultAspectRatio: '9:16',
+    resolutions: ['720p','1080p','4k'], defaultResolution: '720p', resolutionParam: 'resolution',
+    aspectRatios: ['16:9','9:16'], defaultAspectRatio: '16:9', aspectParam: 'aspect_ratio',
     durations: [4,6,8,10], defaultDuration: 6,
     supportsImageUrls: true, supportsVideoUrls: true, supportsImageWithRoles: false,
-    videoParam: 'video_urls',
+    videoParam: 'video_urls', durationWithVideo: false,
     allowedImageCounts: [0,1,3]
   },
   'doubao-seedance-1-0-pro-fast': {
@@ -2013,7 +2013,8 @@ const APIMART_VIDEO_MODEL_RULES = {
     aspectRatios: ['16:9','9:16','1:1','4:3','3:4','21:9'], defaultAspectRatio: '16:9',
     durationRange: [2,12], defaultDuration: 5,
     supportsImageUrls: false, supportsVideoUrls: false, supportsImageWithRoles: true,
-    supportsLastFrame: false
+    supportsLastFrame: false, maxImageCount: 1,
+    resolutionParam: 'resolution', aspectParam: 'aspect_ratio'
   },
   'doubao-seedance-1-0-pro-quality': {
     label: 'Doubao Seedance 1.0 Pro Quality',
@@ -2022,7 +2023,8 @@ const APIMART_VIDEO_MODEL_RULES = {
     aspectRatios: ['16:9','9:16','1:1','4:3','3:4','21:9'], defaultAspectRatio: '16:9',
     durationRange: [2,12], defaultDuration: 5,
     supportsImageUrls: false, supportsVideoUrls: false, supportsImageWithRoles: true,
-    supportsLastFrame: true
+    supportsLastFrame: true, maxImageCount: 2,
+    resolutionParam: 'resolution', aspectParam: 'aspect_ratio'
   }
 };
 function registerApimartVideoRules(items = []) {
@@ -2035,6 +2037,8 @@ function registerApimartVideoRules(items = []) {
       defaultResolution: '720p',
       defaultAspectRatio: '16:9',
       defaultDuration: 5,
+      resolutionParam: 'resolution',
+      aspectParam: 'aspect_ratio',
       supportsImageUrls: true,
       supportsVideoUrls: false,
       supportsImageWithRoles: false,
@@ -2044,48 +2048,44 @@ function registerApimartVideoRules(items = []) {
   }
 }
 registerApimartVideoRules([
-  { model:'gemini-omni-flash-preview', label:'Gemini Omni Flash Preview', resolutions:['720p'], defaultResolution:'720p', aspectRatios:['16:9','9:16'], defaultAspectRatio:'16:9', supportsImageUrls:true, supportsVideoUrls:true, videoParam:'video_urls', maxImageCount:16, maxVideoCount:1, supportsDuration:false, supportsSizeCompat:false, supportsSeed:false },
-  { model:'doubao-seedance-1-5-pro', label:'Doubao Seedance 1.5 Pro', resolutions:['480p','720p','1080p'], defaultResolution:'720p', aspectRatios:['16:9','9:16','1:1'], durationRange:[4,12], supportsImageUrls:false, supportsImageWithRoles:true, supportsLastFrame:true },
-  { model:'doubao-seedance-2.0', label:'Doubao Seedance 2.0', resolutions:['480p','720p','1080p','4k'], aspectRatios:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'], durationRange:[4,15], supportsImageUrls:true, supportsVideoUrls:true, supportsImageWithRoles:true, supportsLastFrame:true },
-  { model:'doubao-seedance-2.0-fast', label:'Doubao Seedance 2.0 Fast', resolutions:['480p','720p'], aspectRatios:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'], durationRange:[4,15], supportsImageUrls:true, supportsVideoUrls:true, supportsImageWithRoles:true, supportsLastFrame:true },
-  { model:'doubao-seedance-2.0-face', label:'Doubao Seedance 2.0 Face', resolutions:['480p','720p','1080p'], aspectRatios:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'], durationRange:[4,15], supportsImageUrls:true, supportsVideoUrls:false, supportsImageWithRoles:true, supportsLastFrame:true },
-  { model:'doubao-seedance-2.0-fast-face', label:'Doubao Seedance 2.0 Fast Face', resolutions:['480p','720p'], aspectRatios:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'], durationRange:[4,15], supportsImageUrls:true, supportsVideoUrls:false, supportsImageWithRoles:true, supportsLastFrame:true },
-  { model:'doubao-seedance-2.0-mini', label:'Doubao Seedance 2.0 Mini', resolutions:['480p','720p'], aspectRatios:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'], durationRange:[4,15], supportsImageUrls:true, supportsVideoUrls:false, supportsImageWithRoles:true, supportsLastFrame:true },
-  { model:'sora-2', label:'Sora 2', resolutions:['720p'], aspectRatios:['16:9','9:16'], durations:[4,8,12,16,20], defaultDuration:8, supportsImageUrls:true },
-  { model:'sora-2-pro', label:'Sora 2 Pro', resolutions:['720p','1024p','1080p'], aspectRatios:['16:9','9:16'], durations:[4,8,12,16,20], defaultDuration:8, supportsImageUrls:true },
-  { model:'veo3.1-fast', label:'VEO3.1 Fast', resolutions:['720p','1080p','4k'], durations:[8], defaultDuration:8, supportsImageUrls:true },
-  { model:'veo3.1-quality', label:'VEO3.1 Quality', resolutions:['720p','1080p','4k'], durations:[8], defaultDuration:8, supportsImageUrls:true },
-  { model:'veo3.1-lite', label:'VEO3.1 Lite', resolutions:['720p','1080p','4k'], durations:[8], defaultDuration:8, supportsImageUrls:true },
-  { model:'veo3.1-fast-official', label:'VEO3.1 Official Fast', resolutions:['720p','1080p','4k'], durations:[4,6,8], defaultDuration:8, supportsImageUrls:false, imageParam:'first_frame_image', supportsLastFrame:true },
-  { model:'veo3.1-quality-official', label:'VEO3.1 Official Quality', resolutions:['720p','1080p','4k'], durations:[4,6,8], defaultDuration:8, supportsImageUrls:false, imageParam:'first_frame_image', supportsLastFrame:true },
-  { model:'MiniMax-Hailuo-02', label:'MiniMax Hailuo 02', resolutions:['768p','1080p'], defaultResolution:'768p', durations:[5,10], supportsImageUrls:false, imageParam:'first_frame_image', supportsLastFrame:true },
-  { model:'MiniMax-Hailuo-2.3', label:'MiniMax Hailuo 2.3', resolutions:['768p','1080p'], defaultResolution:'768p', durations:[6,10], defaultDuration:6, supportsImageUrls:false, imageParam:'first_frame_image' },
-  { model:'MiniMax-Hailuo-2.3-Fast', label:'MiniMax Hailuo 2.3 Fast', resolutions:['768p','1080p'], defaultResolution:'768p', durations:[6,10], defaultDuration:6, supportsImageUrls:false, imageParam:'first_frame_image' },
-  { model:'skyreels-v4-fast', label:'SkyReels V4 Fast', resolutions:['480p','720p','1080p'], durationRange:[3,15], supportsImageUrls:true },
-  { model:'skyreels-v4-std', label:'SkyReels V4 Std', resolutions:['480p','720p','1080p'], durationRange:[3,15], supportsImageUrls:true },
-  { model:'happyhorse-1.0', label:'HappyHorse 1.0', resolutions:['720p','1080p'], durationRange:[3,15], supportsImageUrls:true, supportsVideoUrls:true, imageParam:'first_frame_image', videoParam:'video_url' },
-  { model:'happyhorse-1.1', label:'HappyHorse 1.1', resolutions:['720p','1080p'], durationRange:[3,15], supportsImageUrls:true, imageParam:'first_frame_image' },
-  { model:'wan2.5-preview', label:'Wan2.5 Preview', resolutions:['480p','720p','1080p'], aspectRatios:['16:9','9:16','1:1','4:3','3:4'], durations:[5,10], supportsImageUrls:true },
-  { model:'wan2.6', label:'Wan2.6', resolutions:['720p','1080p'], durations:[5,10,15], supportsImageUrls:true },
-  { model:'wan2.6-i2v', label:'Wan2.6 I2V', resolutions:['720p','1080p'], durationRange:[2,15], supportsImageUrls:true },
-  { model:'wan2.6-i2v-flash', label:'Wan2.6 I2V Flash', resolutions:['720p','1080p'], defaultResolution:'1080p', durationRange:[2,15], supportsImageUrls:true },
-  { model:'wan2.7', label:'Wan2.7', resolutions:['720p','1080p'], durationRange:[2,15], supportsImageUrls:true, supportsVideoUrls:true, supportsImageWithRoles:true, supportsLastFrame:true },
-  { model:'wan2.7-r2v', label:'Wan2.7 R2V', resolutions:['720p','1080p'], defaultResolution:'1080p', durationRange:[2,15], supportsImageUrls:false, supportsVideoUrls:true, supportsImageWithRoles:true },
-  { model:'wan2.7-videoedit', label:'Wan2.7 VideoEdit', resolutions:['720p','1080p'], defaultResolution:'1080p', durationRange:[0,10], supportsImageUrls:true, supportsVideoUrls:true },
-  { model:'kling-v2-6', label:'Kling 2.6', resolutions:['720p','1080p'], durations:[5,10], supportsImageUrls:true, modeFromResolution:true },
-  { model:'kling-v2-6-motion-control', label:'Kling 2.6 Motion Control', resolutions:['720p','1080p'], durationRange:[3,30], supportsImageUrls:true, supportsVideoUrls:true, modeFromResolution:true },
-  { model:'kling-v3', label:'Kling v3', resolutions:['720p','1080p','4k'], durationRange:[3,15], supportsImageUrls:true, modeFromResolution:true },
-  { model:'kling-v3-motion-control', label:'Kling v3 Motion Control', resolutions:['720p','1080p'], durationRange:[3,30], supportsImageUrls:true, supportsVideoUrls:true, modeFromResolution:true },
-  { model:'kling-v3-omni', label:'Kling v3 Omni', resolutions:['720p','1080p','4k'], durationRange:[3,15], supportsImageUrls:true, modeFromResolution:true },
-  { model:'kling-video-o1', label:'Kling Video O1', resolutions:['720p','1080p'], durationRange:[3,15], supportsImageUrls:true, modeFromResolution:true },
-  { model:'kling-3.0-turbo', label:'Kling 3.0 Turbo', resolutions:['720p','1080p'], durationRange:[3,15], supportsImageUrls:false, imageParam:'first_frame_image' },
-  { model:'viduq3', label:'Vidu Q3', resolutions:['540p','720p','1080p'], durationRange:[3,16], supportsImageUrls:true },
-  { model:'viduq3-mix', label:'Vidu Q3 Mix', resolutions:['720p','1080p'], durationRange:[1,16], supportsImageUrls:true },
-  { model:'viduq3-pro', label:'Vidu Q3 Pro', resolutions:['540p','720p','1080p'], durationRange:[1,16], supportsImageUrls:true, supportsLastFrame:true },
-  { model:'viduq3-turbo', label:'Vidu Q3 Turbo', resolutions:['540p','720p','1080p'], durationRange:[1,16], supportsImageUrls:true, supportsLastFrame:true },
-  { model:'grok-imagine-1.5-video-apimart', label:'Grok Imagine 1.5 Video', resolutions:['480p','720p'], defaultResolution:'480p', durationRange:[6,30], defaultDuration:6, supportsImageUrls:true },
-  { model:'pixverse-v6', label:'Pixverse v6', resolutions:['360p','540p','720p','1080p'], durationRange:[1,15], supportsImageUrls:true, supportsVideoUrls:true },
-  { model:'Omni-Flash-Ext', label:'Omni Flash Ext', resolutions:['720p','1080p','4k'], aspectRatios:['16:9','9:16','1:1','4:3','3:4'], defaultAspectRatio:'9:16', durations:[4,6,8,10], defaultDuration:6, supportsImageUrls:true, supportsVideoUrls:true, videoParam:'video_urls', allowedImageCounts:[0,1,3] }
+  { model:'gemini-omni-flash-preview', label:'Gemini Omni Flash Preview', resolutions:['720p'], defaultResolution:'720p', aspectRatios:['16:9','9:16'], defaultAspectRatio:'16:9', supportsImageUrls:true, supportsVideoUrls:true, videoParam:'video_urls', maxImageCount:16, maxVideoCount:1, supportsDuration:false, supportsSeed:false, durationWithVideo:false },
+  { model:'doubao-seedance-1-0-pro-fast', label:'Doubao Seedance 1.0 Pro Fast', resolutions:['480p','720p','1080p'], defaultResolution:'1080p', aspectRatios:['16:9','9:16','1:1','4:3','3:4','21:9'], durationRange:[2,12], defaultDuration:5, supportsImageUrls:false, supportsImageWithRoles:true, supportsLastFrame:false, maxImageCount:1 },
+  { model:'doubao-seedance-1-0-pro-quality', label:'Doubao Seedance 1.0 Pro Quality', resolutions:['480p','720p','1080p'], defaultResolution:'1080p', aspectRatios:['16:9','9:16','1:1','4:3','3:4','21:9'], durationRange:[2,12], defaultDuration:5, supportsImageUrls:false, supportsImageWithRoles:true, supportsLastFrame:true, maxImageCount:2 },
+  { model:'doubao-seedance-1-5-pro', label:'Doubao Seedance 1.5 Pro', resolutions:['480p','720p','1080p'], defaultResolution:'720p', aspectRatios:['16:9','9:16','1:1','4:3','3:4','21:9'], durationRange:[4,12], supportsImageUrls:true, supportsImageWithRoles:true, supportsLastFrame:true, maxImageCount:2, audioParam:'audio', defaultAudio:true, cameraFixedParam:'camerafixed' },
+  { model:'doubao-seedance-2.0', label:'Doubao Seedance 2.0', resolutions:['480p','720p','1080p','4k'], aspectRatios:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'], aspectParam:'size', durationRange:[4,15], supportsImageUrls:true, supportsVideoUrls:true, supportsImageWithRoles:true, supportsLastFrame:true, maxImageCount:9, maxVideoCount:3, videoParam:'video_urls', durationWithVideo:true, audioParam:'generate_audio', defaultAudio:true, returnLastFrameParam:'return_last_frame' },
+  { model:'doubao-seedance-2.0-fast', label:'Doubao Seedance 2.0 Fast', resolutions:['480p','720p'], aspectRatios:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'], aspectParam:'size', durationRange:[4,15], supportsImageUrls:true, supportsVideoUrls:true, supportsImageWithRoles:true, supportsLastFrame:true, maxImageCount:9, maxVideoCount:3, videoParam:'video_urls', durationWithVideo:true, audioParam:'generate_audio', defaultAudio:true, returnLastFrameParam:'return_last_frame' },
+  { model:'doubao-seedance-2.0-mini', label:'Doubao Seedance 2.0 Mini', resolutions:['480p','720p'], aspectRatios:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'], aspectParam:'size', durationRange:[4,15], supportsImageUrls:true, supportsVideoUrls:true, supportsImageWithRoles:true, supportsLastFrame:true, maxImageCount:9, maxVideoCount:3, videoParam:'video_urls', durationWithVideo:true, audioParam:'generate_audio', defaultAudio:true, returnLastFrameParam:'return_last_frame' },
+  { model:'sora-2', label:'Sora 2', resolutions:['720p'], aspectRatios:['16:9','9:16'], durations:[4,8,12,16,20], defaultDuration:4, supportsImageUrls:true, maxImageCount:1, omitAspectWithImages:true },
+  { model:'sora-2-pro', label:'Sora 2 Pro', resolutions:['720p','1024p','1080p'], aspectRatios:['16:9','9:16'], durations:[4,8,12,16,20], defaultDuration:4, supportsImageUrls:true, maxImageCount:1, omitAspectWithImages:true },
+  { model:'veo3.1-fast', label:'VEO3.1 Fast', resolutions:['720p','1080p','4k'], aspectRatios:['16:9','9:16'], durations:[8], defaultDuration:8, supportsImageUrls:true, maxImageCount:3 },
+  { model:'veo3.1-quality', label:'VEO3.1 Quality', resolutions:['720p','1080p','4k'], aspectRatios:['16:9','9:16'], durations:[8], defaultDuration:8, supportsImageUrls:true, maxImageCount:3 },
+  { model:'veo3.1-lite', label:'VEO3.1 Lite', resolutions:['720p','1080p','4k'], aspectRatios:['16:9','9:16'], durations:[8], defaultDuration:8, supportsImageUrls:false, maxImageCount:0 },
+  { model:'MiniMax-Hailuo-02', label:'MiniMax Hailuo 02', resolutions:['512p','768p','1080p'], defaultResolution:'768p', aspectParam:false, durations:[5,10], supportsImageUrls:false, imageParam:'first_frame_image', supportsLastFrame:true, maxImageCount:2, resolutionDurationRules:{'1080p':[5]}, watermarkParam:'watermark', promptOptimizerParam:'prompt_optimizer', fastPretreatmentParam:'fast_pretreatment' },
+  { model:'MiniMax-Hailuo-2.3', label:'MiniMax Hailuo 2.3', resolutions:['768p','1080p'], defaultResolution:'768p', aspectParam:false, durations:[6,10], defaultDuration:6, supportsImageUrls:false, imageParam:'first_frame_image', maxImageCount:1, resolutionDurationRules:{'1080p':[6]}, watermarkParam:'watermark', promptOptimizerParam:'prompt_optimizer' },
+  { model:'MiniMax-Hailuo-2.3-Fast', label:'MiniMax Hailuo 2.3 Fast', resolutions:['768p','1080p'], defaultResolution:'768p', aspectParam:false, durations:[6,10], defaultDuration:6, supportsImageUrls:false, imageParam:'first_frame_image', minImageCount:1, maxImageCount:1, resolutionDurationRules:{'1080p':[6]}, watermarkParam:'watermark', promptOptimizerParam:'prompt_optimizer' },
+  { model:'skyreels-v4-fast', label:'SkyReels V4 Fast', resolutions:['480p','720p','1080p'], defaultResolution:'1080p', aspectRatios:['16:9','4:3','1:1','9:16','3:4'], durationRange:[3,15], supportsImageUrls:true, supportsVideoUrls:true, imageParam:'skyreels', videoParam:'ref_videos', maxImageCount:15, maxVideoCount:1, durationWithVideo:true, omitAspectWithImages:true, omitAspectWithVideo:true, promptOptimizerParam:'prompt_optimizer' },
+  { model:'skyreels-v4-std', label:'SkyReels V4 Std', resolutions:['480p','720p','1080p'], defaultResolution:'1080p', aspectRatios:['16:9','4:3','1:1','9:16','3:4'], durationRange:[3,15], supportsImageUrls:true, supportsVideoUrls:true, imageParam:'skyreels', videoParam:'ref_videos', maxImageCount:15, maxVideoCount:1, durationWithVideo:true, omitAspectWithImages:true, omitAspectWithVideo:true, promptOptimizerParam:'prompt_optimizer' },
+  { model:'happyhorse-1.0', label:'HappyHorse 1.0', resolutions:['720P','1080P'], defaultResolution:'1080P', aspectRatios:['16:9','9:16','1:1','4:3','3:4'], aspectParam:'size', durationRange:[3,15], supportsImageUrls:true, supportsVideoUrls:true, imageParam:'first_frame_image', videoParam:'video_url', maxImageCount:9, watermarkParam:'watermark' },
+  { model:'happyhorse-1.1', label:'HappyHorse 1.1', resolutions:['720P','1080P'], defaultResolution:'1080P', aspectRatios:['16:9','9:16','1:1','4:3','3:4'], aspectParam:'size', durationRange:[3,15], supportsImageUrls:true, imageParam:'first_frame_image', maxImageCount:9, watermarkParam:'watermark' },
+  { model:'wan2.5-preview', label:'Wan2.5 Preview', resolutions:['480p','720p','1080p'], defaultResolution:'720p', aspectRatios:['16:9','9:16','1:1','4:3','3:4'], aspectParam:'size', durations:[5,10], supportsImageUrls:true, maxImageCount:1, omitAspectWithImages:true, audioParam:'audio', defaultAudio:true, forceAudio:true, watermarkParam:'watermark', negativePromptParam:'negative_prompt' },
+  { model:'wan2.6', label:'Wan2.6', resolutions:['720p','1080p'], defaultResolution:'720p', aspectRatios:['16:9','9:16','1:1','4:3','3:4'], durations:[5,10,15], supportsImageUrls:true, maxImageCount:1, omitAspectWithImages:true, audioParam:'audio', defaultAudio:true, watermarkParam:'watermark', negativePromptParam:'negative_prompt' },
+  { model:'wan2.7', label:'Wan2.7', resolutions:['720P','1080P'], defaultResolution:'1080P', aspectRatios:['16:9','9:16','1:1','4:3','3:4'], aspectParam:'size', durationRange:[2,15], supportsImageUrls:true, supportsVideoUrls:true, supportsImageWithRoles:true, supportsLastFrame:true, videoParam:'video_urls', maxVideoCount:1, durationWithVideo:true, omitAspectWithImages:true, omitAspectWithVideo:true, watermarkParam:'watermark', negativePromptParam:'negative_prompt' },
+  { model:'wan2.7-r2v', label:'Wan2.7 R2V', resolutions:['720P','1080P'], defaultResolution:'1080P', aspectRatios:['16:9','9:16','1:1','4:3','3:4'], aspectParam:'size', durationRange:[2,15], videoDurationRange:[2,10], supportsImageUrls:false, supportsVideoUrls:true, supportsImageWithRoles:true, referenceOnlyRoles:true, videoParam:'video_urls', maxImageCount:5, maxVideoCount:5, maxReferenceCount:5, durationWithVideo:true, minReferenceCount:1, omitAspectWithImages:true, omitAspectWithVideo:true, watermarkParam:'watermark', negativePromptParam:'negative_prompt' },
+  { model:'wan2.7-videoedit', label:'Wan2.7 VideoEdit', resolutions:['720P','1080P'], defaultResolution:'1080P', aspectRatios:['16:9','9:16','1:1','4:3','3:4'], aspectParam:'size', durations:[0,2,3,4,5,6,7,8,9,10], defaultDuration:0, supportsImageUrls:true, supportsVideoUrls:true, videoParam:'video_urls', maxImageCount:4, maxVideoCount:1, requiredVideo:true, durationWithVideo:true, watermarkParam:'watermark', negativePromptParam:'negative_prompt' },
+  { model:'kling-v2-6', label:'Kling 2.6', resolutions:['720p','1080p'], aspectRatios:['16:9','9:16','1:1'], durations:[5,10], supportsImageUrls:true, maxImageCount:2, modeFromResolution:true, audioParam:'audio', defaultAudio:false, watermarkParam:'watermark', negativePromptParam:'negative_prompt' },
+  { model:'kling-v2-6-motion-control', label:'Kling 2.6 Motion Control', resolutions:['720p','1080p'], aspectParam:false, supportsDuration:false, supportsImageUrls:false, supportsVideoUrls:true, imageParam:'image_url', videoParam:'video_url', minImageCount:1, maxImageCount:1, requiredVideo:true, modeFromResolution:true, characterOrientationParam:'character_orientation' },
+  { model:'kling-v3', label:'Kling v3', resolutions:['720p','1080p','4k'], aspectRatios:['16:9','9:16','1:1'], durationRange:[3,15], supportsImageUrls:true, maxImageCount:2, modeFromResolution:true, audioParam:'audio', defaultAudio:false, watermarkParam:'watermark', negativePromptParam:'negative_prompt' },
+  { model:'kling-v3-motion-control', label:'Kling v3 Motion Control', resolutions:['720p','1080p'], aspectParam:false, supportsDuration:false, supportsImageUrls:false, supportsVideoUrls:true, imageParam:'image_url', videoParam:'video_url', minImageCount:1, maxImageCount:1, requiredVideo:true, modeFromResolution:true, characterOrientationParam:'character_orientation' },
+  { model:'kling-v3-omni', label:'Kling v3 Omni', resolutions:['720p','1080p','4k'], aspectRatios:['16:9','9:16','1:1'], durationRange:[3,15], supportsImageUrls:true, supportsVideoUrls:true, supportsImageWithRoles:true, supportsLastFrame:true, videoParam:'video_list', maxVideoCount:1, modeFromResolution:true, durationWithVideo:false, audioParam:'audio', defaultAudio:false, watermarkParam:'watermark' },
+  { model:'kling-video-o1', label:'Kling Video O1', resolutions:['720p','1080p'], aspectRatios:['16:9','9:16','1:1'], durations:[5,10], defaultDuration:5, supportsImageUrls:true, supportsImageWithRoles:true, supportsLastFrame:true, maxImageCount:2, modeFromResolution:true },
+  { model:'kling-3.0-turbo', label:'Kling 3.0 Turbo', resolutions:['720p','1080p'], aspectRatios:['16:9','9:16','1:1'], durationRange:[3,15], supportsImageUrls:false, imageParam:'first_frame_image', omitAspectWithImages:true, watermarkParam:'watermark' },
+  { model:'viduq3', label:'Vidu Q3', resolutions:['540p','720p','1080p'], aspectRatios:['16:9','9:16','4:3','3:4','1:1'], durationRange:[3,16], supportsImageUrls:true, minImageCount:1, maxImageCount:7 },
+  { model:'viduq3-mix', label:'Vidu Q3 Mix', resolutions:['720p','1080p'], aspectRatios:['16:9','9:16','4:3','3:4','1:1'], durationRange:[1,16], supportsImageUrls:true, minImageCount:1, maxImageCount:7 },
+  { model:'viduq3-pro', label:'Vidu Q3 Pro', resolutions:['540p','720p','1080p'], aspectRatios:['16:9','9:16','4:3','3:4','1:1'], durationRange:[1,16], supportsImageUrls:true, maxImageCount:2, supportsLastFrame:true, omitAspectWithImages:true, audioParam:'audio', defaultAudio:true },
+  { model:'viduq3-turbo', label:'Vidu Q3 Turbo', resolutions:['540p','720p','1080p'], aspectRatios:['16:9','9:16','4:3','3:4','1:1'], durationRange:[1,16], supportsImageUrls:true, maxImageCount:2, supportsLastFrame:true, omitAspectWithImages:true, audioParam:'audio', defaultAudio:true },
+  { model:'grok-imagine-1.5-video-apimart', label:'Grok Imagine 1.5 Video', resolutions:['480p','720p'], defaultResolution:'480p', resolutionParam:'quality', aspectRatios:['16:9','9:16','1:1','3:2','2:3'], aspectParam:'size', durationRange:[6,30], defaultDuration:6, supportsImageUrls:true, maxImageCount:7 },
+  { model:'pixverse-v6', label:'Pixverse v6', resolutions:['360p','540p','720p','1080p'], defaultResolution:'540p', aspectRatios:['16:9','4:3','1:1','3:4','9:16','2:3','3:2','21:9'], aspectParam:'size', durationRange:[1,15], firstLastDurations:[5,8], supportsImageUrls:true, imageParam:'pixverse', maxImageCount:7, omitAspectWithImages:true, audioParam:'audio', defaultAudio:false, watermarkParam:'watermark', negativePromptParam:'negative_prompt', motionModeParam:'motion_mode' },
+  { model:'Omni-Flash-Ext', label:'Omni Flash Ext', resolutions:['720p','1080p','4k'], defaultResolution:'720p', aspectRatios:['16:9','9:16'], defaultAspectRatio:'16:9', durations:[4,6,8,10], defaultDuration:6, supportsImageUrls:true, supportsVideoUrls:true, videoParam:'video_urls', allowedImageCounts:[0,1,3], durationWithVideo:false }
 ]);
 function canonicalApimartVideoModel(model = 'Omni-Flash-Ext') {
   const raw = String(model || 'Omni-Flash-Ext').trim();
@@ -2097,16 +2097,16 @@ function getApimartVideoRule(model = 'Omni-Flash-Ext') {
 }
 function normalizeVideoResolution(value, model = 'Omni-Flash-Ext') {
   const rule = getApimartVideoRule(model);
-  const raw = String(value || rule.defaultResolution || '1080p').trim().toLowerCase();
-  return (rule.resolutions || []).includes(raw) ? raw : (rule.defaultResolution || '1080p');
+  const raw = String(value || rule.defaultResolution || '1080p').trim();
+  const match = (rule.resolutions || []).find(item => String(item).toLowerCase() === raw.toLowerCase());
+  return match || rule.defaultResolution || '1080p';
 }
 function normalizeVideoAspectRatio(value, model = 'Omni-Flash-Ext') {
   const rule = getApimartVideoRule(model);
   const raw = String(value || rule.defaultAspectRatio || '9:16').trim();
   return (rule.aspectRatios || []).includes(raw) ? raw : (rule.defaultAspectRatio || '9:16');
 }
-function normalizeVideoDuration(value, defaultValue = 6, model = 'Omni-Flash-Ext') {
-  const rule = getApimartVideoRule(model);
+function normalizeVideoDurationForRule(value, defaultValue = 6, rule = {}, model = 'Omni-Flash-Ext') {
   const requested = Number(value);
   if (Array.isArray(rule.durationRange) && rule.durationRange.length >= 2) {
     const min = Number(rule.durationRange[0]);
@@ -2125,9 +2125,13 @@ function normalizeVideoDuration(value, defaultValue = 6, model = 'Omni-Flash-Ext
   return fallback;
 }
 
+function normalizeVideoDuration(value, defaultValue = 6, model = 'Omni-Flash-Ext') {
+  return normalizeVideoDurationForRule(value, defaultValue, getApimartVideoRule(model), model);
+}
+
 function normalizeVideoMode(value = 'auto') {
   const mode = String(value || 'auto').trim();
-  return ['auto','text_to_video','first_frame','first_last_frame','multi_reference','video_edit'].includes(mode) ? mode : 'auto';
+  return ['auto','text_to_video','first_frame','first_last_frame','multi_reference','video_edit','veo_remix'].includes(mode) ? mode : 'auto';
 }
 function resolveApimartVideoMode(requested = 'auto', { imageCount = 0, hasVideo = false } = {}) {
   const mode = normalizeVideoMode(requested);
@@ -2151,6 +2155,10 @@ function buildApimartVideoImageRolePayload(model = 'Omni-Flash-Ext', imageUrls =
   const rule = getApimartVideoRule(model);
   const urls = (imageUrls || []).filter(Boolean);
   if (!urls.length || !rule.supportsImageWithRoles || mode === 'text_to_video') return [];
+  if (rule.referenceOnlyRoles) return urls.map(url => ({ url, role:'reference' }));
+  if (mode === 'multi_reference' && !rule.supportsImageUrls) {
+    return urls.map(url => ({ url, role: 'reference' }));
+  }
   if (mode === 'multi_reference') throw new Error(`${rule.label || model} 不支持多素材参考图模式，请选择 Omni Flash 或改为首帧/首尾帧。`);
   if (mode === 'first_last_frame') {
     if (!rule.supportsLastFrame) throw new Error(`${rule.label || model} 不支持首尾帧同时使用，请切换到 quality 模型。`);
@@ -3170,27 +3178,52 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
       throw new Error(`${rule.label || videoModel} 参考图最多支持 ${rule.maxImageCount} 张，当前为 ${imageUrls.length} 张。`);
     }
     const mode = resolveApimartVideoMode(body.video_mode, { imageCount: imageUrls.length, hasVideo: !!videoUrl });
+    const acceptsImages = rule.supportsImageUrls || rule.supportsImageWithRoles || !!rule.imageParam;
+    if (imageUrls.length && !acceptsImages) throw new Error(`${rule.label || videoModel} 不支持参考图片输入。`);
+    if (Number(rule.minImageCount || 0) > imageUrls.length) throw new Error(`${rule.label || videoModel} 至少需要 ${rule.minImageCount} 张参考图片。`);
+    if (rule.minReferenceCount && imageUrls.length + (videoUrl ? 1 : 0) < Number(rule.minReferenceCount)) throw new Error(`${rule.label || videoModel} 至少需要一张参考图片或一个参考视频。`);
+    if (rule.maxReferenceCount && imageUrls.length + (videoUrl ? 1 : 0) > Number(rule.maxReferenceCount)) throw new Error(`${rule.label || videoModel} 的参考图片和视频合计最多 ${rule.maxReferenceCount} 个。`);
+    if (rule.requiredVideo && !videoUrl) throw new Error(`${rule.label || videoModel} 必须上传视频或填写公开视频 URL。`);
+    if (videoUrl && String(rule.model || videoModel).toLowerCase() === 'happyhorse-1.0' && imageUrls.length > 5) throw new Error('HappyHorse 1.0 视频编辑最多支持 5 张参考图片。');
     if (videoUrl && !rule.supportsVideoUrls) throw new Error(`${rule.label || videoModel} 不支持上传视频编辑，请切换 Omni Flash。`);
     if (videoUrl && Number(rule.maxVideoCount || 0) > 0 && Number(rule.maxVideoCount) < 1) throw new Error(`${rule.label || videoModel} 不支持上传视频编辑。`);
-    const payload = {
-      model: rule.model || videoModel,
-      prompt,
-      resolution: normalizeVideoResolution(body.resolution, videoModel),
-      aspect_ratio: normalizeVideoAspectRatio(body.aspect_ratio, videoModel)
-    };
-    // APIMart 文档说明 size 是 aspect_ratio 的兼容字段。部分网关/控制台会读取 size，保持二者一致可提高兼容性。
-    if (rule.supportsSizeCompat !== false) payload.size = payload.aspect_ratio;
-    const normalizedResolution = payload.resolution;
+    const payload = { model: rule.model || videoModel, prompt };
+    const normalizedResolution = normalizeVideoResolution(body.resolution, videoModel);
+    const normalizedAspectRatio = normalizeVideoAspectRatio(body.aspect_ratio, videoModel);
+    // Field names are model-specific: for example Grok uses quality/size while Kling uses mode.
     if (rule.modeFromResolution) {
-      payload.mode = payload.resolution === '4k' ? '4k' : (payload.resolution === '1080p' ? 'pro' : 'std');
-      delete payload.resolution;
+      payload.mode = String(normalizedResolution).toLowerCase() === '4k' ? '4k' : (String(normalizedResolution).toLowerCase() === '1080p' ? 'pro' : 'std');
+    } else if (rule.resolutionParam !== false) {
+      payload[rule.resolutionParam || 'resolution'] = normalizedResolution;
     }
+    const omitAspect = (imageUrls.length && rule.omitAspectWithImages) || (videoUrl && rule.omitAspectWithVideo);
+    if (!omitAspect && rule.aspectParam !== false) payload[rule.aspectParam || 'aspect_ratio'] = normalizedAspectRatio;
     if (imageUrls.length) {
-      if (rule.imageParam === 'first_frame_image' && (mode === 'first_frame' || mode === 'first_last_frame' || imageUrls.length === 1)) {
+      if (rule.imageParam === 'skyreels') {
+        if (mode === 'multi_reference' || imageUrls.length > 2) {
+          payload.ref_images = [];
+          for (let i = 0; i < imageUrls.length; i += 5) {
+            const tag = `@image${payload.ref_images.length + 1}`;
+            payload.ref_images.push({ tag, type:'image', image_urls:imageUrls.slice(i, i + 5) });
+            if (!payload.prompt.includes(tag)) payload.prompt = `${tag} ${payload.prompt}`;
+          }
+        } else {
+          payload.first_frame_image = imageUrls[0];
+          if (imageUrls[1]) payload.end_frame_image = imageUrls[1];
+        }
+      } else if (rule.imageParam === 'pixverse') {
+        if (mode === 'multi_reference' || imageUrls.length > 2) payload.img_references = imageUrls;
+        else if (mode === 'first_last_frame' || imageUrls.length === 2) {
+          payload.first_frame_image = imageUrls[0];
+          payload.last_frame_image = imageUrls[1];
+        } else payload.image_urls = [imageUrls[0]];
+      } else if (rule.imageParam === 'image_url') {
+        payload.image_url = imageUrls[0];
+      } else if (rule.imageParam === 'first_frame_image' && (imageUrls.length === 1 || (mode === 'first_last_frame' && rule.supportsLastFrame))) {
         payload.first_frame_image = imageUrls[0];
         if (imageUrls[1] && rule.supportsLastFrame) payload.last_frame_image = imageUrls[1];
         else if (imageUrls.length > 1 && rule.supportsImageUrls) payload.image_urls = imageUrls;
-      } else if (rule.supportsImageWithRoles) {
+      } else if (rule.supportsImageWithRoles && (mode === 'first_frame' || mode === 'first_last_frame' || !rule.supportsImageUrls)) {
         const imageWithRoles = buildApimartVideoImageRolePayload(videoModel, imageUrls, mode);
         if (imageWithRoles.length) payload.image_with_roles = imageWithRoles;
       } else if (rule.supportsImageUrls) {
@@ -3216,16 +3249,57 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
         await probePublicVideoUrl(videoUrl);
       }
       if (rule.videoParam === 'video_url') payload.video_url = videoUrl;
-      else payload.video_urls = [videoUrl];
+      else if (rule.videoParam === 'video_list') {
+        payload.video_list = [{ video_url:videoUrl, refer_type:'base', keep_original_sound:'yes' }];
+      } else if (rule.videoParam === 'ref_videos') {
+        const tag = '@video1';
+        payload.ref_videos = [{ tag, type:String(body.video_reference_type || 'reference') === 'extend' ? 'extend' : 'reference', video_url:videoUrl }];
+        if (!payload.prompt.includes(tag)) payload.prompt = `${tag} ${payload.prompt}`;
+      } else payload.video_urls = [videoUrl];
     }
-    if (rule.supportsDuration !== false && (!videoUrl || rule.durationWithVideo)) payload.duration = normalizeVideoDuration(body.duration, rule.defaultDuration ?? 6, payload.model);
+    let durationRule = rule;
+    if (videoUrl && Array.isArray(rule.videoDurationRange)) durationRule = { ...rule, durations:undefined, durationRange:rule.videoDurationRange };
+    if ((mode === 'first_last_frame' || (imageUrls.length === 2 && rule.imageParam === 'pixverse')) && Array.isArray(rule.firstLastDurations)) durationRule = { ...rule, durationRange:undefined, durations:rule.firstLastDurations };
+    const resolutionDurations = rule.resolutionDurationRules && rule.resolutionDurationRules[normalizedResolution];
+    if (Array.isArray(resolutionDurations)) durationRule = { ...rule, durationRange:undefined, durations:resolutionDurations, defaultDuration:resolutionDurations[0] };
+    if (rule.supportsDuration !== false && (!videoUrl || rule.durationWithVideo)) {
+      payload.duration = normalizeVideoDurationForRule(body.duration, durationRule.defaultDuration ?? 6, durationRule, payload.model);
+    }
+    if (rule.audioParam && !(videoUrl && rule.videoParam === 'video_list')) payload[rule.audioParam] = rule.forceAudio ? true : body.generate_audio !== false && rule.defaultAudio !== false;
+    if (rule.watermarkParam) payload[rule.watermarkParam] = body.watermark === true;
+    if (rule.cameraFixedParam) payload[rule.cameraFixedParam] = body.camera_fixed === true;
+    if (rule.returnLastFrameParam) payload[rule.returnLastFrameParam] = body.return_last_frame === true;
+    if (rule.promptOptimizerParam) payload[rule.promptOptimizerParam] = body.prompt_optimizer !== false;
+    if (rule.fastPretreatmentParam) payload[rule.fastPretreatmentParam] = body.fast_pretreatment === true;
+    if (rule.motionModeParam) payload[rule.motionModeParam] = 'normal';
+    if (rule.characterOrientationParam) payload[rule.characterOrientationParam] = ['image','video'].includes(body.character_orientation) ? body.character_orientation : 'image';
+    if (rule.negativePromptParam && String(body.negative_prompt || '').trim()) payload[rule.negativePromptParam] = String(body.negative_prompt).trim();
+    let submitEndpoint = '/videos/generations';
+    let suppressSeed = false;
+    if (mode === 'veo_remix') {
+      const sourceTaskId = String(body.source_task_id || '').trim();
+      const taskExtendModel = String(payload.model).toLowerCase();
+      if (!sourceTaskId) throw new Error('任务续写需要填写已完成的原任务 ID。');
+      if (imageUrls.length || videoUrl) throw new Error('任务续写使用原任务 ID，不能同时上传参考图片或视频。');
+      if (['veo3.1-fast','veo3.1-quality'].includes(taskExtendModel)) {
+        submitEndpoint = `/videos/${encodeURIComponent(sourceTaskId)}/remix`;
+        payload.raw = body.remix_raw === true;
+        delete payload.duration;
+        suppressSeed = true;
+      } else if (['pixverse-v6','gemini-omni-flash-preview'].includes(taskExtendModel)) {
+        payload.extend_from_task_id = sourceTaskId;
+      } else {
+        throw new Error('任务续写仅支持 VEO3.1 Fast / Quality、Pixverse v6 或 Gemini Omni Flash。');
+      }
+    }
     const seed = optionalInt(body.seed);
-    if (seed !== undefined && rule.supportsSeed !== false) payload.seed = seed;
+    if (seed !== undefined && rule.supportsSeed !== false && !suppressSeed) payload.seed = seed;
     row.resolution = normalizedResolution;
-    row.aspect_ratio = payload.aspect_ratio;
-    row.duration = payload.duration || '';
+    row.aspect_ratio = normalizedAspectRatio;
+    row.duration = payload.duration ?? '';
     row.mode = videoUrl ? '参考视频编辑' : (imageUrls.length ? '图生视频' : '文生视频');
     row.mode = apimartVideoModeLabel(mode);
+    if (mode === 'veo_remix') row.mode = '任务续写';
     row.image_urls = imageUrls;
     row.video_url = videoUrl;
     row.reference_public_url = videoUrl;
@@ -3235,9 +3309,9 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
     if (body.source_video_duration) row.source_video_duration = body.source_video_duration;
     row.updated_at = nowISO(); getDB()._save();
     let ret;
-    addLog(`视频请求参数：endpoint=/videos/generations model=${payload.model} resolution=${payload.resolution} aspect=${payload.aspect_ratio} duration=${payload.duration || (rule.supportsDuration === false ? '模型自动' : '参考视频模式')} images=${(payload.image_urls||[]).length} videos=${(payload.video_urls||[]).length}`, { ownerId });
+    addLog(`视频请求参数：endpoint=${submitEndpoint} model=${payload.model} resolution=${payload.resolution || payload.quality || payload.mode || ''} aspect=${payload.aspect_ratio || payload.size || ''} duration=${payload.duration ?? (rule.supportsDuration === false ? '模型自动' : '参考视频模式')} images=${imageUrls.length} videos=${videoUrl ? 1 : 0}`, { ownerId });
     try {
-      ret = await postJsonApimart('/videos/generations', apiKey, payload, 30000);
+      ret = await postJsonApimart(submitEndpoint, apiKey, payload, 30000);
       addLog(`视频接口返回：${JSON.stringify(ret).slice(0, 1000)}`, { ownerId });
     }
     catch(e) {
