@@ -4257,19 +4257,19 @@ const APIMART_VIDEO_MODEL_RULES_UI = {
     label:'Omni Flash（视频编辑）',
     resolutions:['720p','1080p','4k'], defaultResolution:'1080p',
     aspects:['16:9','9:16','1:1','4:3','3:4'], defaultAspect:'9:16',
-    durations:[4,6,8,10], defaultDuration:'6'
+    durations:[4,6,8,10], defaultDuration:'6', durationMode:'discrete'
   },
   'doubao-seedance-1-0-pro-fast': {
     label:'Doubao Seedance 1.0 Pro Fast',
     resolutions:['480p','720p','1080p'], defaultResolution:'1080p',
     aspects:['16:9','9:16','1:1','4:3','3:4','21:9'], defaultAspect:'16:9',
-    durations:[2,3,4,5,6,7,8,9,10,11,12], defaultDuration:'5'
+    durations:[2,3,4,5,6,7,8,9,10,11,12], defaultDuration:'5', durationMode:'range'
   },
   'doubao-seedance-1-0-pro-quality': {
     label:'Doubao Seedance 1.0 Pro Quality',
     resolutions:['480p','720p','1080p'], defaultResolution:'1080p',
     aspects:['16:9','9:16','1:1','4:3','3:4','21:9'], defaultAspect:'16:9',
-    durations:[2,3,4,5,6,7,8,9,10,11,12], defaultDuration:'5'
+    durations:[2,3,4,5,6,7,8,9,10,11,12], defaultDuration:'5', durationMode:'range'
   }
 };
 function videoRange(min, max){ return Array.from({length:Math.max(0, max - min + 1)}, (_, i)=>min + i); }
@@ -4277,14 +4277,20 @@ function registerApimartVideoUiRules(items = []){
   items.forEach(item=>{
     const model = String(item.model || '').trim();
     if(!model) return;
+    const hasDurationRange = Number.isFinite(Number(item.durationMin)) && Number.isFinite(Number(item.durationMax));
+    const durations = Array.isArray(item.durations)
+      ? item.durations
+      : videoRange(hasDurationRange ? Number(item.durationMin) : 4, hasDurationRange ? Number(item.durationMax) : 10);
+    const defaultDuration = item.defaultDuration ?? durations[0] ?? 0;
     APIMART_VIDEO_MODEL_RULES_UI[model.toLowerCase()] = {
       label:item.label || model,
       resolutions:item.resolutions || ['720p'],
       defaultResolution:item.defaultResolution || (item.resolutions || ['720p'])[0],
       aspects:item.aspects || ['16:9','9:16','1:1'],
       defaultAspect:item.defaultAspect || '16:9',
-      durations:item.durations || videoRange(item.durationMin || 4, item.durationMax || 10),
-      defaultDuration:String(item.defaultDuration || 5),
+      durations,
+      defaultDuration:String(defaultDuration),
+      durationMode:hasDurationRange ? 'range' : 'discrete',
       note:item.note || '',
       durationWithVideo:item.durationWithVideo === true,
       supportsDuration:item.supportsDuration !== false
@@ -4319,7 +4325,7 @@ registerApimartVideoUiRules([
   { model:'wan2.6-i2v-flash', label:'Wan2.6 I2V Flash', resolutions:['720p','1080p'], defaultResolution:'1080p', durationMin:2, durationMax:15 },
   { model:'wan2.7', label:'Wan2.7', resolutions:['720p','1080p'], durationMin:2, durationMax:15 },
   { model:'wan2.7-r2v', label:'Wan2.7 R2V', resolutions:['720p','1080p'], defaultResolution:'1080p', durationMin:2, durationMax:15 },
-  { model:'wan2.7-videoedit', label:'Wan2.7 VideoEdit', resolutions:['720p','1080p'], defaultResolution:'1080p', durations:[0,2,3,4,5,6,7,8,9,10], defaultDuration:0 },
+  { model:'wan2.7-videoedit', label:'Wan2.7 VideoEdit', resolutions:['720p','1080p'], defaultResolution:'1080p', durationMin:0, durationMax:10, defaultDuration:0 },
   { model:'kling-v2-6', label:'Kling 2.6', resolutions:['720p','1080p'], durations:[5,10] },
   { model:'kling-v2-6-motion-control', label:'Kling 2.6 Motion Control', resolutions:['720p','1080p'], durationMin:3, durationMax:30 },
   { model:'kling-v3', label:'Kling v3', resolutions:['720p','1080p','4k'], durationMin:3, durationMax:15 },
@@ -4386,12 +4392,9 @@ function videoPlatformApiKey(platform=currentVideoPlatform()){
 function rebuildVideoPlatformOptions(){
   const platform = currentVideoPlatform();
   const model = $('#videoModel');
-  const resolution = $('#videoResolution');
-  const duration = $('#videoDuration');
   const aspect = $('#videoAspect');
   if(platform === 'flow2api'){
     if(model) model.innerHTML = '<option value="omni" selected>Omni Flash</option><option value="lite">Veo 3.1 Lite</option><option value="fast">Veo 3.1 Fast</option><option value="quality">Veo 3.1 Quality</option><option value="lite-low">Veo 3.1 Lite [Lower Priority]</option>';
-    if(duration) duration.innerHTML = '<option value="4" selected>4 秒</option><option value="6">6 秒</option><option value="8">8 秒</option><option value="10">10 秒</option>';
     if(aspect) aspect.innerHTML = '<option value="16:9" selected>16:9 横屏</option><option value="9:16">9:16 竖屏</option>';
   }else{
     if(model) {
@@ -4400,26 +4403,87 @@ function rebuildVideoPlatformOptions(){
       if([...model.options].some(option=>option.value === oldModel)) model.value = oldModel;
     }
     const rule = currentApimartVideoRule();
-    if(duration) duration.innerHTML = rule.durations.map(v=>`<option value="${v}" ${String(v)===String(rule.defaultDuration)?'selected':''}>${v} 秒</option>`).join('');
     if(aspect) aspect.innerHTML = rule.aspects.map(v=>`<option value="${v}" ${v===rule.defaultAspect?'selected':''}>${v}</option>`).join('');
   }
+  updateVideoDurationOptions();
   updateVideoResolutionOptions();
+}
+
+function normalizedVideoDurationValues(values=[]){
+  return [...new Set((Array.isArray(values) ? values : []).map(Number).filter(Number.isFinite))].sort((a,b)=>a-b);
+}
+function currentVideoDurationSpec(){
+  if(currentVideoPlatform() === 'apimart'){
+    const rule = currentApimartVideoRule();
+    return {
+      values:normalizedVideoDurationValues(rule.durations),
+      defaultValue:Number(rule.defaultDuration),
+      mode:rule.supportsDuration === false ? 'auto' : (rule.durationMode || 'discrete'),
+      note:rule.note || ''
+    };
+  }
+  const omni = $('#videoModel')?.value === 'omni';
+  return { values:omni ? [4,6,8,10] : [4,6,8], defaultValue:omni ? 4 : 8, mode:'discrete', note:'' };
+}
+function selectedVideoDuration(){
+  const duration = $('#videoDuration');
+  if(!duration || duration.dataset.durationValue === '') return undefined;
+  const value = Number(duration.dataset.durationValue);
+  return Number.isFinite(value) ? value : undefined;
+}
+function updateVideoDurationDisplay(){
+  const duration = $('#videoDuration');
+  const output = $('#videoDurationValue');
+  const minLabel = $('#videoDurationMin');
+  const maxLabel = $('#videoDurationMax');
+  const supportLabel = $('#videoDurationSupport');
+  if(!duration || !output || !minLabel || !maxLabel || !supportLabel) return;
+  const spec = currentVideoDurationSpec();
+  const values = spec.values;
+  if(spec.mode === 'auto' || !values.length){
+    duration.disabled = true;
+    duration.min = '0'; duration.max = '0'; duration.step = '1'; duration.value = '0';
+    duration.dataset.durationValue = '';
+    duration.style.setProperty('--video-duration-progress', '0%');
+    duration.setAttribute('aria-valuetext', '模型自动决定');
+    output.textContent = '自动';
+    minLabel.textContent = '模型';
+    maxLabel.textContent = '自动';
+    supportLabel.textContent = spec.note || '时长由当前模型自动决定';
+    return;
+  }
+  const index = Math.max(0, Math.min(values.length - 1, Math.round(Number(duration.value) || 0)));
+  const value = values[index];
+  duration.value = String(index);
+  duration.dataset.durationValue = String(value);
+  duration.disabled = values.length <= 1;
+  const progress = values.length <= 1 ? 100 : Math.round(index * 100 / (values.length - 1));
+  duration.style.setProperty('--video-duration-progress', `${progress}%`);
+  duration.setAttribute('aria-valuetext', `${value} 秒`);
+  output.textContent = `${value} 秒`;
+  minLabel.textContent = `${values[0]} 秒`;
+  maxLabel.textContent = `${values[values.length - 1]} 秒`;
+  supportLabel.textContent = values.length === 1
+    ? `固定 ${value} 秒`
+    : spec.mode === 'range'
+      ? `支持 ${values[0]}–${values[values.length - 1]} 秒`
+      : `可选 ${values.join(' / ')} 秒`;
 }
 function updateVideoDurationOptions(){
   const duration = $('#videoDuration');
   if(!duration) return;
-  const old = duration.value;
-  if(currentVideoPlatform() === 'apimart'){
-    const rule = currentApimartVideoRule();
-    duration.innerHTML = rule.durations.map(v=>`<option value="${v}">${v} 秒</option>`).join('');
-    duration.value = [...duration.options].some(o=>o.value===old) ? old : rule.defaultDuration;
-    return;
-  }
-  const omni = $('#videoModel')?.value === 'omni';
-  duration.innerHTML = omni
-    ? '<option value="4">4 秒</option><option value="6">6 秒</option><option value="8">8 秒</option><option value="10">10 秒</option>'
-    : '<option value="4">4 秒</option><option value="6">6 秒</option><option value="8">8 秒</option>';
-  duration.value = [...duration.options].some(o=>o.value===old) ? old : (omni ? '4' : '8');
+  const spec = currentVideoDurationSpec();
+  const values = spec.values;
+  const previous = duration.dataset.durationValue === '' ? undefined : Number(duration.dataset.durationValue);
+  const fallback = values.includes(Number(spec.defaultValue)) ? Number(spec.defaultValue) : values[0];
+  const desired = values.includes(previous) ? previous : fallback;
+  const index = Math.max(0, values.indexOf(desired));
+  duration.min = '0';
+  duration.max = String(Math.max(0, values.length - 1));
+  duration.step = '1';
+  duration.value = String(index);
+  duration.dataset.durationValue = Number.isFinite(desired) ? String(desired) : '';
+  updateVideoDurationDisplay();
 }
 function updateVideoResolutionOptions(){
   const resolution = $('#videoResolution');
@@ -4450,18 +4514,20 @@ function syncFlow2VideoEditModel(){
   const model = $('#videoModel');
   if(!model || currentVideoPlatform() !== 'flow2api') return;
   const hasVideo = hasReferenceVideo();
+  let changed = false;
   if(hasVideo){
     if(model.value !== 'omni') model.dataset.flow2PreviousModel = model.value;
-    model.value = 'omni';
+    if(model.value !== 'omni') { model.value = 'omni'; changed = true; }
     model.disabled = true;
     model.title = '本地 Flow2API 只有 Omni Flash 支持上传视频编辑';
   }else{
     const previous = model.dataset.flow2PreviousModel;
     model.disabled = false;
     model.title = '';
-    if(previous && [...model.options].some(option=>option.value === previous)) model.value = previous;
+    if(previous && [...model.options].some(option=>option.value === previous) && model.value !== previous) { model.value = previous; changed = true; }
     delete model.dataset.flow2PreviousModel;
   }
+  if(changed) updateVideoDurationOptions();
 }
 function updateVideoModeUI(){
   const platform = currentVideoPlatform();
@@ -4532,9 +4598,12 @@ function syncVideoApiKeyToHome(value=''){
 }
 function hasReferenceVideo(){ return !!(videoFilesData.length || ($('#videoUrlInput')?.value || '').trim()); }
 function updateVideoDurationVisibility(){
-  const rule = currentVideoPlatform() === 'apimart' ? currentApimartVideoRule() : {};
-  const hideDuration = rule.supportsDuration === false || ((hasReferenceVideo() || currentVideoModeValue() === 'video_edit') && !rule.durationWithVideo);
+  const platform = currentVideoPlatform();
+  const rule = platform === 'apimart' ? currentApimartVideoRule() : {};
+  const referenceVideoMode = hasReferenceVideo() || currentVideoModeValue() === 'video_edit';
+  const hideDuration = referenceVideoMode && (platform === 'flow2api' || !rule.durationWithVideo);
   $('#videoDurationWrap')?.classList.toggle('hidden', hideDuration);
+  updateVideoDurationDisplay();
   updateVideoModeUI();
 }
 function splitVideoPromptInput(){
@@ -4615,7 +4684,11 @@ async function submitVideoTask(){
   const body = { video_platform:platform, api_endpoint:platform === 'flow2api' ? (platformCfg.api_endpoint || 'http://127.0.0.1:38000') : 'https://api.apimart.ai', api_key:apiKey, video_model:$('#videoModel')?.value || '', video_mode:currentVideoModeValue(), seed:$('#videoSeed')?.value?.trim() || '', copies:Number($('#videoRepeatCount')?.value || 1), retry_times:Number($('#videoRetryTimes')?.value || 0), prompts:$('#videoPrompt').value, prompt_multiline_tasks: $('#videoPromptMultilineTasks') ? $('#videoPromptMultilineTasks').checked : false, resolution:$('#videoResolution').value, aspect_ratio:$('#videoAspect').value, video_url:$('#videoUrlInput').value.trim(), video_files:videoFilesData, ref_images:videoRefImages };
   const apimartRule = platform === 'apimart' ? currentApimartVideoRule() : null;
   const apimartDurationWithVideo = apimartRule?.durationWithVideo === true;
-  if(platform !== 'apimart' || (apimartRule?.supportsDuration !== false && (!refVideoMode || apimartDurationWithVideo))) body.duration = $('#videoDuration').value;
+  const durationValue = selectedVideoDuration();
+  const shouldSendDuration = platform === 'apimart'
+    ? apimartRule?.supportsDuration !== false && (!refVideoMode || apimartDurationWithVideo)
+    : !refVideoMode;
+  if(shouldSendDuration && Number.isFinite(durationValue)) body.duration = durationValue;
   $('#startVideoBtn').disabled = true; $('#startVideoBtn').textContent = '批量提交中...';
   try{
     const r = await api('/api/video_batch_submit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
@@ -5376,7 +5449,8 @@ function setupVideoPage(){
       syncVideoApiKeyFromHome();
     }
   });
-  $('#videoModel')?.addEventListener('change', ()=>{ updateVideoDurationOptions(); updateVideoResolutionOptions(); updateVideoModeUI(); updateVideoTaskEstimate(); });
+  $('#videoModel')?.addEventListener('change', ()=>{ updateVideoDurationOptions(); updateVideoResolutionOptions(); updateVideoDurationVisibility(); updateVideoModeUI(); updateVideoTaskEstimate(); });
+  $('#videoDuration')?.addEventListener('input', ()=>{ updateVideoDurationDisplay(); updateVideoTaskEstimate(); });
   $('#videoModeSelect')?.addEventListener('change', ()=>{ updateVideoModeUI(); updateVideoDurationVisibility(); updateVideoTaskEstimate(); });
   $('#videoSeed')?.addEventListener('input', updateVideoTaskEstimate);
   $('#videoRepeatCount')?.addEventListener('input', updateVideoTaskEstimate);

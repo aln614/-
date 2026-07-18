@@ -2107,15 +2107,20 @@ function normalizeVideoAspectRatio(value, model = 'Omni-Flash-Ext') {
 }
 function normalizeVideoDuration(value, defaultValue = 6, model = 'Omni-Flash-Ext') {
   const rule = getApimartVideoRule(model);
+  const requested = Number(value);
   if (Array.isArray(rule.durationRange) && rule.durationRange.length >= 2) {
     const min = Number(rule.durationRange[0]);
     const max = Number(rule.durationRange[1]);
-    return safeInt(value, defaultValue || rule.defaultDuration || min, min, max);
+    const configuredDefault = Number(defaultValue ?? rule.defaultDuration ?? min);
+    const fallback = Number.isFinite(configuredDefault) ? configuredDefault : min;
+    const duration = Number.isFinite(requested) ? Math.round(requested) : fallback;
+    return Math.max(min, Math.min(max, duration));
   }
-  const allowed = rule.durations || [4, 6, 8, 10];
-  const n = safeInt(value, defaultValue || rule.defaultDuration || 6, 1, 60);
+  const allowed = [...new Set((rule.durations || [4, 6, 8, 10]).map(Number).filter(Number.isFinite))].sort((a, b) => a - b);
+  const configuredDefault = Number(defaultValue ?? rule.defaultDuration);
+  const fallback = allowed.includes(configuredDefault) ? configuredDefault : allowed[0];
+  const n = Number.isFinite(requested) ? Math.round(requested) : fallback;
   if (allowed.includes(n)) return n;
-  const fallback = allowed.includes(Number(defaultValue)) ? Number(defaultValue) : (rule.defaultDuration || 6);
   addLog(`APIMart ${model} 时长 ${n} 不受支持，已自动改为 ${fallback} 秒`, { level:'warn' });
   return fallback;
 }
@@ -3213,7 +3218,7 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
       if (rule.videoParam === 'video_url') payload.video_url = videoUrl;
       else payload.video_urls = [videoUrl];
     }
-    if (rule.supportsDuration !== false && (!videoUrl || rule.durationWithVideo)) payload.duration = normalizeVideoDuration(body.duration, rule.defaultDuration || 6, payload.model);
+    if (rule.supportsDuration !== false && (!videoUrl || rule.durationWithVideo)) payload.duration = normalizeVideoDuration(body.duration, rule.defaultDuration ?? 6, payload.model);
     const seed = optionalInt(body.seed);
     if (seed !== undefined && rule.supportsSeed !== false) payload.seed = seed;
     row.resolution = normalizedResolution;

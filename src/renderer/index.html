@@ -290,7 +290,15 @@
               <div><label>分辨率</label><select id="videoResolution"><option value="720p">720p</option><option value="1080p" selected>1080p</option><option value="4k">4K</option></select></div>
             </div>
             <div class="row">
-              <div id="videoDurationWrap"><label>时长</label><select id="videoDuration"><option value="4">4 秒</option><option value="6" selected>6 秒</option><option value="8">8 秒</option><option value="10">10 秒</option></select><div class="field-help">文生视频 / 图生视频可选时长；参考视频编辑模式会自动隐藏时长并且不传 duration。</div></div>
+              <div id="videoDurationWrap">
+                <label for="videoDuration">时长</label>
+                <div class="video-duration-control">
+                  <input id="videoDuration" type="range" min="0" max="3" step="1" value="1" aria-label="视频时长" aria-valuetext="6 秒" />
+                  <output id="videoDurationValue" for="videoDuration">6 秒</output>
+                </div>
+                <div class="video-duration-scale"><span id="videoDurationMin">4 秒</span><span id="videoDurationSupport">可选 4 / 6 / 8 / 10 秒</span><span id="videoDurationMax">10 秒</span></div>
+                <div class="field-help">时长会随模型自动切换支持范围；参考视频编辑模式不传 duration。</div>
+              </div>
               <div><label>比例</label><select id="videoAspect"><option value="16:9">16:9 横屏</option><option value="9:16" selected>9:16 竖屏</option><option value="1:1">1:1 方形</option></select></div>
             </div>
             <div class="row"><div><label>主任务执行规则</label><div class="estimate">一个主任务视频 = 一个独立任务</div></div><div><label>当前模式</label><select id="videoModeSelect"><option value="auto">自动识别</option><option value="text_to_video">文生视频</option><option value="first_frame">首帧生成</option><option value="first_last_frame">首尾帧生成</option><option value="multi_reference">多素材生成</option><option value="video_edit">上传视频编辑</option></select><div class="field-help" id="videoModeHint">文生视频</div></div></div>
