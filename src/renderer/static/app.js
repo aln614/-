@@ -3674,7 +3674,6 @@ async function submitMjRegionModal(){
     const first = await submitMjDirect(regionPayload);
     const firstTaskId = first.task_id || '';
     const firstLocalTaskId = first.local_task_id || '';
-    if(firstTaskId) startMjPolling(firstTaskId, firstLocalTaskId);
     const modalReady = mjTaskHasModalStatus(first.raw || first) ? first : await waitForMjModalReady(firstTaskId, firstLocalTaskId);
     const modalTaskId = modalReady.task_id || firstTaskId;
     setMjRegionStatus('第二步：正在提交遮罩图与提示词...');
@@ -6882,16 +6881,16 @@ function mjRenderField(field){
 }
 const MJ_STANDARD_VERSION_OPTIONS = ['8.2','8.1','7','6.1','5.2','5.1'];
 const MJ_NIJI_VERSION_OPTIONS = [
-  { value:'niji7', label:'niji 7' },
-  { value:'niji6', label:'niji 6' }
+  { value:'7', label:'niji 7' },
+  { value:'6', label:'niji 6' }
 ];
 
 function mjPromptCommonFields(){
   return [
     { type:'textarea', name:'prompt', label:'提示词', placeholder:'A futuristic cyberpunk city at night, neon lights, rain reflections...' },
-    { type:'textarea', name:'negative_prompt', label:'负向提示词', placeholder:'模糊，低质量，水印', help:'会自动拼接为 --no ... 形式。' },
+    { type:'textarea', name:'negative_prompt', label:'负向提示词', placeholder:'模糊，低质量，水印', help:'按 APIMart 结构化字段 negative_prompt 提交，由服务端转换为 --no。' },
     { type:'checkgrid', label:'快捷参数', items:[
-      { name:'niji', label:'Niji（动漫）', tip:'开启后从版本选择 Niji 风格，并提交为 prompt 参数 --niji。' },
+      { name:'niji', label:'Niji（动漫）', tip:'开启后选择 niji 7 / niji 6，并按 niji=true + version 提交。' },
       { name:'tile', label:'平铺 Tile', tip:'生成无缝平铺图案。' },
       { name:'raw', label:'Raw 原始', tip:'Raw 风格参数，减少 MJ 后期加工；注意：与 style-raw 不是同一个 flag。' },
       { name:'draft', label:'Draft 草图', requires:'v7plus', tip:'草图模式 --draft，V7+ 可用；快速低消耗预览，后续可继续操作。' },
@@ -6926,7 +6925,13 @@ function mjPromptCommonFields(){
     { type:'hybrid_image', name:'cref_images', uploadName:'cref_images', urlName:'cref', label:'角色参考（--cref）', accept:'image/*', multiple:false, defaultMode:'url', placeholder:'https://...', dropLabel:'上传角色参考图', tip:'角色参考图，用于保持人物/角色一致。上传或 URL 二选一。' },
     { type:'hybrid_image', name:'sref_images', uploadName:'sref_images', urlName:'sref', label:'风格参考（--sref）', accept:'image/*', multiple:false, defaultMode:'url', placeholder:'https://...', dropLabel:'上传风格参考图', tip:'风格参考图，用于保持整体画风。上传或 URL 二选一。' },
     { type:'hybrid_image', name:'dref_images', uploadName:'dref_images', urlName:'dref', label:'深度参考（--dref）', accept:'image/*', multiple:false, defaultMode:'url', placeholder:'https://...', dropLabel:'上传深度参考图', tip:'深度参考图，用于保持构图/空间深度。上传或 URL 二选一。' },
-    { type:'row', fields:[
+    { type:'row', columns:3, fields:[
+      { type:'number', name:'iw', label:'图片权重 iw', placeholder:'0-3', min:0, max:3, step:0.1, tip:'参考图对结果的影响强度，范围 0-3。' },
+      { type:'number', name:'cw', label:'角色权重 cw', placeholder:'0-100', min:0, max:100, tip:'角色参考权重，范围 0-100。' },
+      { type:'number', name:'sw', label:'风格权重 sw', placeholder:'0-1000', min:0, max:1000, tip:'风格参考权重，范围 0-1000。' }
+    ]},
+    { type:'row', columns:3, fields:[
+      { type:'number', name:'dw', label:'深度权重 dw', placeholder:'0-100', min:0, max:100, step:0.1, tip:'深度参考图权重，范围 0-100。' },
       { type:'number', name:'repeat', label:'重复生成 (2-40)', placeholder:'可选', min:2, max:40, tip:'--repeat，重复生成次数。' },
       { type:'text', name:'extra_flag', label:'额外 flag', placeholder:'--my-flag value', tip:'手动补充其它 MJ 参数。' }
     ]}
@@ -7036,7 +7041,6 @@ const MJ_FORM_CONFIG = {
     endpoint:'POST /v1/midjourney/generations/reroll',
     fields:[
       { type:'text', name:'task_id', label:'任务 ID', placeholder:'task_01JWXXXXXXXXXXXX' },
-      { type:'textarea', name:'prompt', label:'提示词（可选）', placeholder:'例如：改成水彩风格' },
       { type:'row', fields:[
         { type:'text', name:'custom_id', label:'Custom ID（高级）', placeholder:'MJ::JOB::reroll::0::abc...' },
         { type:'select', name:'speed', label:'速度模式', value:'relax', options:[{value:'relax',label:'Relax（慢速）'},{value:'fast',label:'Fast（快速）'},{value:'turbo',label:'Turbo（极速）'}] }
@@ -7080,6 +7084,7 @@ const MJ_FORM_CONFIG = {
     title:'Midjourney 重塑',
     endpoint:'POST /v1/midjourney/generations/remix-strong | remix-subtle',
     fields:[
+      { type:'note', text:'仅支持父任务为 Midjourney v8.1 / v8.2；v7 / v6 请使用“变体”或“强变体”。' },
       { type:'select', name:'remix_strength', label:'重塑力度', value:'strong', options:[{value:'strong',label:'strong'},{value:'subtle',label:'subtle'}] },
       { type:'text', name:'task_id', label:'任务 ID', placeholder:'task_01JWXXXXXXXXXXXX' },
       { type:'select', name:'index', label:'图片序号', value:'1', options:['1','2','3','4'] },
@@ -7106,14 +7111,15 @@ const MJ_FORM_CONFIG = {
         ] }
       ]},
       { type:'row', fields:[
-        { type:'select', name:'motion', label:'动态强度', value:'low', options:[{value:'low', label:'low（低运动）'},{value:'high', label:'high（高运动）'}] },
-        { type:'select', name:'video_type', label:'视频规格', value:'480', options:[
-          {value:'480', label:'480'},
-          {value:'720', label:'720'},
-          {value:'480_st', label:'480 起止帧'},
-          {value:'720_st', label:'720 起止帧'}
+        { type:'select', name:'motion', label:'动态强度', value:'high', options:[{value:'low', label:'low（低运动）'},{value:'high', label:'high（高运动）'}] },
+        { type:'select', name:'video_type', label:'视频规格', value:'vid_1.1_i2v_480', options:[
+          {value:'vid_1.1_i2v_480', label:'480p'},
+          {value:'vid_1.1_i2v_720', label:'720p'},
+          {value:'vid_1.1_i2v_start_end_480', label:'480p 起止帧'},
+          {value:'vid_1.1_i2v_start_end_720', label:'720p 起止帧'}
         ] }
       ]},
+      { type:'select', name:'animate_mode', label:'动画模式', value:'manual', options:[{value:'manual',label:'Manual（手动）'},{value:'auto',label:'Auto（自动，需任务 ID + 图片序号）'}], help:'APIMart 文档规定 Auto 仅用于已有 SUCCESS Imagine 任务。' },
       { type:'select', name:'batch_size', label:'生成数量', value:'1', options:['1','2','4'], help:'按文档 batch_size 生成多个视频候选。' }
     ],
     actions:[{label:'run ✈ 提交视频', action:'video', style:'primary'}]
@@ -7137,7 +7143,7 @@ const MJ_SUBMIT_LABELS = {
   modal:'提交 Modal'
 };
 function getMjFloatingAction(){
-  if(mjState.tab === 'inpaint') return 'inpaint';
+  if(mjState.tab === 'inpaint') return String($('#mjFormContainer [data-mj-field="modal_task_id"]')?.value || '').trim() ? 'modal' : 'inpaint';
   return (MJ_FORM_CONFIG[mjState.tab]?.actions || [])[0]?.action || mjState.tab || 'imagine';
 }
 function updateMjFloatingSubmit(){
@@ -7145,18 +7151,31 @@ function updateMjFloatingSubmit(){
   if(!btn) return;
   const action = getMjFloatingAction();
   btn.dataset.mjSubmitAction = action;
-  btn.textContent = MJ_SUBMIT_LABELS[mjState.tab] || MJ_SUBMIT_LABELS[action] || '提交任务';
+  btn.textContent = MJ_SUBMIT_LABELS[action] || MJ_SUBMIT_LABELS[mjState.tab] || '提交任务';
 }
 function applyMjSavedFormSettings(){
   const saved = readClientSettings().mj_settings || {};
   const fields = (saved.by_tab || {})[mjState.tab] || {};
+  const legacyNiji = String(fields.version || '').trim().match(/^niji\s*([67])$/i);
+  const nijiEl = document.querySelector('#mjFormContainer [data-mj-field="niji"]');
   Object.entries(fields).forEach(([name, value])=>{
     const el = document.querySelector(`#mjFormContainer [data-mj-field="${CSS.escape(name)}"]`);
     if(!el || el.type === 'file') return;
     if(el.type === 'checkbox') el.checked = !!value;
-    else el.value = value;
+    else {
+      const aliases = name === 'video_type' ? {'480':'vid_1.1_i2v_480','720':'vid_1.1_i2v_720','480_st':'vid_1.1_i2v_start_end_480','720_st':'vid_1.1_i2v_start_end_720'} : (name === 'version' ? {niji7:'7',niji6:'6'} : {});
+      const nextValue = aliases[String(value)] || value;
+      if(el.tagName === 'SELECT' && !Array.from(el.options || []).some(option=>String(option.value) === String(nextValue))) return;
+      el.value = nextValue;
+    }
     syncMjHybridByValue(el);
   });
+  if(legacyNiji && nijiEl){
+    nijiEl.checked = true;
+    syncMjVersionOptions();
+    const versionEl = document.querySelector('#mjFormContainer [data-mj-field="version"]');
+    if(versionEl) versionEl.value = legacyNiji[1];
+  }
 }
 function renderMjInpaintForm(){
   return `
@@ -7175,7 +7194,7 @@ function renderMjInpaintForm(){
         <div class="mj-card-head"><h3>第二步：提交 Modal 补充参数</h3></div>
         ${mjRenderField({type:'text', name:'modal_task_id', label:'Modal 任务 ID', placeholder:'task_MODAL_TASK_ID'})}
         ${mjRenderField({type:'textarea', name:'modal_prompt', label:'提示词（可选）', placeholder:'在此处放一只金毛犬'})}
-        ${mjRenderField({type:'hybrid_image', name:'modal_mask', uploadName:'modal_mask', urlName:'modal_mask_url', label:'遮罩图（可选）', accept:'image/png', multiple:false, defaultMode:'upload', dropLabel:'点击或拖拽上传 PNG 遮罩图', urlHelp:'如填写遮罩图 URL，则上传框自动隐藏。'})}
+        ${mjRenderField({type:'hybrid_image', name:'modal_mask', uploadName:'modal_mask', urlName:'modal_mask_url', label:'遮罩图（必填）', accept:'image/png', multiple:false, defaultMode:'upload', dropLabel:'点击或拖拽上传 PNG 遮罩图', urlHelp:'透明区域为重绘区域，白色区域保留原图；也可填写公网可达的 PNG URL。'})}
         ${mjRenderField({type:'select', name:'modal_speed', label:'速度模式', value:'relax', options:[{value:'relax',label:'Relax（慢速）'},{value:'fast',label:'Fast（快速）'},{value:'turbo',label:'Turbo（极速）'}]})}
       </div>
     </div>`;
@@ -7229,14 +7248,14 @@ function syncMjVersionOptions(){
   const current = String(versionEl.value || '').trim();
   versionEl.innerHTML = mjOptionHtml(options, current, 'version');
   const validValues = options.map(opt => typeof opt === 'string' ? opt : String(opt.value || ''));
-  if(!validValues.includes(current)) versionEl.value = isNiji ? 'niji7' : '8.2';
+  if(!validValues.includes(current)) versionEl.value = isNiji ? '7' : '8.2';
 }
 function mjVersionOK(req, version){
   const v = String(version || '').toLowerCase();
   if(!req) return true;
   if(req === 'v8') return v === '8.2' || v === '8.1';
   if(req === 'v7plus') return v === '8.2' || v === '8.1' || v === '7' || v === 'niji7';
-  if(req === 'stop_v5_6') return v === '6.1' || v === '5.2' || v === '5.1' || v === 'niji6';
+  if(req === 'stop_v5_6') return v === '6.1' || v === '6' || v === '5.2' || v === '5.1' || v === 'niji6';
   return true;
 }
 function applyMjVersionRules(){
@@ -7298,11 +7317,11 @@ function initMidjourneyPage(){
     page.addEventListener('change', (e)=>{
       const el = e.target;
       if(el && el.matches('input[type="file"][data-mj-field]')){ mergeMjInputFiles(el, el.files || []); updateMjFileList(el); }
-      if(el && el.matches('[data-mj-field]')){ syncMjHybridByValue(el); if(el.dataset.mjField === 'version' || el.dataset.mjField === 'niji') applyMjVersionRules(); if(el.dataset.mjField === 'aspect_ratio') updateMjCustomAspect(); }
+      if(el && el.matches('[data-mj-field]')){ syncMjHybridByValue(el); if(el.dataset.mjField === 'version' || el.dataset.mjField === 'niji') applyMjVersionRules(); if(el.dataset.mjField === 'aspect_ratio') updateMjCustomAspect(); if(mjState.tab === 'inpaint') updateMjFloatingSubmit(); }
     });
     page.addEventListener('input', (e)=>{
       const el = e.target;
-      if(el && el.matches('[data-mj-field]')){ syncMjHybridByValue(el); if(el.dataset.mjField === 'version' || el.dataset.mjField === 'niji') applyMjVersionRules(); if(el.dataset.mjField === 'aspect_ratio') updateMjCustomAspect(); }
+      if(el && el.matches('[data-mj-field]')){ syncMjHybridByValue(el); if(el.dataset.mjField === 'version' || el.dataset.mjField === 'niji') applyMjVersionRules(); if(el.dataset.mjField === 'aspect_ratio') updateMjCustomAspect(); if(mjState.tab === 'inpaint') updateMjFloatingSubmit(); }
     });
   }
   renderMidjourneyTab();
@@ -7444,6 +7463,7 @@ async function submitMjAction(action, extra={}){
 function mjStatusLabel(status='', progress=0){
   const raw = String(status || '').trim();
   const st = raw.toLowerCase();
+  if(/modal|等待补充参数/.test(st)) return '等待遮罩参数';
   if(/completed|succeeded|success|done|finish|已完成/.test(st)) return '已完成';
   if(/failed|fail|error|cancel|失败|取消/.test(st)) return '失败';
   if(/queued|queue|pending/.test(st)) return '排队中';
@@ -7454,6 +7474,7 @@ function mjStatusLabel(status='', progress=0){
 }
 function mjStatusProgress(status='', progress=0){
   const st = String(status || '').toLowerCase();
+  if(/modal|等待补充参数/.test(st)) return Math.max(50, Math.min(90, Number(progress || 50)));
   if(/completed|succeeded|success|done|finish|failed|fail|error|cancel|已完成|失败|取消/.test(st)) return 100;
   return Math.max(0, Math.min(100, Number(progress || 0)));
 }
@@ -7465,7 +7486,7 @@ function updateMjStatus(status='pending', progress=0, label='', batchLabel='', t
   if($('#mjTaskBatch')) $('#mjTaskBatch').textContent = `任务ID：${taskId || mjState.lastTaskId || '-'}`;
 }
 function mjStatusFinished(status=''){
-  return /completed|succeeded|success|done|finish|failed|fail|error|cancel|已完成|失败|取消/i.test(String(status||''));
+  return /completed|succeeded|success|done|finish|failed|fail|error|cancel|modal|等待补充参数|已完成|失败|取消/i.test(String(status||''));
 }
 async function queryMjTask(taskId, localTaskId='', opts={}){
   try{
@@ -7477,6 +7498,11 @@ async function queryMjTask(taskId, localTaskId='', opts={}){
     updateMjStatus(ret.status || 'processing', displayProgress, mjStatusLabel(ret.status || 'processing', displayProgress), ret.batch_name || ret.batch_id || '', ret.task_id || taskId || '');
     mjState.lastJson = ret;
     renderMjOutputPreview(ret);
+    if(mjState.tab === 'inpaint' && /modal|等待补充参数/i.test(String(ret.status || ''))){
+      const modalTaskInput = $('#mjFormContainer [data-mj-field="modal_task_id"]');
+      if(modalTaskInput && !String(modalTaskInput.value || '').trim()) modalTaskInput.value = ret.task_id || taskId || '';
+      updateMjFloatingSubmit();
+    }
     if(mjState.tab === 'describe') loadMjDescribeOutput();
     if(!opts.skipRefresh) refreshAll();
     return ret;
