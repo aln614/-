@@ -2982,6 +2982,8 @@ function shouldShowInRecentImages(item = {}){
   const fields = [item.action, item.batch_type, item.mj_action, item.type, item.task_type, item.mj_source_type].map(v=>String(v || '').toLowerCase());
   if(fields.some(v => v === 'describe' || v === 'mj_describe' || v.includes('describe'))) return false;
   if(item.hidden_in_recent) return false;
+  const isMidjourney = String(item.mj_source || '').toLowerCase() === 'midjourney' || fields.some(v=>v.startsWith('mj_') || v === 'imagine');
+  if(isMidjourney) return !!item.mj_is_grid && !!(item.mj_grid_local_url || item.mj_grid_remote_url || item.full_url || item.fullUrl);
   return true;
 }
 
@@ -3010,8 +3012,7 @@ function storeImageTaskPreview(task = {}){
     mj_images: Array.isArray(task.mj_images) ? task.mj_images : [],
     mj_buttons: Array.isArray(task.mj_buttons) ? task.mj_buttons : [],
     mj_grid_remote_url: task.mj_grid_remote_url || '',
-    mj_grid_local_url: task.mj_grid_local_url || '',
-    mj_grid_duplicate_single: !!task.mj_grid_duplicate_single
+    mj_grid_local_url: task.mj_grid_local_url || ''
   };
   imageTaskPreviewMap.set(task.id, meta);
   return meta;
@@ -3240,6 +3241,7 @@ function isMjUpscaleOnlyButton(item={}){
 function filterMjButtonsForPreview(meta={}, buttons=[]){
   const list = Array.isArray(buttons) ? buttons.filter(Boolean) : [];
   if(meta.mj_is_grid) return list.filter(isMjGridAllowedButton);
+  if(meta.mj_is_jump_single) return buildMjSingleFallbackButtons().map(item=>({...item, display_label:mjButtonDisplayLabel(item)}));
   if(isMjSingleActionContext(meta)){
     return mergeMjSingleButtons(list);
   }
@@ -3265,15 +3267,16 @@ function buildMjSingleFallbackButtons(){
 function mjButtonDisplayLabel(item={}){
   const label = String(item?.label || '').trim();
   const combo = `${label} ${item?.custom_id || ''}`.toLowerCase();
+  if(/reroll|re-roll|redo|🔄/.test(combo)) return '重新生成';
   if(/vary\s*\(region\)|vary\s*region|inpaint|局部重绘/.test(combo)) return 'Vary Region（局部重绘）';
   if(/strong/.test(combo) && /vary|variation/.test(combo)) return 'Vary Strong（强变体）';
   if(/subtle|weak|low/.test(combo) && /vary|variation/.test(combo)) return 'Vary Subtle（弱变体）';
   if(/zoom/.test(combo) && /1\.5/.test(combo)) return 'Zoom Out 1.5x（缩放扩图 1.5x）';
   if(/zoom/.test(combo) && /2/.test(combo)) return 'Zoom Out 2x（缩放扩图 2x）';
-  if(/pan_left|left|←/.test(combo)) return 'Pan Left（向左扩展）';
-  if(/pan_right|right|→/.test(combo)) return 'Pan Right（向右扩展）';
-  if(/pan_up|up|↑/.test(combo)) return 'Pan Up（向上扩展）';
-  if(/pan_down|down|↓/.test(combo)) return 'Pan Down（向下扩展）';
+  if(/pan[_\s-]?left|\bleft\b|←|⬅/.test(combo)) return 'Pan Left（向左扩展）';
+  if(/pan[_\s-]?right|\bright\b|→|➡/.test(combo)) return 'Pan Right（向右扩展）';
+  if(/pan[_\s-]?up|\bup\b|↑|⬆/.test(combo)) return 'Pan Up（向上扩展）';
+  if(/pan[_\s-]?down|\bdown\b|↓|⬇/.test(combo)) return 'Pan Down（向下扩展）';
   if(/video|animate|motion|动态|视频/.test(combo) && /high|高/.test(combo)) return 'Video High Motion（图生视频 · 高运动）';
   if(/video|animate|motion|动态|视频/.test(combo)) return 'Video Low Motion（图生视频 · 低运动）';
   if(/remix/.test(combo) && /subtle|weak|low/.test(combo)) return 'Remix Subtle（弱重塑）';
@@ -3314,7 +3317,7 @@ function mergeMjSingleButtons(buttons=[]){
 function imageRowToPreviewMeta(img={}){
   const full = img.full_url || img.url || img.remote_url || ''; 
   const thumb = img.thumb_url || img.url || full;
-  return {id:img.id, fullUrl:full, originalUrl:img.original_url||full, thumbUrl:thumb, remoteUrl:img.remote_url||'', prompt:img.prompt||'', model:img.model||'', size:img.size||'', imageSize:img.image_size||'', size_bytes:Number(img.size_bytes||0), batch:img.batch_name||'', time:formatBeijingTime(img.generated_at||''), filename:img.filename||'generated-image.png', status:img.status||'', progress:img.progress||0, progress_text:img.progress_text||'', taskId:img.task_id||'', local_task_id:img.local_task_id||'', batch_id:img.batch_id||'', mj_source:img.mj_source||'', mj_action:img.mj_action||'', mj_parent_task_id:img.mj_parent_task_id||'', mj_parent_remote_task_id:img.mj_parent_remote_task_id||'', mj_is_grid:!!img.mj_is_grid, mj_variant_index:img.mj_variant_index||0, mj_images:img.mj_images||[], mj_buttons:img.mj_buttons||[], mj_executed_buttons:img.mj_executed_buttons||[], mj_grid_remote_url:img.mj_grid_remote_url||'', mj_grid_local_url:img.mj_grid_local_url||'', mj_grid_duplicate_single:!!img.mj_grid_duplicate_single};
+  return {id:img.id, fullUrl:full, originalUrl:img.original_url||full, thumbUrl:thumb, remoteUrl:img.remote_url||'', prompt:img.prompt||'', model:img.model||'', size:img.size||'', imageSize:img.image_size||'', size_bytes:Number(img.size_bytes||0), batch:img.batch_name||'', time:formatBeijingTime(img.generated_at||''), filename:img.filename||'generated-image.png', status:img.status||'', progress:img.progress||0, progress_text:img.progress_text||'', taskId:img.task_id||'', local_task_id:img.local_task_id||'', batch_id:img.batch_id||'', mj_source:img.mj_source||'', mj_action:img.mj_action||'', mj_parent_task_id:img.mj_parent_task_id||'', mj_parent_remote_task_id:img.mj_parent_remote_task_id||'', mj_is_grid:!!img.mj_is_grid, mj_variant_index:img.mj_variant_index||0, mj_images:img.mj_images||[], mj_buttons:img.mj_buttons||[], mj_executed_buttons:img.mj_executed_buttons||[], mj_grid_remote_url:img.mj_grid_remote_url||'', mj_grid_local_url:img.mj_grid_local_url||''};
 }
 function mjJumpItemAt(meta={}, index=1){
   const idx = Number(index || 1);
@@ -3333,7 +3336,7 @@ async function openMjJumpImage(meta={}, index=1){
   const url = item ? mjJumpItemUrl(item) : '';
   if(!url) return toast(`跳转图片 ${idx} 不存在`);
   const parentTaskId = meta.taskId || meta.remote_task_id || meta.remoteTaskId || '';
-  const gridUrl = meta.mj_grid_duplicate_single ? '' : (meta.mj_grid_local_url || meta.mj_grid_remote_url || meta.mj_parent_grid_url || meta.parentGridUrl || '');
+  const gridUrl = meta.mj_grid_local_url || meta.mj_grid_remote_url || meta.mj_parent_grid_url || meta.parentGridUrl || '';
   const selectedUrl = withPublicAccess(url);
   const selectedThumb = String(item.thumb_url || item.thumbnail_url || '').trim();
   const singleMeta = {
@@ -3366,7 +3369,6 @@ async function openMjJumpImage(meta={}, index=1){
   return singleMeta;
 }
 async function openMjGridFromSingle(meta={}){
-  if(meta.mj_grid_duplicate_single) return toast('该任务没有独立四宫格图，请使用 1-4 查看返回图片');
   const gridUrl = meta.mj_parent_grid_url || meta.parentGridUrl || meta.mj_grid_local_url || meta.mj_grid_remote_url || (meta.mj_is_grid ? (meta.fullUrl || meta.originalUrl || meta.remoteUrl || '') : '');
   if(!gridUrl) return toast('当前任务没有可回到的四宫格图');
   const gridMeta = {
@@ -3554,10 +3556,21 @@ function clampMjRegionPan(){
   const baseH = parseFloat(stage.style.height) || stage.offsetHeight || 1;
   const scaledW = baseW * z;
   const scaledH = baseH * z;
-  if(scaledW <= wrapRect.width) mjRegionState.panX = (wrapRect.width - scaledW) / 2;
-  else mjRegionState.panX = Math.max(wrapRect.width - scaledW - 12, Math.min(12, Number(mjRegionState.panX || 0)));
-  if(scaledH <= wrapRect.height) mjRegionState.panY = (wrapRect.height - scaledH) / 2;
-  else mjRegionState.panY = Math.max(wrapRect.height - scaledH - 12, Math.min(12, Number(mjRegionState.panY || 0)));
+  const fitScale = Math.max(0.05, Number(mjRegionState.fitScale || 0.05));
+  const clampAxis = (pan, viewportSize, scaledSize) => {
+    const edge = 12;
+    const oppositeEdge = viewportSize - scaledSize - edge;
+    const min = Math.min(edge, oppositeEdge);
+    const max = Math.max(edge, oppositeEdge);
+    return Math.max(min, Math.min(max, Number(pan || 0)));
+  };
+  if(z <= fitScale * 1.0001){
+    mjRegionState.panX = (wrapRect.width - scaledW) / 2;
+    mjRegionState.panY = (wrapRect.height - scaledH) / 2;
+  }else{
+    mjRegionState.panX = clampAxis(mjRegionState.panX, wrapRect.width, scaledW);
+    mjRegionState.panY = clampAxis(mjRegionState.panY, wrapRect.height, scaledH);
+  }
 }
 function applyMjRegionZoom(){
   const z = Math.max(0.05, Number(mjRegionState.zoom || 1));
@@ -3568,11 +3581,25 @@ function applyMjRegionZoom(){
   if($('#mjRegionZoomValue')) $('#mjRegionZoomValue').textContent = `${Math.round(z * 100)}%`;
   updateMjRegionPanCursor();
 }
-function setMjRegionZoom(value){
-  mjRegionState.zoom = Math.max(0.05, Math.min(20, Number(value || 1)));
+function clampMjRegionZoom(value){
+  return Math.max(0.05, Math.min(20, Number(value || 1)));
+}
+function zoomMjRegionAt(viewportX, viewportY, nextScale){
+  const oldScale = clampMjRegionZoom(mjRegionState.zoom || 1);
+  const imageX = (Number(viewportX || 0) - Number(mjRegionState.panX || 0)) / oldScale;
+  const imageY = (Number(viewportY || 0) - Number(mjRegionState.panY || 0)) / oldScale;
+  const next = clampMjRegionZoom(nextScale);
+  mjRegionState.zoom = next;
+  mjRegionState.panX = Number(viewportX || 0) - imageX * next;
+  mjRegionState.panY = Number(viewportY || 0) - imageY * next;
   applyMjRegionZoom();
 }
-function stepMjRegionZoom(delta){ setMjRegionZoom((mjRegionState.zoom || 1) * (delta > 0 ? 1.18 : 1/1.18)); }
+function setMjRegionZoom(value){
+  const wrap = $('#mjRegionCanvasWrap');
+  const rect = wrap?.getBoundingClientRect();
+  zoomMjRegionAt((rect?.width || 0) / 2, (rect?.height || 0) / 2, value);
+}
+function stepMjRegionZoom(delta){ setMjRegionZoom((mjRegionState.zoom || 1) * (delta > 0 ? 1.12 : 1/1.12)); }
 
 function fitMjRegionCanvas(){
   const img = $('#mjRegionBaseImg'); const canvas = mjRegionCanvas(); const wrap = $('#mjRegionCanvasWrap'); const stage = $('#mjRegionStage');
@@ -3634,7 +3661,7 @@ function openMjRegionModal(meta={}, button={}){
   if($('#mjRegionActionLabel')) $('#mjRegionActionLabel').textContent = button?.label || 'Vary (Region)';
   setMjRegionStatus('请直接在原图上涂抹需要变化的区域。编辑器使用原图像素渲染，缩放不会基于缩略图放大；提交时自动导出黑白遮罩图并上传。按住空格可拖动图片。');
   const img = $('#mjRegionBaseImg');
-  img.onload = ()=>{ requestAnimationFrame(()=>{ requestAnimationFrame(()=>{ fitMjRegionCanvas(); setTimeout(fitMjRegionCanvas, 80); setTimeout(fitMjRegionCanvas, 220); setTimeout(fitMjRegionCanvas, 520); }); }); };
+  img.onload = ()=>{ requestAnimationFrame(()=>requestAnimationFrame(fitMjRegionCanvas)); };
   $('#mjRegionModal')?.classList.add('active');
   img.src = withPublicAccess(src);
 }
@@ -3728,7 +3755,16 @@ function initMjRegionModal(){
   $('#mjRegionZoomOut')?.addEventListener('click', ()=>stepMjRegionZoom(-1));
   $('#mjRegionFitBtn')?.addEventListener('click', fitMjRegionToViewport);
   $('#mjRegionZoomSlider')?.addEventListener('input', (e)=>setMjRegionZoom(Number(e.target.value || 100) / 100));
-  $('#mjRegionCanvasWrap')?.addEventListener('wheel', (e)=>{ if($('#mjRegionModal')?.classList.contains('active')){ e.preventDefault(); stepMjRegionZoom(e.deltaY < 0 ? 1 : -1); } }, { passive:false });
+  $('#mjRegionCanvasWrap')?.addEventListener('wheel', (e)=>{
+    if(!$('#mjRegionModal')?.classList.contains('active')) return;
+    e.preventDefault();
+    const rect = e.currentTarget.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+    const factor = e.deltaY < 0 ? 1.12 : 1/1.12;
+    zoomMjRegionAt(mouseX, mouseY, (mjRegionState.zoom || 1) * factor);
+    updateMjRegionBrushCursor(e);
+  }, { passive:false });
   const beginPan = (evt)=>{
     if(!$('#mjRegionModal')?.classList.contains('active')) return false;
     if(!mjRegionState.spacePressed || mjRegionState.submitting) return false;
@@ -3790,7 +3826,7 @@ function renderPreviewMjExtras(meta = {}){
   const mjImages = Array.isArray(meta.mj_images) ? meta.mj_images.filter(Boolean) : [];
   const isMj = !!meta.mj_source || !!mjImages.length;
   const jumpIndices = [...new Set(mjImages.map((item, position)=>Number(item.index || item.mj_variant_index || position + 1)).filter(index=>Number.isInteger(index) && index > 0))].sort((a,b)=>a-b);
-  const gridUrl = meta.mj_grid_duplicate_single ? '' : (meta.mj_parent_grid_url || meta.parentGridUrl || meta.mj_grid_local_url || meta.mj_grid_remote_url || (meta.mj_is_grid ? (meta.fullUrl || meta.originalUrl || meta.remoteUrl || '') : ''));
+  const gridUrl = meta.mj_parent_grid_url || meta.parentGridUrl || meta.mj_grid_local_url || meta.mj_grid_remote_url || (meta.mj_is_grid ? (meta.fullUrl || meta.originalUrl || meta.remoteUrl || '') : '');
   const canJump = isMj && (jumpIndices.length > 1 || (!!gridUrl && jumpIndices.length > 0));
   if(jumpRow) jumpRow.classList.toggle('hidden', !canJump);
   const visibleButtons = filterMjButtonsForPreview(meta, meta.mj_buttons);
@@ -7331,8 +7367,6 @@ function initMidjourneyPage(){
       }
       const removeFileBtn = e.target.closest('[data-mj-remove-file][data-mj-remove-field]');
       if(removeFileBtn){ const input = page.querySelector(`input[type="file"][data-mj-field="${removeFileBtn.dataset.mjRemoveField}"]`); removeMjInputFile(input, removeFileBtn.dataset.mjRemoveFile); updateMjFileList(input); return; }
-      const outputThumb = e.target.closest('#mjOutputPreview [data-full-url]');
-      if(outputThumb){ const u = outputThumb.dataset.fullUrl || ''; if(u) showPreview(u, {model:'Midjourney', fullUrl:u}); return; }
       const descThumb = e.target.closest('.mj-describe-thumb[data-full-url]');
       if(descThumb){ const u = descThumb.dataset.fullUrl || ''; if(u) showPreview(u, {model:'Midjourney Describe', fullUrl:u}); return; }
       const submitBtn = e.target.closest('[data-mj-submit-action]');
@@ -7366,30 +7400,6 @@ function renderMidjourneyTab(){
   document.body.classList.toggle('mj-describe-tab-active', mjState.tab === 'describe');
   const desc = $('#mjDescribeOutput');
   if(desc){ desc.classList.toggle('hidden', mjState.tab !== 'describe'); if(mjState.tab === 'describe') loadMjDescribeOutput(); }
-}
-
-function renderMjOutputPreview(ret={}, opts={}){
-  const box = $('#mjOutputPreview');
-  if(!box) return;
-  const videoUrls = Array.from(new Set((Array.isArray(ret.video_urls) ? ret.video_urls : []).map(x=>String(x||'').trim()).filter(Boolean)));
-  const imageUrls = [];
-  const addImage = (u)=>{ u=String(u||'').trim(); if(u && !imageUrls.includes(u)) imageUrls.push(u); };
-  addImage(ret.grid_image_url);
-  (Array.isArray(ret.image_urls) ? ret.image_urls : []).forEach(addImage);
-  if(!imageUrls.length) (Array.isArray(ret.all_image_urls) ? ret.all_image_urls : []).forEach(addImage);
-  const textOutputs = (Array.isArray(ret.text_outputs) ? ret.text_outputs : []).map(x=>String(x||'').trim()).filter(Boolean);
-  const hasContent = videoUrls.length || imageUrls.length || textOutputs.length;
-  box.classList.remove('hidden');
-  box.classList.toggle('empty', !hasContent);
-  if(!hasContent){
-    if(opts.keepEmpty === false){ box.classList.add('hidden'); return; }
-    box.innerHTML = '任务已提交，等待 APIMart 返回图片 / 视频 / 文本结果。';
-    return;
-  }
-  const videoHtml = videoUrls.length ? `<div class="mj-media-grid">${videoUrls.map((u,i)=>`<video controls preload="metadata" src="${escapeHtml(withPublicAccess(u))}" data-mj-video-url="${escapeHtml(u)}" title="Midjourney 视频 ${i+1}"></video>`).join('')}</div>` : '';
-  const imageHtml = imageUrls.length ? `<div class="mj-media-grid">${imageUrls.map((u,i)=>`<img src="${escapeHtml(withPublicAccess(u))}" loading="lazy" data-full-url="${escapeHtml(u)}" alt="Midjourney result ${i+1}" />`).join('')}</div>` : '';
-  const textHtml = textOutputs.length ? `<div class="mj-text-card">${escapeHtml(textOutputs.join('\n\n'))}</div>` : '';
-  box.innerHTML = `<div class="mj-preview-stack">${videoHtml}${imageHtml}${textHtml}</div>`;
 }
 
 async function loadMjDescribeOutput(){
@@ -7460,7 +7470,6 @@ async function submitMjAction(action, extra={}){
     if(!body.api_key) return toast('请先在首页填写并保存 APIMart API Key');
     const ret = await api('/api/mj_submit', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
     mjState.lastJson = ret;
-    renderMjOutputPreview(ret);
     if(ret.multi && Array.isArray(ret.tasks)){
       mjState.lastBatchId = ret.batch_id || mjState.lastBatchId || '';
       updateMjStatus('submitted', 0, `已提交 ${ret.task_count || ret.tasks.length} 个 Describe 子任务`, ret.batch_id || '', ret.batch_id || '');
@@ -7521,7 +7530,6 @@ async function queryMjTask(taskId, localTaskId='', opts={}){
     const displayProgress = mjStatusProgress(ret.status || 'processing', ret.progress || 0);
     updateMjStatus(ret.status || 'processing', displayProgress, mjStatusLabel(ret.status || 'processing', displayProgress), ret.batch_name || ret.batch_id || '', ret.task_id || taskId || '');
     mjState.lastJson = ret;
-    renderMjOutputPreview(ret);
     if(mjState.tab === 'inpaint' && /modal|等待补充参数/i.test(String(ret.status || ''))){
       const modalTaskInput = $('#mjFormContainer [data-mj-field="modal_task_id"]');
       if(modalTaskInput && !String(modalTaskInput.value || '').trim()) modalTaskInput.value = ret.task_id || taskId || '';
