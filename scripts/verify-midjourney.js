@@ -55,6 +55,13 @@ for (const key of expectedTabs) {
 if (!appJs.includes("POST /v1/midjourney/generations/video")) fail('MJ video endpoint missing from UI');
 if (!mainJs.includes("'/midjourney/generations/video'")) fail('MJ video endpoint missing from backend');
 if (!mainJs.includes("pickApimartVideoUrls(raw)")) fail('MJ task normalization no longer exposes video_urls');
+const videoPickerStart = mainJs.indexOf('function pickApimartVideoUrls');
+const videoPickerEnd = mainJs.indexOf('\nfunction pickApimartVideoUrl', videoPickerStart);
+if (videoPickerStart < 0 || videoPickerEnd < 0) fail('APIMart video URL picker cannot be evaluated');
+const videoPickerSandbox = {};
+vm.runInNewContext(`${mainJs.slice(videoPickerStart, videoPickerEnd)}\nimageVideoUrls = pickApimartVideoUrls({grid_image_url:'https://getapib.org/image/task_grid.png',image_urls:['https://getapib.org/image/task_0.png']});\nactualVideoUrls = pickApimartVideoUrls({video_url:'https://cdn.example.com/result.mp4'});`, videoPickerSandbox);
+if (videoPickerSandbox.imageVideoUrls.length) fail('MJ image URLs are incorrectly classified as video results');
+if (videoPickerSandbox.actualVideoUrls.length !== 1) fail('MJ video URL detection no longer recognizes MP4 results');
 if (!mainJs.includes('function buildMidjourneyStructuredFields')) fail('MJ structured request-field builder is missing');
 for (const field of ['negative_prompt','stylize','chaos','weird','iw','cw','sw','dw','cref','sref','dref','repeat']) {
   if (!mainJs.includes(`'${field}'`)) fail(`MJ structured field ${field} is missing`);
@@ -81,6 +88,21 @@ if (!appJs.includes("label:'遮罩图（必填）'")) fail('MJ Modal mask is not
 if (!mainJs.includes("task.status='等待补充参数'")) fail('MJ MODAL state handling is missing');
 if (!mainJs.includes("if (action === 'modal')") || !mainJs.includes('return { batch:reusableBatch, task:reusableTask, reused:true }')) fail('MJ Modal submission does not reuse the Inpaint task and batch');
 if (!mainJs.includes("if(isModal) batch.status='等待补充参数'")) fail('MJ MODAL batch waiting state is missing');
+if (!mainJs.includes('hasVideoUrls && (isVideoAction || !hasImageUrls)')) fail('MJ non-video actions do not prefer image results over ambiguous video URLs');
+if (!mainJs.includes('if (changed) getDB()._save()')) fail('MJ completed-image repair is not persisted');
+if (!mainJs.includes('const ignoreGrid = !!task.mj_grid_duplicate_single')) fail('MJ duplicate-grid persistence guard is missing');
+if (!mainJs.includes('const staleIgnoredGrid = !!task.mj_grid_duplicate_single')) fail('MJ stale duplicate-grid cleanup is missing');
+if (/if \(!gridUrl && allResultUrls\.length\) gridUrl = allResultUrls\[0\]/.test(mainJs)) fail('MJ first single image can still be misclassified as a grid fallback');
+if (!mainJs.includes('mj_grid_duplicate_single: !!task.mj_grid_duplicate_single')) fail('MJ duplicate-grid metadata is not exposed to the renderer');
+const jumpHelperStart = appJs.indexOf('function mjJumpItemAt');
+const jumpHelperEnd = appJs.indexOf('\nasync function openMjJumpImage', jumpHelperStart);
+if (jumpHelperStart < 0 || jumpHelperEnd < 0) fail('MJ preview jump helpers cannot be evaluated');
+const jumpSandbox = {};
+vm.runInNewContext(`${appJs.slice(jumpHelperStart, jumpHelperEnd)}\njumpByIndex = mjJumpItemAt({mj_images:[{index:4,full_url:'/four.png'},{index:2,full_url:'/two.png'}]}, 2);\nlocalJumpUrl = mjJumpItemUrl({local_path:'C:\\\\MJ\\\\one.png'});`, jumpSandbox);
+if (jumpSandbox.jumpByIndex?.full_url !== '/two.png') fail('MJ preview jump still relies on array position instead of image index');
+if (!String(jumpSandbox.localJumpUrl || '').startsWith('/file?path=')) fail('MJ preview jump cannot fall back to a saved local image path');
+if (!appJs.includes('const selectedThumb = String(item.thumb_url')) fail('MJ preview jump does not replace the previous image thumbnail');
+if (!appJs.includes("const gridUrl = meta.mj_grid_duplicate_single ? ''")) fail('MJ preview still exposes a duplicate fake grid');
 if (!appJs.includes('modal|等待补充参数')) fail('MJ renderer does not stop polling in MODAL state');
 if (!appJs.includes('btn.textContent = MJ_SUBMIT_LABELS[action]')) fail('MJ floating submit label does not follow the active Modal action');
 if (!mainJs.includes('splitMidjourneyDescribeSuggestions')) fail('Describe numbered-prompt splitting is missing');

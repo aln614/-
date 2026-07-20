@@ -3010,7 +3010,8 @@ function storeImageTaskPreview(task = {}){
     mj_images: Array.isArray(task.mj_images) ? task.mj_images : [],
     mj_buttons: Array.isArray(task.mj_buttons) ? task.mj_buttons : [],
     mj_grid_remote_url: task.mj_grid_remote_url || '',
-    mj_grid_local_url: task.mj_grid_local_url || ''
+    mj_grid_local_url: task.mj_grid_local_url || '',
+    mj_grid_duplicate_single: !!task.mj_grid_duplicate_single
   };
   imageTaskPreviewMap.set(task.id, meta);
   return meta;
@@ -3313,23 +3314,37 @@ function mergeMjSingleButtons(buttons=[]){
 function imageRowToPreviewMeta(img={}){
   const full = img.full_url || img.url || img.remote_url || ''; 
   const thumb = img.thumb_url || img.url || full;
-  return {id:img.id, fullUrl:full, originalUrl:img.original_url||full, thumbUrl:thumb, remoteUrl:img.remote_url||'', prompt:img.prompt||'', model:img.model||'', size:img.size||'', imageSize:img.image_size||'', size_bytes:Number(img.size_bytes||0), batch:img.batch_name||'', time:formatBeijingTime(img.generated_at||''), filename:img.filename||'generated-image.png', status:img.status||'', progress:img.progress||0, progress_text:img.progress_text||'', taskId:img.task_id||'', local_task_id:img.local_task_id||'', batch_id:img.batch_id||'', mj_source:img.mj_source||'', mj_action:img.mj_action||'', mj_parent_task_id:img.mj_parent_task_id||'', mj_parent_remote_task_id:img.mj_parent_remote_task_id||'', mj_is_grid:!!img.mj_is_grid, mj_variant_index:img.mj_variant_index||0, mj_images:img.mj_images||[], mj_buttons:img.mj_buttons||[], mj_executed_buttons:img.mj_executed_buttons||[], mj_grid_remote_url:img.mj_grid_remote_url||'', mj_grid_local_url:img.mj_grid_local_url||''};
+  return {id:img.id, fullUrl:full, originalUrl:img.original_url||full, thumbUrl:thumb, remoteUrl:img.remote_url||'', prompt:img.prompt||'', model:img.model||'', size:img.size||'', imageSize:img.image_size||'', size_bytes:Number(img.size_bytes||0), batch:img.batch_name||'', time:formatBeijingTime(img.generated_at||''), filename:img.filename||'generated-image.png', status:img.status||'', progress:img.progress||0, progress_text:img.progress_text||'', taskId:img.task_id||'', local_task_id:img.local_task_id||'', batch_id:img.batch_id||'', mj_source:img.mj_source||'', mj_action:img.mj_action||'', mj_parent_task_id:img.mj_parent_task_id||'', mj_parent_remote_task_id:img.mj_parent_remote_task_id||'', mj_is_grid:!!img.mj_is_grid, mj_variant_index:img.mj_variant_index||0, mj_images:img.mj_images||[], mj_buttons:img.mj_buttons||[], mj_executed_buttons:img.mj_executed_buttons||[], mj_grid_remote_url:img.mj_grid_remote_url||'', mj_grid_local_url:img.mj_grid_local_url||'', mj_grid_duplicate_single:!!img.mj_grid_duplicate_single};
 }
-function openMjJumpImage(meta={}, index=1){
+function mjJumpItemAt(meta={}, index=1){
   const idx = Number(index || 1);
   const images = Array.isArray(meta.mj_images) ? meta.mj_images.filter(Boolean) : [];
-  const item = images[idx - 1] || null;
-  const url = item ? (item.full_url || item.url || item.remote_url || item.local_url || item.local_path || '') : '';
+  return images.find((item, position)=>Number(item.index || item.mj_variant_index || position + 1) === idx) || null;
+}
+function mjJumpItemUrl(item={}){
+  const direct = String(item.full_url || item.url || item.local_url || item.remote_url || '').trim();
+  if(direct) return direct;
+  const localPath = String(item.local_path || '').trim();
+  return localPath ? `/file?path=${encodeURIComponent(localPath)}` : '';
+}
+async function openMjJumpImage(meta={}, index=1){
+  const idx = Number(index || 1);
+  const item = mjJumpItemAt(meta, idx);
+  const url = item ? mjJumpItemUrl(item) : '';
   if(!url) return toast(`跳转图片 ${idx} 不存在`);
   const parentTaskId = meta.taskId || meta.remote_task_id || meta.remoteTaskId || '';
-  const gridUrl = meta.mj_grid_local_url || meta.mj_grid_remote_url || meta.mj_parent_grid_url || meta.parentGridUrl || '';
+  const gridUrl = meta.mj_grid_duplicate_single ? '' : (meta.mj_grid_local_url || meta.mj_grid_remote_url || meta.mj_parent_grid_url || meta.parentGridUrl || '');
+  const selectedUrl = withPublicAccess(url);
+  const selectedThumb = String(item.thumb_url || item.thumbnail_url || '').trim();
   const singleMeta = {
     ...meta,
     id: item.image_id || item.id || meta.id,
-    fullUrl: withPublicAccess(url),
-    originalUrl: withPublicAccess(url),
+    fullUrl: selectedUrl,
+    originalUrl: selectedUrl,
+    thumbUrl: selectedThumb ? withPublicAccess(selectedThumb) : selectedUrl,
     remoteUrl: item.remote_url || url,
     filename: item.filename || `mj-image-${idx}.png`,
+    size_bytes: Number(item.size_bytes || 0),
     mj_is_grid: false,
     mj_is_jump_single: true,
     view_type: 'mj_single',
@@ -3347,10 +3362,11 @@ function openMjJumpImage(meta={}, index=1){
     mj_parent_task_id: meta.local_task_id || meta.mj_parent_task_id || '',
     mj_parent_remote_task_id: parentTaskId
   };
-  showPreview(singleMeta.fullUrl || url, singleMeta);
+  await showPreview(singleMeta.fullUrl || url, singleMeta);
   return singleMeta;
 }
-function openMjGridFromSingle(meta={}){
+async function openMjGridFromSingle(meta={}){
+  if(meta.mj_grid_duplicate_single) return toast('该任务没有独立四宫格图，请使用 1-4 查看返回图片');
   const gridUrl = meta.mj_parent_grid_url || meta.parentGridUrl || meta.mj_grid_local_url || meta.mj_grid_remote_url || (meta.mj_is_grid ? (meta.fullUrl || meta.originalUrl || meta.remoteUrl || '') : '');
   if(!gridUrl) return toast('当前任务没有可回到的四宫格图');
   const gridMeta = {
@@ -3367,7 +3383,7 @@ function openMjGridFromSingle(meta={}){
     taskId: meta.mj_parent_remote_task_id || meta.parent_task_id || meta.taskId || '',
     local_task_id: meta.mj_parent_task_id || meta.parent_local_task_id || meta.local_task_id || ''
   };
-  showPreview(gridMeta.fullUrl || gridUrl, gridMeta);
+  await showPreview(gridMeta.fullUrl || gridUrl, gridMeta);
   return gridMeta;
 }
 function mjApiKey(){ return $('#apiKey')?.value?.trim() || $('#videoApiKey')?.value?.trim() || ''; }
@@ -3773,26 +3789,34 @@ function renderPreviewMjExtras(meta = {}){
   if(btnBox) btnBox.innerHTML = '';
   const mjImages = Array.isArray(meta.mj_images) ? meta.mj_images.filter(Boolean) : [];
   const isMj = !!meta.mj_source || !!mjImages.length;
-  const canJump = isMj && mjImages.length > 0;
+  const jumpIndices = [...new Set(mjImages.map((item, position)=>Number(item.index || item.mj_variant_index || position + 1)).filter(index=>Number.isInteger(index) && index > 0))].sort((a,b)=>a-b);
+  const gridUrl = meta.mj_grid_duplicate_single ? '' : (meta.mj_parent_grid_url || meta.parentGridUrl || meta.mj_grid_local_url || meta.mj_grid_remote_url || (meta.mj_is_grid ? (meta.fullUrl || meta.originalUrl || meta.remoteUrl || '') : ''));
+  const canJump = isMj && (jumpIndices.length > 1 || (!!gridUrl && jumpIndices.length > 0));
   if(jumpRow) jumpRow.classList.toggle('hidden', !canJump);
   const visibleButtons = filterMjButtonsForPreview(meta, meta.mj_buttons);
   if(btnRow) btnRow.classList.toggle('hidden', !isMj || !visibleButtons.length);
   if(jumpBox && canJump){
-    const gridBtn = document.createElement('button');
-    gridBtn.textContent = '宫格';
-    gridBtn.title = '回到四宫格图';
-    gridBtn.classList.toggle('active', !!meta.mj_is_grid);
-    gridBtn.addEventListener('click', ()=>openMjGridFromSingle(meta));
-    jumpBox.appendChild(gridBtn);
-    [1,2,3,4].forEach((idx)=>{
+    if(gridUrl){
+      const gridBtn = document.createElement('button');
+      gridBtn.type = 'button';
+      gridBtn.textContent = '宫格';
+      gridBtn.title = '回到四宫格图';
+      gridBtn.classList.toggle('active', !!meta.mj_is_grid);
+      gridBtn.addEventListener('click', async(e)=>{ e.preventDefault(); e.stopPropagation(); await openMjGridFromSingle(meta); });
+      jumpBox.appendChild(gridBtn);
+    }
+    jumpIndices.forEach((idx)=>{
       const btn = document.createElement('button');
+      btn.type = 'button';
       btn.textContent = String(idx);
       btn.title = `打开 image_urls 第 ${idx} 张单图`;
       btn.classList.toggle('active', !meta.mj_is_grid && Number(meta.mj_variant_index || meta.image_index || 0) === idx);
-      btn.addEventListener('click', async()=>{
+      btn.addEventListener('click', async(e)=>{
+        e.preventDefault();
+        e.stopPropagation();
         jumpBox.querySelectorAll('button').forEach(x=>x.classList.remove('mj-last-clicked'));
         btn.classList.add('mj-last-clicked');
-        try { openMjJumpImage(meta, idx); }
+        try { await openMjJumpImage(meta, idx); }
         catch(e){ toast(e.message || `跳转图片 ${idx} 失败`); btn.classList.remove('mj-last-clicked'); }
       });
       jumpBox.appendChild(btn);

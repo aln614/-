@@ -1566,6 +1566,7 @@ function formatImage(row, opts = {}) {
   try { mjImages = JSON.parse(task.mj_images_json || '[]') || []; } catch {}
   try { mjButtons = JSON.parse(task.mj_buttons_json || '[]') || []; } catch {}
   try { mjExecutedButtons = JSON.parse(task.mj_executed_buttons_json || '[]') || []; } catch {}
+  const hasDistinctMjGrid = !task.mj_grid_duplicate_single && !!(task.mj_grid_remote_url || task.mj_grid_local_path);
   return {
     ...row,
     missing: !(localFull || remote),
@@ -1594,11 +1595,13 @@ function formatImage(row, opts = {}) {
     mj_is_grid: !!row.mj_is_grid,
     mj_variant_index: Number(task.mj_variant_index || row.mj_variant_index || 0),
     mj_images: mjImages.map(item=>{
-      const local = item.local_path && (!fast && fs.existsSync(item.local_path)) ? `/file?path=${encodeURIComponent(item.local_path)}` : '';
-      return { ...item, full_url: local || item.remote_url || '', remote_url: item.remote_url || '' };
+      const local = item.local_path && (fast || fs.existsSync(item.local_path)) ? `/file?path=${encodeURIComponent(item.local_path)}` : '';
+      const thumb = item.thumb_path && (fast || fs.existsSync(item.thumb_path)) ? `/file?path=${encodeURIComponent(item.thumb_path)}` : '';
+      return { ...item, full_url: local || item.remote_url || '', thumb_url:thumb || local || item.remote_url || '', remote_url: item.remote_url || '' };
     }),
-    mj_grid_remote_url: task.mj_grid_remote_url || '',
-    mj_grid_local_url: !fast && task.mj_grid_local_path && fs.existsSync(task.mj_grid_local_path) ? `/file?path=${encodeURIComponent(task.mj_grid_local_path)}` : (task.mj_grid_remote_url || ''),
+    mj_grid_remote_url: hasDistinctMjGrid ? (task.mj_grid_remote_url || '') : '',
+    mj_grid_local_url: hasDistinctMjGrid && task.mj_grid_local_path && (fast || fs.existsSync(task.mj_grid_local_path)) ? `/file?path=${encodeURIComponent(task.mj_grid_local_path)}` : (hasDistinctMjGrid ? (task.mj_grid_remote_url || '') : ''),
+    mj_grid_duplicate_single: !!task.mj_grid_duplicate_single,
     mj_buttons: mjButtons,
     mj_executed_buttons: mjExecutedButtons,
     hidden_in_recent: !!row.hidden_in_recent
@@ -1782,8 +1785,10 @@ function pickApimartVideoUrls(status={}) {
     const x = String(s || '');
     const c = String(ctx || '').toLowerCase();
     if (!isHttp(x) || isNonResultUrl(x)) return false;
+    if (/\.(png|jpe?g|webp|gif|bmp|avif|svg)(\?|#|$)/i.test(x)) return false;
+    if (/image|thumbnail|thumb|cover|poster|frame/i.test(c)) return false;
     if (/\.(mp4|mov|webm|m4v|avi)(\?|#|$)/i.test(x)) return true;
-    if (/video|media|result|output|download|remote|file|url|data|response|content|asset/i.test(c) && !/image_urls|input_image|source_image|prompt|thumbnail|cover/i.test(c)) return true;
+    if (/video/i.test(c)) return true;
     if (/result|output|download|remote|file|asset|response/i.test(c) && /cdn|storage|oss|cos|r2|cloudflare|apimart|openai|video|files|blob/i.test(x)) return true;
     return false;
   };
@@ -4760,7 +4765,8 @@ function imageTaskProgress(owner) {
       let mjImages = [], mjButtons = [];
       try { mjImages = JSON.parse(t.mj_images_json || '[]') || []; } catch {}
       try { mjButtons = JSON.parse(t.mj_buttons_json || '[]') || []; } catch {}
-      const gridLocal = t.mj_grid_local_path ? `/file?path=${encodeURIComponent(t.mj_grid_local_path)}` : '';
+      const hasDistinctMjGrid = !t.mj_grid_duplicate_single && !!(t.mj_grid_remote_url || t.mj_grid_local_path);
+      const gridLocal = hasDistinctMjGrid && t.mj_grid_local_path ? `/file?path=${encodeURIComponent(t.mj_grid_local_path)}` : '';
       const resultLocal = t.result_path ? `/file?path=${encodeURIComponent(t.result_path)}` : '';
       const thumbLocal = t.thumb_path ? `/file?path=${encodeURIComponent(t.thumb_path)}` : '';
       return {
@@ -4774,17 +4780,19 @@ function imageTaskProgress(owner) {
         remote_task_id: t.remote_task_id || '',
         prompt: t.prompt || '',
         model: b.model || '',
-        full_url: gridLocal || resultLocal || t.mj_grid_remote_url || '',
-        thumb_url: thumbLocal || gridLocal || resultLocal || t.mj_grid_remote_url || '',
-        remote_url: t.mj_grid_remote_url || '',
+        full_url: gridLocal || resultLocal || (hasDistinctMjGrid ? t.mj_grid_remote_url : '') || '',
+        thumb_url: thumbLocal || gridLocal || resultLocal || (hasDistinctMjGrid ? t.mj_grid_remote_url : '') || '',
+        remote_url: hasDistinctMjGrid ? (t.mj_grid_remote_url || '') : '',
         mj_source: t.mj_source || '',
         mj_action: t.mj_action || '',
-        mj_is_grid: !!t.mj_grid_remote_url,
-        mj_grid_remote_url: t.mj_grid_remote_url || '',
-        mj_grid_local_url: gridLocal || t.mj_grid_remote_url || '',
+        mj_is_grid: hasDistinctMjGrid,
+        mj_grid_remote_url: hasDistinctMjGrid ? (t.mj_grid_remote_url || '') : '',
+        mj_grid_local_url: gridLocal || (hasDistinctMjGrid ? t.mj_grid_remote_url : '') || '',
+        mj_grid_duplicate_single: !!t.mj_grid_duplicate_single,
         mj_images: mjImages.map(item => {
           const local = item.local_path ? `/file?path=${encodeURIComponent(item.local_path)}` : '';
-          return { ...item, full_url: local || item.remote_url || '', remote_url: item.remote_url || '' };
+          const thumb = item.thumb_path ? `/file?path=${encodeURIComponent(item.thumb_path)}` : '';
+          return { ...item, full_url: local || item.remote_url || '', thumb_url:thumb || local || item.remote_url || '', remote_url: item.remote_url || '' };
         }),
         mj_buttons: mjButtons,
         updated_at: t.updated_at || '',
@@ -6252,19 +6260,34 @@ function resolveMidjourneyLocalTask(body={}) {
   if (remoteId) return st.tasks.find(t => t.remote_task_id === remoteId) || null;
   return null;
 }
+function filesHaveSameContent(a='', b='') {
+  try {
+    if (!a || !b || !fs.existsSync(a) || !fs.existsSync(b)) return false;
+    const sa=fs.statSync(a), sb=fs.statSync(b);
+    if (!sa.isFile() || !sb.isFile() || sa.size !== sb.size) return false;
+    const digest = filePath => crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+    return digest(a) === digest(b);
+  } catch { return false; }
+}
 async function saveMidjourneyTaskImages(task, ret={}) {
   const st = getDB()._store; const batch = st.batches.find(b => b.id === task.batch_id); if (!batch) return;
   ensureDir(batch.output_dir || mjOutputRoot()); ensureDir(path.join(batch.output_dir, '_thumbs'));
   const allResultUrls = Array.isArray(ret.all_image_urls) ? ret.all_image_urls.map(x=>String(x||'').trim()).filter(Boolean) : [];
-  let gridUrl = String(ret.grid_image_url || ret.gridImageUrl || '').trim();
+  const reportedGridUrl = String(ret.grid_image_url || ret.gridImageUrl || '').trim();
   let rawUrls = Array.isArray(ret.image_urls) ? ret.image_urls.map(x=>String(x||'').trim()).filter(Boolean) : [];
-  // 优先使用 grid_image_url + image_urls；只有没有 image_urls 时才用 allResultUrls 兜底，避免参考图/旧字段重复进入批次。
-  if (!gridUrl && allResultUrls.length) gridUrl = allResultUrls[0];
-  if (!rawUrls.length && allResultUrls.length) rawUrls = allResultUrls.filter(u => u && u !== gridUrl);
-  rawUrls = [...new Set(rawUrls.map(u => String(u || '').trim()).filter(u => u && u !== gridUrl))];
-  if (!gridUrl && allResultUrls.length) gridUrl = allResultUrls[0];
-  if (!rawUrls.length && allResultUrls.length) rawUrls = allResultUrls.filter(u => u && u !== gridUrl);
-  rawUrls = [...new Set(rawUrls.map(u => String(u || '').trim()).filter(u => u && u !== gridUrl && isHttpImageUrlForMj(u)))];
+  const ignoreGrid = !!task.mj_grid_duplicate_single;
+  let gridUrl = ignoreGrid ? '' : reportedGridUrl;
+  // all_image_urls 只用于补齐单图。宫格必须来自明确的 grid_image_url，避免把第一张单图再次误认成宫格。
+  if (!rawUrls.length && allResultUrls.length) {
+    const reportedGridKey = normalizeMjRemoteUrl(reportedGridUrl);
+    rawUrls = allResultUrls.filter(u => !reportedGridKey || normalizeMjRemoteUrl(u) !== reportedGridKey);
+  }
+  rawUrls = [...new Set(rawUrls.map(u => String(u || '').trim()).filter(u => {
+    if (!u || !isHttpImageUrlForMj(u)) return false;
+    if (gridUrl && normalizeMjRemoteUrl(u) === normalizeMjRemoteUrl(gridUrl)) return false;
+    if (ignoreGrid && reportedGridUrl && normalizeMjRemoteUrl(u) === normalizeMjRemoteUrl(reportedGridUrl)) return false;
+    return true;
+  }))];
   const taskAction = String(task.mj_action || '').toLowerCase();
   const singleImageAction = /^(upscale|zoom|pan|remix|inpaint|modal)$/.test(taskAction);
   if (singleImageAction) { rawUrls = rawUrls.length ? rawUrls : allResultUrls; gridUrl = ''; }
@@ -6286,13 +6309,14 @@ async function saveMidjourneyTaskImages(task, ret={}) {
   // 清理同一任务下重复 remote_url 记录，避免图片管理 / 历史记录里同一单图出现两次。
   const dedupExisting = new Map();
   let keptGrid = false;
+  const removedGridRows = [];
   st.images = st.images.filter((img)=>{
     if (img.task_id !== task.id) return true;
+    if (img.mj_is_grid && (singleImageAction || ignoreGrid)) { removedGridRows.push(img); return false; }
     const remote = normalizeMjRemoteUrl(img.remote_url || '');
     if (!remote) return true;
     if (normGrid && remote === normGrid && !img.mj_is_grid) return false;
     if (img.mj_is_grid) {
-      if (singleImageAction) return false;
       if (normGrid && remote !== normGrid) return false;
       if (keptGrid) return false;
       keptGrid = true;
@@ -6302,6 +6326,13 @@ async function saveMidjourneyTaskImages(task, ret={}) {
     dedupExisting.set(key, img.id);
     return true;
   });
+  for (const row of removedGridRows) {
+    for (const filePath of [row.file_path, row.thumb_path]) {
+      try {
+        if (filePath && fs.existsSync(filePath) && !st.images.some(img => img.file_path === filePath || img.thumb_path === filePath)) fs.unlinkSync(filePath);
+      } catch {}
+    }
+  }
   const existing = st.images.filter(i => i.task_id === task.id);
   const saveOne = async (remoteUrl, suffix, variantIndex=0, isGrid=false, hidden=false) => {
     if (!remoteUrl) return null;
@@ -6335,12 +6366,25 @@ async function saveMidjourneyTaskImages(task, ret={}) {
     const r=await saveOne(rawUrls[i], `_${i+1}`, i+1, false, !!gridUrl);
     if(r) rows.push(r);
   }
-  const payload = rows.map((row, idx)=>({ index:Number(row.mj_variant_index || idx+1), label:`${Number(row.mj_variant_index || idx+1)}（${['左上','右上','左下','右下'][Math.max(0,Number(row.mj_variant_index||idx+1)-1)]||''}）`, remote_url:row.remote_url||'', local_path:row.file_path||'', image_id:row.id||'' }));
-  task.mj_grid_remote_url = gridUrl || task.mj_grid_remote_url || '';
-  task.mj_grid_local_path = (gridRow && gridRow.file_path) || task.mj_grid_local_path || '';
+  const duplicateGridRow = gridRow && rows.find(row => filesHaveSameContent(gridRow.file_path, row.file_path));
+  if (duplicateGridRow) {
+    st.images = st.images.filter(row => row.id !== gridRow.id);
+    try { if (gridRow.file_path && gridRow.file_path !== duplicateGridRow.file_path && fs.existsSync(gridRow.file_path)) fs.unlinkSync(gridRow.file_path); } catch {}
+    try { if (gridRow.thumb_path && gridRow.thumb_path !== duplicateGridRow.thumb_path && fs.existsSync(gridRow.thumb_path)) fs.unlinkSync(gridRow.thumb_path); } catch {}
+    rows.forEach(row => { row.hidden_in_recent = false; });
+    task.mj_grid_duplicate_single = true;
+    gridUrl = '';
+    gridRow = null;
+    addLog(`Midjourney grid_image_url 与单图内容重复，已按 ${rows.length} 张单图保存`, { ownerId:task.owner_id, batchId:batch.id });
+  }
+  if (!gridRow) rows.forEach(row => { row.hidden_in_recent = false; });
+  const payload = rows.map((row, idx)=>({ index:Number(row.mj_variant_index || idx+1), label:`${Number(row.mj_variant_index || idx+1)}（${['左上','右上','左下','右下'][Math.max(0,Number(row.mj_variant_index||idx+1)-1)]||''}）`, remote_url:row.remote_url||'', local_path:row.file_path||'', thumb_path:row.thumb_path||'', size_bytes:Number(row.size_bytes||0), image_id:row.id||'' }));
+  task.mj_grid_remote_url = gridUrl || '';
+  task.mj_grid_local_path = (gridRow && gridRow.file_path) || '';
   task.mj_images_json = JSON.stringify(payload);
   task.result_path = (gridRow && gridRow.file_path) || (payload[0] && payload[0].local_path) || task.result_path || '';
   task.thumb_path = (gridRow && gridRow.thumb_path) || (rows[0] && rows[0].thumb_path) || task.thumb_path || '';
+  task.progress_text = 'Midjourney 图片已完成';
   addLog(`Midjourney 结果已记录：四宫格=${gridUrl ? '1' : '0'}，单图=${rows.length}，批次=${batch.name}`, { ownerId:task.owner_id, batchId:batch.id });
   return { gridRow, imageRows:rows, payload };
 }
@@ -6406,23 +6450,70 @@ async function saveMidjourneyTaskVideos(task, ret={}) {
 }
 async function repairCompletedMidjourneyImages(ownerId='') {
   const st = getDB()._store;
+  let changed = false;
   const tasks = st.tasks.filter(t => (t.mj_source || '') === 'midjourney' && String(t.mj_action || '') !== 'describe' && /已完成|success|completed|done/i.test(String(t.status || '')) && (!ownerId || t.owner_id === ownerId));
   for (const task of tasks) {
     let raw = null;
     try { raw = JSON.parse(task.mj_query_raw_json || 'null'); } catch {}
     if (!raw) continue;
     const ret = normalizeMidjourneyTaskResult(task.remote_task_id || '', raw, task);
-    const grid = String(ret.grid_image_url || '').trim() || (Array.isArray(ret.all_image_urls) && ret.all_image_urls[0] ? String(ret.all_image_urls[0]).trim() : '');
+    const grid = task.mj_grid_duplicate_single ? '' : (String(ret.grid_image_url || '').trim() || (Array.isArray(ret.all_image_urls) && ret.all_image_urls[0] ? String(ret.all_image_urls[0]).trim() : ''));
     const urls = Array.isArray(ret.image_urls) ? ret.image_urls.filter(Boolean) : [];
     if (!grid && !urls.length) continue;
+    const batch = st.batches.find(b => b.id === task.batch_id);
+    const duplicateReportedGrid = task.mj_grid_duplicate_single ? pickDirectMidjourneyGridUrl(raw) : '';
+    const resultUrls = [grid, duplicateReportedGrid, ...urls].map(normalizeMjRemoteUrl).filter(Boolean);
+    const resultUrlSet = new Set(resultUrls);
+    const falseVideoRows = (st.video_tasks || []).filter(v => v.source_midjourney_task_id === task.id && resultUrlSet.has(normalizeMjRemoteUrl(v.remote_url || '')));
+    if (batch && falseVideoRows.length) {
+      const prefix = String(task.task_index || 1).padStart(5, '0');
+      for (const row of falseVideoRows) {
+        const sourcePath = String(row.file_path || '').trim();
+        if (!sourcePath || !fs.existsSync(sourcePath)) continue;
+        let header = Buffer.alloc(0);
+        try { const fd=fs.openSync(sourcePath,'r'); header=Buffer.alloc(16); fs.readSync(fd,header,0,16,0); fs.closeSync(fd); } catch {}
+        const isImagePayload = header.subarray(0,8).equals(Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a])) || header.subarray(0,3).equals(Buffer.from([0xff,0xd8,0xff])) || header.subarray(0,4).toString('ascii') === 'RIFF' || header.subarray(0,6).toString('ascii').startsWith('GIF8');
+        if (!isImagePayload) continue;
+        const normalizedRemote = normalizeMjRemoteUrl(row.remote_url || '');
+        const variantIndex = urls.findIndex(u => normalizeMjRemoteUrl(u) === normalizedRemote);
+        const suffix = normalizeMjRemoteUrl(grid) === normalizedRemote ? '_grid' : `_${Math.max(1, variantIndex + 1)}`;
+        let ext = '.png'; try { const match=String(new URL(row.remote_url).pathname||'').match(/\.(png|jpe?g|webp|gif)$/i); if(match) ext=match[0].toLowerCase(); } catch {}
+        const recoveredPath = path.join(batch.output_dir, `${prefix}${suffix}${ext}`);
+        try { if (!fs.existsSync(recoveredPath)) fs.copyFileSync(sourcePath, recoveredPath); } catch {}
+      }
+    }
     const existing = st.images.filter(i => i.task_id === task.id);
     const hasGrid = !grid || existing.some(i => i.mj_is_grid && i.remote_url === grid);
     const variantUrls = new Set(existing.filter(i => !i.mj_is_grid).map(i => String(i.remote_url || '').trim()).filter(Boolean));
     const missingVariant = urls.some(u => !variantUrls.has(String(u || '').trim()));
-    if (!hasGrid || missingVariant) {
+    const existingGrid = existing.find(i => i.mj_is_grid && i.file_path);
+    const duplicateGridStored = !!(existingGrid && existing.some(i => !i.mj_is_grid && filesHaveSameContent(existingGrid.file_path, i.file_path)));
+    const staleIgnoredGrid = !!task.mj_grid_duplicate_single && existing.some(i => i.mj_is_grid);
+    if (!hasGrid || missingVariant || duplicateGridStored || staleIgnoredGrid) {
       await saveMidjourneyTaskImages(task, ret);
+      changed = true;
+    }
+    if (task.mj_grid_duplicate_single) {
+      if (task.mj_grid_remote_url || task.mj_grid_local_path) changed = true;
+      task.mj_grid_remote_url = '';
+      task.mj_grid_local_path = '';
+    }
+    if (urls.length && String(task.mj_action || '').toLowerCase() !== 'video' && task.progress_text !== 'Midjourney 图片已完成') {
+      task.progress_text = 'Midjourney 图片已完成';
+      changed = true;
+    }
+    if (falseVideoRows.length) {
+      const falseVideoIds = new Set(falseVideoRows.map(v => v.id));
+      st.video_tasks = (st.video_tasks || []).filter(v => !falseVideoIds.has(v.id));
+      for (const row of falseVideoRows) {
+        const badPath = String(row.file_path || '').trim();
+        try { if (badPath && fs.existsSync(badPath)) fs.unlinkSync(badPath); } catch {}
+      }
+      task.mj_video_urls_json = '[]';
+      changed = true;
     }
   }
+  if (changed) getDB()._save();
 }
 
 function pickMidjourneyFailureReason(ret={}) {
@@ -6451,11 +6542,12 @@ async function syncMidjourneyTaskState(task, ret={}) {
   const hasImageUrls = !!(ret.grid_image_url || (Array.isArray(ret.image_urls) && ret.image_urls.length) || (Array.isArray(ret.all_image_urls) && ret.all_image_urls.length));
   const hasVideoUrls = Array.isArray(ret.video_urls) && ret.video_urls.length > 0;
   const isDescribe = String(task.mj_action || '').toLowerCase() === 'describe';
+  const isVideoAction = String(task.mj_action || '').toLowerCase() === 'video';
   const hasTextOutputs = Array.isArray(ret.text_outputs) && ret.text_outputs.length > 0;
   if(isFailed){ const reason=failureReasonEarly || statusRaw || 'Midjourney task failed'; if(task.status!=='失败'){ batch.fail_count=Number(batch.fail_count||0)+1; batch.running_count=Math.max(0,Number(batch.running_count||0)-1); } task.status='失败'; task.error_message=reason; task.finished_at=nowISO(); task.progress=100; task.progress_text=reason; }
   else if(isModal){ task.status='等待补充参数'; task.progress=Math.max(50,Math.min(90,Number(task.progress||50))); task.progress_text='等待提交遮罩图与局部重绘提示词'; }
   else if(isSuccess && isDescribe){ if(task.status!=='已完成'){ batch.success_count=Number(batch.success_count||0)+1; batch.running_count=Math.max(0,Number(batch.running_count||0)-1); } task.status='已完成'; task.finished_at=nowISO(); task.progress=100; task.progress_text='图生文已完成'; }
-  else if(isSuccess && hasVideoUrls){ await saveMidjourneyTaskVideos(task, ret); if(task.status!=='已完成'){ batch.success_count=Number(batch.success_count||0)+1; batch.running_count=Math.max(0,Number(batch.running_count||0)-1); } task.status='已完成'; task.finished_at=nowISO(); task.progress=100; task.progress_text='Midjourney 视频已完成'; }
+  else if(isSuccess && hasVideoUrls && (isVideoAction || !hasImageUrls)){ await saveMidjourneyTaskVideos(task, ret); if(task.status!=='已完成'){ batch.success_count=Number(batch.success_count||0)+1; batch.running_count=Math.max(0,Number(batch.running_count||0)-1); } task.status='已完成'; task.finished_at=nowISO(); task.progress=100; task.progress_text='Midjourney 视频已完成'; }
   else if(isSuccess && hasImageUrls){ await saveMidjourneyTaskImages(task, ret); if(task.status!=='已完成'){ batch.success_count=Number(batch.success_count||0)+1; batch.running_count=Math.max(0,Number(batch.running_count||0)-1); } task.status='已完成'; task.finished_at=nowISO(); task.progress=100; }
   else if(isSuccess && !hasImageUrls){ task.status='生成中'; task.progress=Math.max(Number(task.progress||0), 95); task.progress_text=hasTextOutputs ? '任务已成功，等待文本结果' : '任务已成功，等待图片 URL 返回'; }
   else task.status=task.remote_task_id ? '生成中' : '提交生成中';
@@ -6470,6 +6562,7 @@ function normalizeMidjourneyTaskResult(taskId, raw={}, localTask=null) {
   const singleImageAction = /^(upscale|zoom|pan|remix|inpaint|modal)$/.test(localAction);
   const directGrid = pickDirectMidjourneyGridUrl(raw);
   let grid = singleImageAction && !directGrid ? '' : (mergedUrls.grid || pickMidjourneyGridUrl(raw));
+  if (localTask && localTask.mj_grid_duplicate_single) grid = '';
   let imageUrls = uniqueMidjourneyImageUrls(raw);
   if (singleImageAction && !imageUrls.length) {
     const singles = mergedUrls.result_urls && mergedUrls.result_urls.length ? mergedUrls.result_urls : pickApimartImageUrls(raw).filter(isHttpImageUrlForMj);
@@ -6482,8 +6575,11 @@ function normalizeMidjourneyTaskResult(taskId, raw={}, localTask=null) {
   if(localTask){ batchId=localTask.batch_id||''; localTaskId=localTask.id||''; const batch=getDB()._store.batches.find(b=>b.id===localTask.batch_id); batchName=(batch && (batch.note||batch.name)) || ''; try{executed=JSON.parse(localTask.mj_executed_buttons_json||'[]')||[]}catch{} try{localImages=JSON.parse(localTask.mj_images_json||'[]')||[]}catch{} gridLocalPath=localTask.mj_grid_local_path||''; }
   const resultUrls = pickMidjourneyResultUrls(raw);
   const directAll = grid ? [grid, ...imageUrls] : [];
+  const duplicateGrid = !!(localTask && localTask.mj_grid_duplicate_single);
+  const reportedGrid = duplicateGrid ? normalizeMjRemoteUrl(pickDirectMidjourneyGridUrl(raw) || mergedUrls.grid || '') : '';
+  const fallbackAll = (resultUrls.length ? resultUrls : pickApimartImageUrls(raw).filter(isHttpImageUrlForMj)).filter(url => !reportedGrid || normalizeMjRemoteUrl(url) !== reportedGrid);
   const failureReason = pickMidjourneyFailureReason({raw});
-  return { ok:true, source:'midjourney', task_id:String(taskId || pickTaskIdFromApimart(raw) || ''), local_task_id:localTaskId, batch_id:batchId, batch_name:batchName, status:pickApimartStatus(raw)||'submitted', progress:pickApimartProgress(raw), grid_image_url:grid, image_urls:imageUrls, all_image_urls:directAll.length ? directAll : (resultUrls.length ? resultUrls : pickApimartImageUrls(raw).filter(isHttpImageUrlForMj)), local_images:localImages, local_grid_path:gridLocalPath, video_urls:pickApimartVideoUrls(raw), text_outputs:pickMidjourneyTextOutputs(raw), buttons, executed_buttons:executed, fail_reason:failureReason, error_message:failureReason, error:failureReason, raw };
+  return { ok:true, source:'midjourney', task_id:String(taskId || pickTaskIdFromApimart(raw) || ''), local_task_id:localTaskId, batch_id:batchId, batch_name:batchName, status:pickApimartStatus(raw)||'submitted', progress:pickApimartProgress(raw), grid_image_url:grid, image_urls:imageUrls, all_image_urls:directAll.length ? directAll : fallbackAll, local_images:localImages, local_grid_path:duplicateGrid ? '' : gridLocalPath, video_urls:pickApimartVideoUrls(raw), text_outputs:pickMidjourneyTextOutputs(raw), buttons, executed_buttons:executed, fail_reason:failureReason, error_message:failureReason, error:failureReason, raw };
 }
 async function submitMidjourneyAction(body={}, owner='local') {
   const cfg=readConfig(); const apiKey=String(body.api_key || cfg.api_key || cfg.apiKey || '').trim(); if(!apiKey) throw new Error('请先在首页填写并保存 APIMart API Key');
