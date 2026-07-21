@@ -15,6 +15,8 @@ assert(mainJs.includes('receiveBatchMediaUpload(req, parsed, deviceOwner)'), 'ba
 assert(mainJs.includes('resolveBatchMediaUploadIds(body.main_image_upload_ids, owner)'), 'main-image upload IDs are not resolved server-side');
 assert(mainJs.includes('await pipeline(req, limiter, fs.createWriteStream'), 'batch media upload is not streamed to disk');
 assert(mainJs.includes("'--protocol', 'http2', '--edge-ip-version', '4'"), 'Cloudflare tunnel is not using stable HTTP/2 over IPv4');
+assert(mainJs.includes("host === 'api.trycloudflare.com'"), 'Cloudflare control endpoint can still be mistaken for a public tunnel URL');
+assert(mainJs.includes('tunnelRetryAttempt < 4'), 'failed quick tunnels are not retried with a finite limit');
 assert(rendererJs.includes('function stagePublicBatchMedia'), 'public media pre-upload helper is missing');
 assert(rendererJs.includes('body.main_image_upload_ids = mainImages.map'), 'public batch submit does not use staged main-image IDs');
 assert(rendererJs.includes('body.main_images = []'), 'public batch request does not remove staged Base64 main images');

@@ -29,6 +29,9 @@ let midjourneyReconcileRunning = false;
 const midjourneyModalSubmitLocks = new Set();
 let tunnelProcess = null;
 let tunnelState = { running: false, provider: '', url: '', logs: [], last_error: '' };
+let tunnelProcessGeneration = 0;
+let tunnelRetryTimer = null;
+let tunnelRetryAttempt = 0;
 const staticDir = path.join(__dirname, 'renderer');
 const SERVER_ONLY = process.env.LAIG_SERVER_ONLY === '1' || process.env.LAIG_DOCKER === '1';
 const JSON_BODY_LIMIT_BYTES = Number(process.env.LAIG_JSON_BODY_LIMIT_MB || 64) * 1024 * 1024;
@@ -2739,6 +2742,24 @@ function runCurlForFile(args, timeoutMs = 180000, input = '') {
     if (input) child.stdin.end(input); else child.stdin.end();
   });
 }
+function isApimartAuthenticationError(value, status = 0) {
+  if (value && value.code === 'APIMART_INVALID_API_KEY') return true;
+  if (Number(status) === 401) return true;
+  let text = '';
+  try { text = typeof value === 'string' ? value : JSON.stringify(value || {}); } catch { text = String(value || ''); }
+  return /invalid\s+(?:api\s+)?key|unauthori[sz]ed|authentication\s+(?:failed|error)|missing\s+(?:api\s+)?key/i.test(text);
+}
+function createApimartAuthenticationError() {
+  const error = new Error('APIMart API Key 无效，请在当前访问设备首页重新填写正确的 API Key');
+  error.code = 'APIMART_INVALID_API_KEY';
+  error.terminal = true;
+  return error;
+}
+function assertApimartUploadApiKey(apiKey = '') {
+  const key = String(apiKey || '').trim();
+  if (!key || looksLikeApiUrl(key) || /\s/.test(key)) throw createApimartAuthenticationError();
+  return key;
+}
 async function uploadImageToApimartByCurl(apiKey, filePath, proxyUrl = '') {
   const args = ['-sS','-L','--connect-timeout','4','--max-time','120'];
   if (proxyUrl) args.push('--proxy', proxyUrl);
@@ -2746,15 +2767,20 @@ async function uploadImageToApimartByCurl(apiKey, filePath, proxyUrl = '') {
   const r = await runCurlForFile(args, 125000);
   if (r.status !== 0) throw new Error(`curl 上传参考图失败${proxyUrl ? '（代理 '+proxyUrl+'）' : ''}：${(r.stderr || r.stdout || '').slice(0,800)}`);
   const { json, url } = parseUploadResponseText(r.stdout);
+  if (isApimartAuthenticationError(json)) throw createApimartAuthenticationError();
   if (!url) throw new Error('APIMart 上传图片未返回 URL：' + compactJsonForLog(json, 600));
   markGoodApimartProxy(proxyUrl);
   return url;
 }
 async function uploadImageToApimart(apiKey, filePath) {
+  apiKey = assertApimartUploadApiKey(apiKey);
   const errors = [];
   for (const proxy of getApimartProxyCandidates(readConfig().apimart_proxy_url || '')) {
     try { return await uploadImageToApimartByCurl(apiKey, filePath, proxy); }
-    catch(e) { errors.push(`[${proxy}] ${e.message || e}`); }
+    catch(e) {
+      if (isApimartAuthenticationError(e)) throw createApimartAuthenticationError();
+      errors.push(`[${proxy}] ${e.message || e}`);
+    }
   }
   try {
     const data = fs.readFileSync(filePath);
@@ -2767,11 +2793,13 @@ async function uploadImageToApimart(apiKey, filePath) {
       const res = await fetch('https://api.apimart.ai/v1/uploads/images', { method:'POST', headers:{ 'Authorization':`Bearer ${apiKey}` }, body:fd, signal:controller.signal });
       const txt = await res.text();
       const { json, url } = parseUploadResponseText(txt);
+      if (isApimartAuthenticationError(json, res.status)) throw createApimartAuthenticationError();
       if (!res.ok) throw new Error(json?.error?.message || json?.message || txt || `APIMart upload HTTP ${res.status}`);
       if (!url) throw new Error('APIMart 上传图片未返回 URL：' + compactJsonForLog(json, 600));
       return url;
     } finally { clearTimeout(timer); }
   } catch(e) {
+    if (isApimartAuthenticationError(e)) throw createApimartAuthenticationError();
     errors.push('fetch直连上传失败：' + (e.message || e));
     throw new Error('上传参考图失败：' + errors.join(' | '));
   }
@@ -4957,6 +4985,35 @@ function parseBoolValue(value, defaultValue = true) {
   return defaultValue;
 }
 
+function batchImagePlatform(body = {}, cfg = {}) {
+  const platform = String(body.image_api_platform || cfg.image_api_platform || '').trim().toLowerCase();
+  const endpoint = String(body.api_endpoint || cfg.api_endpoint || '').trim();
+  return ['legacy','grsai','flow2api'].includes(platform) || /(?:127\.0\.0\.1|localhost):38000|grsaiapi\.com|grsai\.dakka\.com\.cn/i.test(endpoint)
+    ? 'flow2api'
+    : 'apimart';
+}
+function looksLikeApiUrl(value = '') {
+  return /(?:^[a-z][a-z0-9+.-]*:\/\/|^www\.)/i.test(String(value || '').trim());
+}
+function invalidBatchApiKey(message) {
+  const error = new Error(message);
+  error.statusCode = 400;
+  return error;
+}
+function validateBatchApiKey(body = {}, cfg = {}, local = false) {
+  const platform = batchImagePlatform(body, cfg);
+  const key = String(body.api_key || (local ? cfg.api_key : '') || '').trim();
+  if (!key) {
+    throw invalidBatchApiKey(local
+      ? '请先填写 API Key，再开始生成'
+      : '访问端请先填写本设备自己的 API Key，不能使用主机端保存的 API Key');
+  }
+  if (looksLikeApiUrl(key)) throw invalidBatchApiKey('API Key 填写错误：当前内容是网址，请填写 APIMart API Key');
+  if (/\s/.test(key)) throw invalidBatchApiKey('API Key 填写错误：API Key 中不能包含空格');
+  if (platform === 'apimart' && key.length < 8) throw invalidBatchApiKey('API Key 填写错误：当前内容过短，请填写完整的 APIMart API Key');
+  return key;
+}
+
 function mapPayloadToQueue(body, owner) {
   const mainImages = [
     ...resolveBatchMediaUploadIds(body.main_image_upload_ids, owner),
@@ -5400,14 +5457,26 @@ function pushTunnelLog(line) {
   if (tunnelState.logs.length > 200) tunnelState.logs = tunnelState.logs.slice(-200);
 }
 function extractPublicUrl(text) {
-  const m = String(text || '').match(/https:\/\/[a-zA-Z0-9._-]+\.(trycloudflare\.com|ngrok-free\.app|ngrok\.io|ngrok\.app|loca\.lt|localhost\.run)[^\s]*/);
-  return m ? m[0].replace(/["'<>)]*$/, '') : '';
+  const matches = String(text || '').match(/https:\/\/[a-zA-Z0-9._-]+\.(?:trycloudflare\.com|ngrok-free\.app|ngrok\.io|ngrok\.app|loca\.lt|localhost\.run)[^\s"'<>)]*/g) || [];
+  for (const candidate of matches) {
+    try {
+      const parsed = new URL(candidate);
+      const host = parsed.hostname.toLowerCase();
+      // api.trycloudflare.com/tunnel is Cloudflare's control endpoint, not a public quick-tunnel URL.
+      if (host === 'api.trycloudflare.com' || host === 'trycloudflare.com') continue;
+      return parsed.origin;
+    } catch {}
+  }
+  return '';
 }
 function stopTunnelProcess(opts = {}) {
-  if (tunnelProcess) {
-    try { tunnelProcess.kill(); } catch {}
-    tunnelProcess = null;
-  }
+  tunnelProcessGeneration += 1;
+  if (tunnelRetryTimer) clearTimeout(tunnelRetryTimer);
+  tunnelRetryTimer = null;
+  tunnelRetryAttempt = 0;
+  const child = tunnelProcess;
+  tunnelProcess = null;
+  if (child) try { child.kill(); } catch {}
   tunnelState.running = false;
   tunnelState.provider = '';
   if (!opts.preserveConfig) saveConfig({ public_enabled: false, public_url: '' });
@@ -5415,6 +5484,10 @@ function stopTunnelProcess(opts = {}) {
 function startTunnelProcess(body = {}) {
   const cfg0 = readConfig();
   if (tunnelProcess) stopTunnelProcess({ preserveConfig:true });
+  const automaticRetry = body._automaticRetry === true;
+  if (!automaticRetry) tunnelRetryAttempt = 0;
+  if (tunnelRetryTimer) clearTimeout(tunnelRetryTimer);
+  tunnelRetryTimer = null;
   const provider = body.provider || cfg0.public_provider || 'cloudflare';
   const port = Number(cfg0.port || 7861);
   const access = String(body.public_password || cfg0.public_password || '').trim() || Math.random().toString(36).slice(2, 10);
@@ -5428,7 +5501,8 @@ function startTunnelProcess(body = {}) {
     // Temporary tunnel URLs cannot be reused after the child process exits.
     public_url: provider === 'manual' ? (cfg0.public_url || '') : ''
   });
-  tunnelState = { running: true, provider, url: nextCfg.public_url || '', logs: [], last_error: '' };
+  const retainedLogs = automaticRetry ? (tunnelState.logs || []).slice(-120) : [];
+  tunnelState = { running: true, provider, url: nextCfg.public_url || '', logs: retainedLogs, last_error: '' };
   if (provider === 'manual') {
     const manualUrl = String(body.manual_url || body.public_url || nextCfg.public_url || '').trim();
     const finalUrl = manualUrl;
@@ -5450,21 +5524,55 @@ function startTunnelProcess(body = {}) {
   }
   pushTunnelLog(`Starting ${provider}: ${cmd} ${args.join(' ')}`);
   try {
-    tunnelProcess = spawn(cmd, args, { windowsHide: true });
+    const generation = ++tunnelProcessGeneration;
+    const child = spawn(cmd, args, { windowsHide: true });
+    tunnelProcess = child;
     const onData = (buf) => {
+      if (generation !== tunnelProcessGeneration) return;
       const out = buf.toString('utf8');
       pushTunnelLog(out);
       const u = extractPublicUrl(out);
       if (u) {
         const finalUrl = u;
+        tunnelRetryAttempt = 0;
         tunnelState.url = finalUrl;
         saveConfig({ public_url: finalUrl, public_enabled: true });
       }
     };
-    tunnelProcess.stdout.on('data', onData);
-    tunnelProcess.stderr.on('data', onData);
-    tunnelProcess.on('error', (err) => { tunnelState.last_error = err.message; pushTunnelLog('ERROR: ' + err.message); });
-    tunnelProcess.on('exit', (code) => { pushTunnelLog(`Tunnel exited: ${code}`); tunnelState.running = false; tunnelProcess = null; });
+    child.stdout.on('data', onData);
+    child.stderr.on('data', onData);
+    child.on('error', (err) => {
+      if (generation !== tunnelProcessGeneration) return;
+      tunnelState.last_error = err.message;
+      pushTunnelLog('ERROR: ' + err.message);
+    });
+    child.on('exit', (code) => {
+      if (generation !== tunnelProcessGeneration) return;
+      pushTunnelLog(`Tunnel exited: ${code}`);
+      tunnelState.running = false;
+      tunnelProcess = null;
+      const latest = readConfig();
+      if (Number(code) !== 0 && latest.public_enabled && provider !== 'manual' && tunnelRetryAttempt < 4) {
+        const retryNumber = ++tunnelRetryAttempt;
+        const delayMs = Math.min(30000, 3000 * (2 ** (retryNumber - 1)));
+        tunnelState.last_error = `公网隧道启动失败，${Math.ceil(delayMs / 1000)} 秒后自动重试（${retryNumber}/4）`;
+        pushTunnelLog(tunnelState.last_error);
+        tunnelRetryTimer = setTimeout(() => {
+          tunnelRetryTimer = null;
+          const retryCfg = readConfig();
+          if (!retryCfg.public_enabled) return;
+          startTunnelProcess({
+            provider:retryCfg.public_provider || provider,
+            public_password:retryCfg.public_password || access,
+            public_permission:retryCfg.public_permission || nextCfg.public_permission || 'generate',
+            _automaticRetry:true
+          });
+        }, delayMs);
+        if (typeof tunnelRetryTimer.unref === 'function') tunnelRetryTimer.unref();
+      } else if (Number(code) !== 0) {
+        tunnelState.last_error = `公网隧道已退出（${code}）`;
+      }
+    });
     return { ok: true, ...tunnelState, access, hint: provider === 'cloudflare' ? '如果没有出现公网链接，请先安装 cloudflared 或填写 cloudflared.exe 路径。' : '如果没有出现公网链接，请先安装 ngrok 或填写 ngrok.exe 路径。' };
   } catch (err) {
     tunnelState.running = false;
@@ -7019,8 +7127,8 @@ async function apiHandler(req, res, parsed) {
     if (method === 'POST' && p === '/api/batches') {
       const startedAt = Date.now();
       const body = await readBody(req);
-      // V13.2：局域网/公网访问端不使用主机端保存的 API Key；必须使用当前设备自己填写的 API Key。
-      if (!local && !String(body.api_key || '').trim()) throw new Error('访问端请先填写本设备自己的 API Key，不能使用主机端保存的 API Key');
+      // 局域网/公网访问端必须使用当前设备自己的 Key；同时拒绝误填到 Key 输入框中的 API 网址。
+      body.api_key = validateBatchApiKey(body, cfg, local);
       const mapped = mapPayloadToQueue(body, deviceOwner); const ret = queue.createBatch(mapped.payload, mapped.cfg);
       return send(res, {ok:true, id:ret.id, name:ret.name, task_count:ret.taskCount, output_dir:ret.outputDir, submit_ms:Date.now()-startedAt});
     }
@@ -7198,7 +7306,8 @@ async function apiHandler(req, res, parsed) {
     }
     return send(res, {ok:false,error:'接口不存在'}, 404);
   } catch (e) {
-    const code = Number(e && (e.statusCode || e.code)) === 413 ? 413 : 500;
+    const requestedCode = Number(e && (e.statusCode || e.code));
+    const code = requestedCode >= 400 && requestedCode <= 599 ? requestedCode : 500;
     return send(res, {ok:false,error:e.message || String(e)}, code);
   }
 }

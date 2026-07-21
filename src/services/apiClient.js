@@ -467,6 +467,25 @@ function mimeFromPath(filePath){
   return 'image/jpeg';
 }
 
+function isApimartAuthenticationError(value, status = 0){
+  if(value && value.code === 'APIMART_INVALID_API_KEY') return true;
+  if(Number(status) === 401) return true;
+  let text = '';
+  try{ text = typeof value === 'string' ? value : JSON.stringify(value || {}); }catch{ text = String(value || ''); }
+  return /invalid\s+(?:api\s+)?key|unauthori[sz]ed|authentication\s+(?:failed|error)|missing\s+(?:api\s+)?key/i.test(text);
+}
+function apimartAuthenticationError(){
+  const error = new Error('APIMart API Key 无效，请在当前公网设备首页重新填写正确的 API Key');
+  error.code = 'APIMART_INVALID_API_KEY';
+  error.terminal = true;
+  return error;
+}
+function assertApimartUploadApiKey(apiKey=''){
+  const key = String(apiKey || '').trim();
+  if(!key || /(?:^[a-z][a-z0-9+.-]*:\/\/|^www\.)/i.test(key) || /\s/.test(key)) throw apimartAuthenticationError();
+  return key;
+}
+
 async function uploadImageToApimartByCurl(baseUrl, apiKey, filePath, proxyUrl='') {
   const proxy = getProxyUrl(proxyUrl);
   const args = ['-sS','-L','--connect-timeout','4','--max-time','90'];
@@ -476,6 +495,7 @@ async function uploadImageToApimartByCurl(baseUrl, apiKey, filePath, proxyUrl=''
   const r = await runProcessAsync(exe, args, { timeoutMs: 185000 });
   if (r.status !== 0) throw new Error(`curl 上传参考图失败：${(r.stderr || r.stdout || '').slice(0,800)}`);
   const data = parseJsonText(r.stdout);
+  if(isApimartAuthenticationError(data)) throw apimartAuthenticationError();
   const url = data.url || data?.data?.url || data?.data?.[0]?.url;
   if(!url) throw new Error('curl 上传参考图失败：APIMart 未返回图片 URL，实际响应：' + JSON.stringify(data).slice(0,600));
   markGoodProxy(proxy);
@@ -483,11 +503,15 @@ async function uploadImageToApimartByCurl(baseUrl, apiKey, filePath, proxyUrl=''
 }
 async function uploadImageToApimart(baseUrl, apiKey, filePath, proxyUrl=''){
   if(!filePath) return '';
+  apiKey = assertApimartUploadApiKey(apiKey);
   const stat = fs.statSync(filePath);
   const errors = [];
   for (const proxy of getProxyCandidates(proxyUrl)) {
     try { return await uploadImageToApimartByCurl(baseUrl, apiKey, filePath, proxy); }
-    catch (e) { errors.push(`curl上传失败[${proxy}]：${e.message || e}`); }
+    catch (e) {
+      if(isApimartAuthenticationError(e)) throw apimartAuthenticationError();
+      errors.push(`curl上传失败[${proxy}]：${e.message || e}`);
+    }
   }
   // 代理都失败后再走 fetch 直连兜底。
   try {
@@ -497,11 +521,13 @@ async function uploadImageToApimart(baseUrl, apiKey, filePath, proxyUrl=''){
     const res = await fetchNoSingleTimeout(makeApimartUrl(baseUrl, '/v1/uploads/images'), { method:'POST', headers:{ 'Authorization': apiKey ? `Bearer ${apiKey}` : '' }, body:form });
     const text = await res.text();
     let data; try { data = JSON.parse(text); } catch { data = { raw:text }; }
+    if(isApimartAuthenticationError(data, res.status)) throw apimartAuthenticationError();
     if(!res.ok) throw new Error(`上传参考图失败 HTTP ${res.status}: ${text.slice(0, 600)}`);
     const url = data.url || data?.data?.url || data?.data?.[0]?.url;
     if(!url) throw new Error('上传参考图失败：APIMart 未返回图片 URL');
     return url;
   } catch (e) {
+    if(isApimartAuthenticationError(e)) throw apimartAuthenticationError();
     errors.push('fetch直连上传失败：' + (e.message || e));
     throw new Error('上传参考图失败：' + errors.join(' | '));
   }

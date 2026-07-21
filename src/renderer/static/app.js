@@ -134,18 +134,40 @@ function getPublicAccess(){
 function clearPublicAccess(){ localStorage.removeItem(PUBLIC_ACCESS_KEY); document.cookie='local_api_public_access=; Max-Age=0; Path=/; SameSite=Lax'; }
 
 
+function looksLikeApiUrl(value=''){
+  return /(?:^[a-z][a-z0-9+.-]*:\/\/|^www\.)/i.test(String(value || '').trim());
+}
+function validateImageApiKey(value='', platform=''){
+  const key = String(value || '').trim();
+  const p = normalizeImagePlatformValue(platform || currentImagePlatform());
+  if(!key) return {ok:false, message:'API Key 未填写，请先填写后再开始生成。'};
+  if(looksLikeApiUrl(key)) return {ok:false, message:'API Key 填写错误：当前内容是网址，请填写 APIMart API Key。'};
+  if(/\s/.test(key)) return {ok:false, message:'API Key 填写错误：API Key 中不能包含空格。'};
+  if(p === 'apimart' && key.length < 8) return {ok:false, message:'API Key 填写错误：当前内容过短，请填写完整的 APIMart API Key。'};
+  return {ok:true, message:''};
+}
+function removeInvalidStoredApiKey(cfg={}, storageKey=''){
+  const next = {...(cfg || {})};
+  if(next.api_key && looksLikeApiUrl(next.api_key)){
+    delete next.api_key;
+    if(storageKey) localStorage.setItem(storageKey, JSON.stringify(next));
+  }
+  return next;
+}
 function updateApiKeyWarning(){
   const keyEl = $('#apiKey');
   const warn = $('#apiKeyWarning');
   const startBtn = $('#startBatchBtn');
-  if(!keyEl || !warn) return;
-  const empty = !String(keyEl.value || '').trim();
-  warn.classList.toggle('show', empty);
+  if(!keyEl || !warn) return {ok:false, message:'API Key 输入框不可用'};
+  const validation = validateImageApiKey(keyEl.value, currentImagePlatform());
+  warn.textContent = validation.message;
+  warn.classList.toggle('show', !validation.ok);
   if(startBtn){
-    startBtn.disabled = empty;
-    startBtn.classList.toggle('disabled', empty);
-    startBtn.title = empty ? 'API Key 未填写，不能开始生成新批次' : '';
+    startBtn.disabled = !validation.ok;
+    startBtn.classList.toggle('disabled', !validation.ok);
+    startBtn.title = validation.ok ? '' : validation.message;
   }
+  return validation;
 }
 
 function getClientId(){
@@ -709,9 +731,14 @@ function normalizeFlow2ApiBaseModel(model=''){
   return 'gemini-3.1-flash-image';
 }
 function platformConfigKey(platform='apimart'){ return IMAGE_PLATFORM_CONFIG_PREFIX + normalizeImagePlatformValue(platform); }
-function loadLegacyClientConfig(){ try{ return JSON.parse(localStorage.getItem(CLIENT_CONFIG_KEY) || '{}'); }catch(e){ return {}; } }
+function loadLegacyClientConfig(){
+  try{ return removeInvalidStoredApiKey(JSON.parse(localStorage.getItem(CLIENT_CONFIG_KEY) || '{}'), CLIENT_CONFIG_KEY); }catch(e){ return {}; }
+}
 function readClientSettings(){
-  try{ return JSON.parse(localStorage.getItem(CURRENT_SETTINGS_KEY) || '{}') || {}; }catch(e){ return {}; }
+  try{
+    const cfg = JSON.parse(localStorage.getItem(CURRENT_SETTINGS_KEY) || '{}') || {};
+    return removeInvalidStoredApiKey(cfg, CURRENT_SETTINGS_KEY);
+  }catch(e){ return {}; }
 }
 function collectMjCurrentSettings(){
   const fields = {};
@@ -726,7 +753,11 @@ function saveCurrentClientSettings(cfg = {}){
   const existing = readClientSettings();
   const allowed = ['image_api_platform','api_endpoint','legacy_api_endpoint','api_key','model','size','clarity','quality','background','moderation','output_format','output_compression','image_n','theme_mode','concurrency','retry_times','repeat_count','poll_interval_ms','timeout_seconds','background_keepalive','prompt_multiline_tasks'];
   const next = { ...existing };
-  allowed.forEach(k=>{ if(typeof cfg[k] !== 'undefined') next[k] = cfg[k]; });
+  allowed.forEach(k=>{
+    if(typeof cfg[k] === 'undefined') return;
+    if(k === 'api_key' && looksLikeApiUrl(cfg[k])) delete next.api_key;
+    else next[k] = cfg[k];
+  });
   const mj = cfg.mj_settings || collectMjCurrentSettings();
   if(mj && mj.tab){
     next.mj_tab = mj.tab;
@@ -743,11 +774,13 @@ function mergeClientSettings(serverCfg = {}){
 }
 function loadClientConfig(platform=''){
   const p = platform ? normalizeImagePlatformValue(platform) : (localStorage.getItem(IMAGE_PLATFORM_ACTIVE_KEY) || 'apimart');
-  try{ return JSON.parse(localStorage.getItem(platformConfigKey(p)) || '{}'); }catch(e){ return {}; }
+  const key = platformConfigKey(p);
+  try{ return removeInvalidStoredApiKey(JSON.parse(localStorage.getItem(key) || '{}'), key); }catch(e){ return {}; }
 }
 function saveClientConfig(cfg){
   const p = normalizeImagePlatformValue(cfg.image_api_platform || currentImagePlatform());
   const safeCfg = sanitizePlatformEndpoint(cfg || {}, p);
+  if(safeCfg.api_key && looksLikeApiUrl(safeCfg.api_key)) delete safeCfg.api_key;
   localStorage.setItem(IMAGE_PLATFORM_ACTIVE_KEY, p);
   const allowed = ['image_api_platform','api_endpoint','legacy_api_endpoint','api_key','model','size','clarity','quality','background','moderation','output_format','output_compression','image_n','mask_url','theme_mode','concurrency','retry_times','repeat_count','poll_interval_ms','timeout_seconds','background_keepalive','prompt_multiline_tasks'];
   const cleaned = { image_api_platform:p };
@@ -828,6 +861,7 @@ function readCurrentImageFormConfig(){
 function applyImagePlatformFields(cfg = {}, platform='apimart'){
   const p = normalizeImagePlatformValue(platform || cfg.image_api_platform);
   const merged = sanitizePlatformEndpoint({ ...defaultPlatformConfig(p), ...cfg, image_api_platform:p }, p);
+  if(merged.api_key && looksLikeApiUrl(merged.api_key)) merged.api_key = '';
   if(p === 'flow2api'){
     merged.model = normalizeFlow2ApiBaseModel(merged.model);
     if(merged.api_key === 'laig-flow2api-local-2026') merged.api_key = '';
@@ -1992,6 +2026,13 @@ $('#themeModeQuick')?.addEventListener('change', ()=>{ $('#themeMode').value = $
 $('#clarity')?.addEventListener('change', ()=>{ if($('#claritySettings')) $('#claritySettings').value = $('#clarity').value; updateSizeHint(); });
 $('#claritySettings')?.addEventListener('change', ()=>{ if($('#clarity')) $('#clarity').value = $('#claritySettings').value; updateSizeHint(); });
 $('#outputFormat')?.addEventListener('change', updateOfficialImageOptions);
+$('#apiKey')?.addEventListener('input', updateApiKeyWarning);
+$('#apiKey')?.addEventListener('change', ()=>{
+  const validation = updateApiKeyWarning();
+  if(validation.ok){
+    try{ saveClientConfig(readCurrentImageFormConfig()); }catch(e){}
+  }
+});
 $('#apiEndpoint')?.addEventListener('change', ()=>{ try{ saveClientConfig(readCurrentImageFormConfig()); }catch(e){} });
 $('#addAnnouncementItemBtn')?.addEventListener('click', ()=>{
   const enabled = $('#announcementCustomEnabled');
@@ -2172,6 +2213,12 @@ function collectConfig(){
 async function handleConfigSave(payload, successMsg='当前设置已保存'){
   try{
     const currentApiKey = $('#apiKey')?.value?.trim() || payload.api_key || '';
+    const validation = validateImageApiKey(currentApiKey, payload.image_api_platform || currentImagePlatform());
+    updateApiKeyWarning();
+    if(!validation.ok){
+      toast(validation.message);
+      return {ok:false, error:validation.message};
+    }
     payload = { ...payload, api_key: currentApiKey };
     saveClientConfig(payload);
     saveCurrentClientSettings(payload);
@@ -2331,9 +2378,9 @@ $('#clearChatImagesBtn')?.addEventListener('click', clearChatImages);
 $('#chatInput')?.addEventListener('keydown', e=>{ if(e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); sendChat(); } });
 
 $('#startBatchBtn').addEventListener('click', async()=>{
-  updateApiKeyWarning();
-  if(!($('#apiKey')?.value || '').trim()){
-    toast('API Key 未填写，请先填写后再开始生成');
+  const keyValidation = updateApiKeyWarning();
+  if(!keyValidation.ok){
+    toast(keyValidation.message);
     return;
   }
   const body = {...collectConfig(), client_id:getClientId(), prompts: $('#prompts').value, prompt_multiline_tasks: isPromptMultilineTasksEnabled(), main_images: mainImages, reference_images: refImages};
@@ -2352,7 +2399,7 @@ $('#startBatchBtn').addEventListener('click', async()=>{
     const ret = await api('/api/batches',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     if(isPublicClient) refreshAll().catch(()=>{}); else await refreshAll();
     toast(`批次已创建：${ret.task_count} 个任务，已在右侧实时面板运行`);
-  }catch(e){ alert('创建失败：'+e.message); }
+  }catch(e){ toast('创建失败：' + (e.message || e)); }
   finally{ $('#startBatchBtn').disabled = false; $('#startBatchBtn').textContent = '开始生成新批次'; }
 });
 
