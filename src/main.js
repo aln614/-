@@ -4395,6 +4395,11 @@ function resolveMediaCachePath(filePath = '', cfg = readConfig()) {
   const key = pathKey(resolved);
   const outputRoot = String(cfg.output_dir || '').trim();
   if (outputRoot && isPathInside(path.resolve(outputRoot), resolved)) return resolved;
+  // Describe inputs and other source media are stored on task rows instead of
+  // the generated-images table. They are safe to serve when the DB references
+  // the exact file path, even when their project output root differs from the
+  // current global output directory.
+  if (isReferencedServedFile(resolved, cfg)) return resolved;
   try {
     const st = getDB()._store || {};
     const rows = Array.isArray(st.images) ? st.images : [];
@@ -7268,12 +7273,22 @@ async function apiHandler(req, res, parsed) {
         .sort((a,b)=>String(b.created_at||'').localeCompare(String(a.created_at||'')))
         .slice(0, limit)
         .map(t => {
-          let refs = [], texts = [];
+          let refs = [], texts = [], submission = {};
           try { refs = JSON.parse(t.ref_images_json || '[]') || []; } catch {}
           try { texts = JSON.parse(t.mj_text_outputs_json || '[]') || []; } catch {}
+          try { submission = JSON.parse(t.mj_submission_json || '{}') || {}; } catch {}
           const raw = safeJsonParse(t.mj_query_raw_json || '{}', {});
           texts = normalizeDescribePromptTexts(texts.length ? texts : pickMidjourneyTextOutputs(raw));
           const batch = st.batches.find(b=>b.id===t.batch_id) || {};
+          const firstRef = refs[0] || {};
+          const localPath = t.main_image_path || firstRef.file_path || firstRef.local_path || '';
+          const thumbPath = firstRef.thumb_path || t.thumb_path || '';
+          const submittedUrls = Array.isArray(submission.image_urls)
+            ? submission.image_urls.filter(Boolean)
+            : parseMjUrlText(submission.image_url || submission.image_urls_text || '');
+          const remoteSource = submittedUrls[0] || '';
+          const localFull = localPath && fs.existsSync(localPath) ? `/file?path=${encodeURIComponent(localPath)}` : '';
+          const localThumb = thumbPath && fs.existsSync(thumbPath) ? `/file?path=${encodeURIComponent(thumbPath)}` : '';
           return {
             id: t.id,
             task_id: t.remote_task_id || '',
@@ -7286,8 +7301,9 @@ async function apiHandler(req, res, parsed) {
             updated_at: t.updated_at || '',
             prompt: t.prompt || '',
             text_outputs: texts,
-            thumb_url: refs[0]?.thumb_path ? `/file?path=${encodeURIComponent(refs[0].thumb_path)}` : '',
-            full_url: refs[0]?.file_path ? `/file?path=${encodeURIComponent(refs[0].file_path)}` : '',
+            source_image_url: remoteSource,
+            thumb_url: localThumb || localFull || remoteSource,
+            full_url: localFull || remoteSource,
             raw
           };
         });

@@ -151,6 +151,9 @@ const describeNormalizerSandbox = {};
 vm.runInNewContext(`${mainJs.slice(describeSplitStart, describeNormalizerEnd)}\ndescribeNormalized = normalizeDescribePromptTexts(['SUCCESS', 'DESCRIBE', '1\uFE0F\u20E3 repeated prompt text\\n2\uFE0F\u20E3 repeated prompt text\\n3\uFE0F\u20E3 repeated prompt text\\n4\uFE0F\u20E3 repeated prompt text']);`, describeNormalizerSandbox);
 if (!Array.isArray(describeNormalizerSandbox.describeNormalized) || describeNormalizerSandbox.describeNormalized.length !== 4) fail('Describe numbered positions are lost when suggestions have identical text');
 if (!mainJs.includes('texts = normalizeDescribePromptTexts(texts.length ? texts : pickMidjourneyTextOutputs(raw))')) fail('Describe recent-history endpoint does not normalize legacy text outputs');
+if (!mainJs.includes('if (isReferencedServedFile(resolved, cfg)) return resolved;')) fail('Describe source images referenced by task rows are blocked by the media route');
+if (!mainJs.includes('thumb_url: localThumb || localFull || remoteSource')) fail('Describe recent-history thumbnails do not fall back to a valid local/remote source');
+if (!appJs.includes('function bindDescribeImageFallback')) fail('Describe cards do not retry the full image when a thumbnail fails');
 if (/action==='reroll' && prompt/.test(mainJs)) fail('Reroll must not submit an unsupported prompt field');
 if (!mainJs.includes('const nestedError = json && json.error')) fail('Nested APIMart error response validation is missing');
 

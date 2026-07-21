@@ -2558,6 +2558,21 @@ function ensureDescribeResultModal(){
   modal.addEventListener('click', e=>{ if(e.target === modal) modal.classList.remove('active'); });
   return modal;
 }
+function bindDescribeImageFallback(root){
+  root?.querySelectorAll('img[data-describe-fallback]').forEach(img=>{
+    img.addEventListener('error', ()=>{
+      const fallback = img.dataset.describeFallback || '';
+      if(fallback){
+        delete img.dataset.describeFallback;
+        img.src = fallback;
+        return;
+      }
+      const empty = document.createElement('span');
+      empty.textContent = '图片加载失败';
+      img.replaceWith(empty);
+    });
+  });
+}
 async function showDescribeBatchResults(id){
   const modal = ensureDescribeResultModal();
   const list = modal.querySelector('#describeResultList');
@@ -2576,8 +2591,9 @@ async function showDescribeBatchResults(id){
     list.innerHTML = rows.map((row, idx)=>{
       const texts = Array.isArray(row.result_texts) ? row.result_texts : [];
       const fullUrl = row.full_url ? withPublicAccess(row.full_url) : '';
+      const thumbUrl = row.thumb_url ? withPublicAccess(row.thumb_url) : fullUrl;
       return `<div class="describe-result-item">
-        <div class="describe-result-thumb-wrap" ${fullUrl ? `data-full-url="${escapeHtml(fullUrl)}"` : ''}>${row.thumb_url ? `<img src="${withPublicAccess(row.thumb_url)}" loading="lazy" onerror="this.replaceWith(document.createTextNode('图片加载失败'))" />` : '<span>无预览图</span>'}</div>
+        <div class="describe-result-thumb-wrap" ${fullUrl ? `data-full-url="${escapeHtml(fullUrl)}"` : ''}>${thumbUrl ? `<img src="${escapeHtml(thumbUrl)}" data-describe-fallback="${escapeHtml(fullUrl && fullUrl !== thumbUrl ? fullUrl : '')}" loading="lazy" />` : '<span>无预览图</span>'}</div>
         <div class="describe-result-body">
           <h3>图片 ${idx+1}</h3>
           <div class="small-note">状态：${escapeHtml(row.status || '-')} · 任务ID：${escapeHtml(row.task_id || row.local_task_id || '-')}</div>
@@ -2587,6 +2603,7 @@ async function showDescribeBatchResults(id){
         </div>
       </div>`;
     }).join('') || '<div class="mj-inline-note">该批次暂无图生文结果</div>';
+    bindDescribeImageFallback(list);
     list.querySelectorAll('[data-copy-describe]').forEach(btn=>btn.addEventListener('click',()=>copyTextSmart(btn.dataset.copyDescribe || '', '提示词结果')));
     list.querySelectorAll('.describe-result-thumb-wrap[data-full-url]').forEach(el=>el.addEventListener('click',()=>showPreview(el.dataset.fullUrl, {fullUrl:el.dataset.fullUrl, model:'Midjourney Describe'})));
   }catch(e){
@@ -7567,12 +7584,14 @@ async function loadMjDescribeOutput(){
     if(!rows.length){ box.innerHTML = '<div class="mj-inline-note">暂无图生文任务结果。</div>'; return; }
     box.innerHTML = rows.map(row=>{
       const text = (Array.isArray(row.text_outputs) && row.text_outputs.length) ? row.text_outputs.join('\n\n') : '等待返回文本结果...';
-      const img = row.thumb_url || row.full_url || '';
+      const fullUrl = withPublicAccess(row.full_url || row.source_image_url || '');
+      const img = withPublicAccess(row.thumb_url || row.full_url || row.source_image_url || '');
       return `<div class="mj-describe-item collapsed" data-desc-id="${escapeHtml(row.local_task_id || row.task_id || '')}">
-        <div class="mj-describe-thumb" ${row.full_url ? `data-full-url="${escapeHtml(row.full_url||'')}"` : ''}>${img ? `<img src="${withPublicAccess(img)}" loading="lazy" />` : '<span>无缩略图</span>'}</div>
+        <div class="mj-describe-thumb" ${fullUrl ? `data-full-url="${escapeHtml(fullUrl)}"` : ''}>${img ? `<img src="${escapeHtml(img)}" data-describe-fallback="${escapeHtml(fullUrl && fullUrl !== img ? fullUrl : '')}" loading="lazy" />` : '<span>无缩略图</span>'}</div>
         <div class="mj-describe-text" title="双击展开 / 再次双击折叠"><b>${escapeHtml(row.status || 'processing')}</b><p>${escapeHtml(text)}</p><small>${escapeHtml(row.task_id || row.local_task_id || '')}</small></div>
       </div>`;
     }).join('');
+    bindDescribeImageFallback(box);
     box.querySelectorAll('.mj-describe-text').forEach(el=>{
       el.addEventListener('dblclick', ()=>{
         const item = el.closest('.mj-describe-item');
