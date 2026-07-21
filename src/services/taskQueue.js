@@ -3,7 +3,7 @@ const path = require('path');
 const { EventEmitter } = require('events');
 const { getDB, nowISO, uuid, addLog } = require('./db');
 const { generateOne } = require('./apiClient');
-const { makeDirs, safeName, createThumb, ensureDir } = require('./cache');
+const { safeName, createThumb, ensureDir } = require('./cache');
 const { isTerminalGenerationError } = require('./taskErrors');
 
 function parseTimeMs(v) {
@@ -145,14 +145,14 @@ class TaskQueue extends EventEmitter {
     const createdAt = nowISO();
     const name = payload.name || `Batch_${createdAt.replace(/[\s:]/g, '_')}`;
     const baseOut = payload.outputDir || cfg.outputDir || path.join(require('electron').app.getPath('pictures'), 'TENYING_AI_1_0');
-    const dirs = makeDirs(baseOut, name);
+    const outputDir = path.join(baseOut, safeName(name));
     const fullCfg = {
       ...cfg,
       ...payload,
       ownerId,
       concurrency,
       repeatCount,
-      outputDir: dirs.dir
+      outputDir
     };
 
     const tasks = [];
@@ -178,13 +178,13 @@ class TaskQueue extends EventEmitter {
       insertBatch.run({
         id: batchId, owner_id: ownerId, name, note: '', status: '等待中', model: fullCfg.model, size: fullCfg.size,
         image_size: fullCfg.imageSize, concurrency, retry_times: Number(fullCfg.retryTimes || 0), repeat_count: repeatCount,
-        task_count: tasks.length, output_dir: dirs.dir, config_json: JSON.stringify(fullCfg), created_at: createdAt, updated_at: createdAt
+        task_count: tasks.length, output_dir:outputDir, config_json: JSON.stringify(fullCfg), created_at: createdAt, updated_at: createdAt
       });
       for (const t of tasks) insertTask.run(t);
     })();
     addLog(`创建批次 ${name}，共 ${tasks.length} 个任务`, { ownerId, batchId });
-    this.runBatch(batchId).catch(err => addLog(`批次运行异常：${err.message}`, { ownerId, batchId, level: 'error' }));
-    return { id: batchId, name, taskCount: tasks.length, outputDir: dirs.dir };
+    setImmediate(() => this.runBatch(batchId).catch(err => addLog(`批次运行异常：${err.message}`, { ownerId, batchId, level: 'error' })));
+    return { id: batchId, name, taskCount: tasks.length, outputDir };
   }
 
   stopBatch(batchId) {
@@ -202,6 +202,23 @@ class TaskQueue extends EventEmitter {
       const db = getDB();
       const batch = db.prepare('SELECT * FROM batches WHERE id=?').get(batchId);
       if (!batch) return;
+      try {
+        await Promise.all([
+          fs.promises.mkdir(batch.output_dir, { recursive:true }),
+          fs.promises.mkdir(path.join(batch.output_dir, '_thumbs'), { recursive:true })
+        ]);
+      } catch (error) {
+        const message = `创建批次输出目录失败：${error.message || error}`;
+        const now = nowISO();
+        const storedBatch = (db._store.batches || []).find(row => row.id === batchId);
+        const storedTasks = (db._store.tasks || []).filter(task => task.batch_id === batchId);
+        for (const task of storedTasks) Object.assign(task, { status:'失败', progress:100, progress_text:message, error_message:message, updated_at:now, finished_at:now });
+        if (storedBatch) Object.assign(storedBatch, { status:'失败', fail_count:storedTasks.length, running_count:0, updated_at:now, finished_at:now });
+        db._save();
+        addLog(message, { ownerId:batch.owner_id, batchId, level:'error' });
+        this.emit('changed');
+        return;
+      }
       const cfg = JSON.parse(batch.config_json || '{}');
       const concurrency = Math.max(1, Number(batch.concurrency || cfg.concurrency || 1));
       const batchTasks = (db._store.tasks || [])

@@ -6,6 +6,8 @@ const https = require('https');
 const url = require('url');
 const crypto = require('crypto');
 const zlib = require('zlib');
+const { Transform } = require('stream');
+const { pipeline } = require('stream/promises');
 const { app, BrowserWindow, Tray, shell, Menu, clipboard, nativeImage, ipcMain, globalShortcut } = require('electron');
 const { spawn } = require('child_process');
 const { initDB, getDB, addLog, listBatches, listImages, listLogs, nowISO, uuid, setNetworkTimeOffset, getNetworkTimeInfo } = require('./services/db');
@@ -31,6 +33,7 @@ const staticDir = path.join(__dirname, 'renderer');
 const SERVER_ONLY = process.env.LAIG_SERVER_ONLY === '1' || process.env.LAIG_DOCKER === '1';
 const JSON_BODY_LIMIT_BYTES = Number(process.env.LAIG_JSON_BODY_LIMIT_MB || 64) * 1024 * 1024;
 const MEDIA_BODY_LIMIT_BYTES = Number(process.env.LAIG_MEDIA_BODY_LIMIT_MB || 1536) * 1024 * 1024;
+const BATCH_MEDIA_FILE_LIMIT_BYTES = Number(process.env.LAIG_BATCH_MEDIA_FILE_LIMIT_MB || 256) * 1024 * 1024;
 const STATUS_CACHE_TTL_MS = 1800;
 const HOST_STATS_CACHE_TTL_MS = 8000;
 const STALE_CLEANUP_TTL_MS = 15000;
@@ -1439,6 +1442,61 @@ function dataUrlToFile(item, owner) {
   const file = path.join(dir, `${Date.now().toString(36)}_${Math.random().toString(36).slice(2,8)}${ext}`);
   fs.writeFileSync(file, Buffer.from(m[2], 'base64'));
   return file;
+}
+function batchMediaUploadDir(owner='local') {
+  const safeOwner = String(owner || 'local').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 96) || 'local';
+  return path.join(app.getPath('userData'), 'uploads', safeOwner);
+}
+function batchMediaExtension(name='', mime='') {
+  const allowed = new Set(['.png','.jpg','.jpeg','.webp','.gif']);
+  const requested = path.extname(String(name || '')).toLowerCase();
+  if (allowed.has(requested)) return requested;
+  const type = String(mime || '').toLowerCase();
+  if (type.includes('jpeg')) return '.jpg';
+  if (type.includes('webp')) return '.webp';
+  if (type.includes('gif')) return '.gif';
+  return '.png';
+}
+async function receiveBatchMediaUpload(req, parsed, owner='local') {
+  const declared = Number(req.headers['content-length'] || 0);
+  if (declared > BATCH_MEDIA_FILE_LIMIT_BYTES) throw payloadTooLargeError(BATCH_MEDIA_FILE_LIMIT_BYTES);
+  const mime = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+  if (mime && !mime.startsWith('image/')) throw new Error('批次素材预上传只支持图片文件');
+  const dir = batchMediaUploadDir(owner);
+  await fs.promises.mkdir(dir, { recursive:true });
+  const ext = batchMediaExtension(parsed.query.name || '', mime);
+  const uploadId = `${uuid('batch_upload_')}${ext}`;
+  const filePath = path.join(dir, uploadId);
+  let bytes = 0;
+  const limiter = new Transform({
+    transform(chunk, encoding, callback) {
+      bytes += chunk.length;
+      if (bytes > BATCH_MEDIA_FILE_LIMIT_BYTES) return callback(payloadTooLargeError(BATCH_MEDIA_FILE_LIMIT_BYTES));
+      callback(null, chunk);
+    }
+  });
+  try {
+    await pipeline(req, limiter, fs.createWriteStream(filePath, { flags:'wx' }));
+    if (!bytes) throw new Error('上传的图片文件为空');
+    return { ok:true, upload_id:uploadId, name:String(parsed.query.name || uploadId), size:bytes, type:mime || 'application/octet-stream' };
+  } catch (error) {
+    try { await fs.promises.rm(filePath, { force:true }); } catch {}
+    throw error;
+  }
+}
+function resolveBatchMediaUploadIds(ids=[], owner='local') {
+  const base = path.resolve(batchMediaUploadDir(owner));
+  return (Array.isArray(ids) ? ids : [])
+    .map(value => String(value || '').trim())
+    .filter(Boolean)
+    .map(uploadId => {
+      if (path.basename(uploadId) !== uploadId || !/^batch_upload_[a-z0-9_-]+\.(?:png|jpe?g|webp|gif)$/i.test(uploadId)) {
+        throw new Error('批次素材上传 ID 无效，请重新选择图片');
+      }
+      const filePath = path.resolve(base, uploadId);
+      if (!isPathInside(base, filePath) || !fs.existsSync(filePath)) throw new Error('批次素材已失效，请重新选择图片');
+      return filePath;
+    });
 }
 function normalizeBatch(b) {
   return { ...b, image_size: b.image_size || b.imageSize || '', note: b.note || '' };
@@ -4900,8 +4958,14 @@ function parseBoolValue(value, defaultValue = true) {
 }
 
 function mapPayloadToQueue(body, owner) {
-  const mainImages = (body.main_images || []).map(x => dataUrlToFile(x, owner)).filter(Boolean);
-  const refImages = (body.reference_images || []).map(x => dataUrlToFile(x, owner)).filter(Boolean);
+  const mainImages = [
+    ...resolveBatchMediaUploadIds(body.main_image_upload_ids, owner),
+    ...(body.main_images || []).map(x => dataUrlToFile(x, owner)).filter(Boolean)
+  ];
+  const refImages = [
+    ...resolveBatchMediaUploadIds(body.reference_image_upload_ids, owner),
+    ...(body.reference_images || []).map(x => dataUrlToFile(x, owner)).filter(Boolean)
+  ];
   const cfg = toCamelConfig(readConfig());
   const payload = {
     ownerId: owner,
@@ -5379,7 +5443,10 @@ function startTunnelProcess(body = {}) {
     args = ['http', String(port), '--log=stdout'];
   } else {
     cmd = nextCfg.cloudflared_path || 'cloudflared';
-    args = ['tunnel', '--url', `http://127.0.0.1:${port}`];
+    // QUIC is frequently unstable on domestic/public uplinks and can make even
+    // 1 MB uploads take over a minute. HTTP/2 over IPv4 is slower to connect but
+    // far more reliable for browser-to-host batch media uploads.
+    args = ['tunnel', '--protocol', 'http2', '--edge-ip-version', '4', '--url', `http://127.0.0.1:${port}`];
   }
   pushTunnelLog(`Starting ${provider}: ${cmd} ${args.join(' ')}`);
   try {
@@ -6910,6 +6977,12 @@ async function apiHandler(req, res, parsed) {
       stopTunnelProcess();
       return send(res, {ok:true, status:tunnelState});
     }
+    if (method === 'POST' && p === '/api/batch_media_upload') {
+      const startedAt = Date.now();
+      const uploaded = await receiveBatchMediaUpload(req, parsed, deviceOwner);
+      uploaded.upload_ms = Date.now() - startedAt;
+      return send(res, uploaded);
+    }
     if (method === 'GET' && p === '/api/prompt_library') return send(res, promptLibraryResponse(local, cfg));
     if (method === 'POST' && p === '/api/prompt_library/group') { const body = await readBody(req); return send(res, upsertPromptGroup(body, local, cfg, deviceOwner)); }
     if (method === 'POST' && p === '/api/prompt_library/template') { const body = await readBody(req); return send(res, upsertPromptTemplate(body, local, cfg, deviceOwner)); }
@@ -6944,11 +7017,12 @@ async function apiHandler(req, res, parsed) {
       return send(res, [...imageRows, ...videoRows].sort((a,b)=>String(b.created_at || '').localeCompare(String(a.created_at || ''))));
     }
     if (method === 'POST' && p === '/api/batches') {
+      const startedAt = Date.now();
       const body = await readBody(req);
       // V13.2：局域网/公网访问端不使用主机端保存的 API Key；必须使用当前设备自己填写的 API Key。
       if (!local && !String(body.api_key || '').trim()) throw new Error('访问端请先填写本设备自己的 API Key，不能使用主机端保存的 API Key');
       const mapped = mapPayloadToQueue(body, deviceOwner); const ret = queue.createBatch(mapped.payload, mapped.cfg);
-      return send(res, {ok:true, id:ret.id, name:ret.name, task_count:ret.taskCount, output_dir:ret.outputDir});
+      return send(res, {ok:true, id:ret.id, name:ret.name, task_count:ret.taskCount, output_dir:ret.outputDir, submit_ms:Date.now()-startedAt});
     }
     if (method === 'POST' && p === '/api/stop_batch') { const body=await readBody(req); const b=getDB()._store.batches.find(x=>x.id===body.batch_id && (!owner || x.owner_id===owner)); if(!b) throw new Error('无权限或批次不存在'); queue.stopBatch(body.batch_id); return send(res,{ok:true}); }
     if (method === 'POST' && p === '/api/delete_batch') { const body=await readBody(req); return send(res, deleteBatch(body.batch_id, owner)); }

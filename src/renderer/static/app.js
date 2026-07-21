@@ -33,6 +33,11 @@ let previewStart = {x:0,y:0,px:0,py:0};
 let previewTransformRaf = 0;
 let isLocalClient = true;
 let isPublicClient = false;
+const publicBatchUploadPromises = new WeakMap();
+const PUBLIC_BATCH_UPLOAD_CONCURRENCY = 4;
+const publicBatchUploadQueue = [];
+let publicBatchUploadsActive = 0;
+let publicBatchThumbRenderRaf = 0;
 let isInlineNoteEditing = false;
 let wakeLock = null;
 let keepAliveTimer = null;
@@ -558,9 +563,9 @@ async function handleGeneratedImageDrop(e, target){
     renderChatAttachments();
     saveChatConfig();
   }else if(target === 'main'){
-    mainImages.push(item); renderThumbs(); calcEstimate();
+    mainImages.push(item); renderThumbs(); calcEstimate(); prestagePublicBatchMedia([item]);
   }else{
-    refImages.push(item); renderThumbs(); calcEstimate();
+    refImages.push(item); renderThumbs(); calcEstimate(); prestagePublicBatchMedia([item]);
   }
   toast(target === 'main' ? '已作为主图加入（原图）' : target === 'ref' ? '已作为参考图加入（原图）' : '已加入聊天附件（原图）');
   return true;
@@ -1919,17 +1924,25 @@ function fileIcon(it){
 }
 
 async function addFiles(files, target){
-  const arr = await Promise.all([...files].filter(f => f.type.startsWith('image/')).map(fileToData));
+  const arr = await Promise.all([...files].filter(f => f.type.startsWith('image/')).map(batchImageFileToItem));
   if(target === 'main') mainImages.push(...arr); else refImages.push(...arr);
   renderThumbs(); calcEstimate();
+  prestagePublicBatchMedia(arr);
 }
 
 function renderThumbs(){
   renderThumbList('#mainThumbs', mainImages, 'main');
   renderThumbList('#refThumbs', refImages, 'ref');
 }
+function batchUploadStateMarkup(item){
+  if(!isPublicClient) return '';
+  if(item.batch_upload_state === 'done') return '<span class="batch-upload-state done">已上传</span>';
+  if(item.batch_upload_state === 'failed') return '<span class="batch-upload-state failed">重试</span>';
+  if(item.batch_upload_state === 'queued') return '<span class="batch-upload-state queued">等待上传</span>';
+  return '<span class="batch-upload-state">上传中</span>';
+}
 function renderThumbList(sel, arr, type){
-  $(sel).innerHTML = arr.map((it,i)=>`<div class="thumb-wrap"><img class="thumb draggable-generated-thumb" draggable="true" src="${it.data}" data-preview="${it.data}" data-full-url="${it.data}" data-id="input_${type}_${i}" data-name="${escapeHtml(it.name||'input-image.png')}"><button class="thumb-del" data-type="${type}" data-i="${i}">×</button></div>`).join('');
+  $(sel).innerHTML = arr.map((it,i)=>`<div class="thumb-wrap"><img class="thumb draggable-generated-thumb" draggable="true" src="${it.data}" data-preview="${it.data}" data-full-url="${it.data}" data-id="input_${type}_${i}" data-name="${escapeHtml(it.name||'input-image.png')}">${batchUploadStateMarkup(it)}<button class="thumb-del" data-type="${type}" data-i="${i}">×</button></div>`).join('');
   $$(sel+' .thumb').forEach(img => img.addEventListener('click', () => showPreview(img.dataset.preview)));
   $$(sel+' .thumb').forEach(img => img.addEventListener('dragstart', e => {
     setImageDragData(e, {fullUrl: img.dataset.fullUrl || img.dataset.preview, filename: img.dataset.name || 'input-image.png'});
@@ -1937,7 +1950,8 @@ function renderThumbList(sel, arr, type){
   $$(sel+' .thumb-del').forEach(btn => btn.addEventListener('click', (e)=>{
     e.stopPropagation();
     const i = Number(btn.dataset.i);
-    if(btn.dataset.type === 'main') mainImages.splice(i,1); else refImages.splice(i,1);
+    const removed = btn.dataset.type === 'main' ? mainImages.splice(i,1) : refImages.splice(i,1);
+    releaseBatchMediaItem(removed[0]);
     renderThumbs(); calcEstimate();
   }));
 }
@@ -1958,9 +1972,9 @@ function calcEstimate(){
   $('#taskEstimate').textContent = `当前模式：${promptInfo.mode}｜预计任务：${mainCount} × ${promptInfo.count} × ${repeatCount} = ${mainCount * promptInfo.count * repeatCount}`;
 }
 
-$('#clearMainImagesBtn')?.addEventListener('click',()=>{ mainImages=[]; renderThumbs(); calcEstimate(); toast('主图已清空'); });
-$('#clearRefImagesBtn')?.addEventListener('click',()=>{ refImages=[]; renderThumbs(); calcEstimate(); toast('参考图已清空'); });
-$('#clearAllInputImagesBtn')?.addEventListener('click',()=>{ mainImages=[]; refImages=[]; renderThumbs(); calcEstimate(); toast('全部图片已清空'); });
+$('#clearMainImagesBtn')?.addEventListener('click',()=>{ releaseBatchMediaItems(mainImages); mainImages=[]; renderThumbs(); calcEstimate(); toast('主图已清空'); });
+$('#clearRefImagesBtn')?.addEventListener('click',()=>{ releaseBatchMediaItems(refImages); refImages=[]; renderThumbs(); calcEstimate(); toast('参考图已清空'); });
+$('#clearAllInputImagesBtn')?.addEventListener('click',()=>{ releaseBatchMediaItems(mainImages); releaseBatchMediaItems(refImages); mainImages=[]; refImages=[]; renderThumbs(); calcEstimate(); toast('全部图片已清空'); });
 
 $('#prompts').addEventListener('input', calcEstimate);
 $('#promptMultilineTasks')?.addEventListener('change', calcEstimate);
@@ -2325,8 +2339,18 @@ $('#startBatchBtn').addEventListener('click', async()=>{
   const body = {...collectConfig(), client_id:getClientId(), prompts: $('#prompts').value, prompt_multiline_tasks: isPromptMultilineTasksEnabled(), main_images: mainImages, reference_images: refImages};
   $('#startBatchBtn').disabled = true; $('#startBatchBtn').textContent = '提交中...';
   try{
+    if(isPublicClient){
+      const allCount = mainImages.length + refImages.length;
+      const progressText = (done,total)=>{ $('#startBatchBtn').textContent = total ? `上传素材 ${done}/${total}` : '创建批次...'; };
+      await ensurePublicBatchMediaUploaded([...mainImages, ...refImages], progressText);
+      body.main_image_upload_ids = mainImages.map(item=>item.batch_upload_id).filter(Boolean);
+      body.reference_image_upload_ids = refImages.map(item=>item.batch_upload_id).filter(Boolean);
+      body.main_images = [];
+      body.reference_images = [];
+      $('#startBatchBtn').textContent = '创建批次...';
+    }
     const ret = await api('/api/batches',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    await refreshAll();
+    if(isPublicClient) refreshAll().catch(()=>{}); else await refreshAll();
     toast(`批次已创建：${ret.task_count} 个任务，已在右侧实时面板运行`);
   }catch(e){ alert('创建失败：'+e.message); }
   finally{ $('#startBatchBtn').disabled = false; $('#startBatchBtn').textContent = '开始生成新批次'; }
@@ -2887,6 +2911,95 @@ function syncImageSelectionUI(){
     const check = card.querySelector('.check');
     if(check) check.textContent = selected ? '✓' : '';
   });
+}
+function attachBatchMediaSource(item, source, objectUrl=''){
+  if(!item || !source) return item;
+  Object.defineProperty(item, '__batchMediaSource', {value:source, configurable:true});
+  if(objectUrl) Object.defineProperty(item, '__batchPreviewObjectUrl', {value:objectUrl, configurable:true});
+  return item;
+}
+function releaseBatchMediaItem(item){
+  const objectUrl = item?.__batchPreviewObjectUrl;
+  if(objectUrl){
+    try{ URL.revokeObjectURL(objectUrl); }catch{}
+    try{ delete item.__batchPreviewObjectUrl; }catch{}
+  }
+}
+function releaseBatchMediaItems(items=[]){ for(const item of items || []) releaseBatchMediaItem(item); }
+function batchImageFileToItem(file){
+  if(!isPublicClient) return fileToData(file).then(item=>attachBatchMediaSource(item, file));
+  const objectUrl = URL.createObjectURL(file);
+  return Promise.resolve(attachBatchMediaSource({name:file.name, type:file.type, size:file.size || 0, data:objectUrl}, file, objectUrl));
+}
+function schedulePublicBatchThumbRender(){
+  if(publicBatchThumbRenderRaf) return;
+  publicBatchThumbRenderRaf = requestAnimationFrame(()=>{ publicBatchThumbRenderRaf=0; renderThumbs(); });
+}
+async function publicBatchMediaBlob(item){
+  if(item?.__batchMediaSource instanceof Blob) return item.__batchMediaSource;
+  const src = String(item?.data || '');
+  if(!/^(?:data:|blob:)/i.test(src)) throw new Error('图片没有可上传的原始数据');
+  const response = await fetch(src);
+  if(!response.ok) throw new Error('读取待上传图片失败');
+  return response.blob();
+}
+function drainPublicBatchUploadQueue(){
+  while(publicBatchUploadsActive < PUBLIC_BATCH_UPLOAD_CONCURRENCY && publicBatchUploadQueue.length){
+    const job = publicBatchUploadQueue.shift();
+    if(job.item.batch_upload_id){ job.resolve(job.item.batch_upload_id); continue; }
+    publicBatchUploadsActive += 1;
+    job.item.batch_upload_state = 'uploading';
+    schedulePublicBatchThumbRender();
+    (async()=>{
+      const blob = await publicBatchMediaBlob(job.item);
+      const ret = await api(`/api/batch_media_upload?name=${encodeURIComponent(job.item.name || 'input.png')}`, {method:'POST',headers:{'Content-Type':job.item.type || blob.type || 'application/octet-stream'},body:blob});
+      job.item.batch_upload_id = ret.upload_id || '';
+      if(!job.item.batch_upload_id) throw new Error('素材预上传没有返回 upload_id');
+      job.item.batch_upload_state = 'done';
+      job.item.batch_upload_error = '';
+      job.resolve(job.item.batch_upload_id);
+    })().catch(error=>{
+      job.item.batch_upload_state = 'failed';
+      job.item.batch_upload_error = error.message || String(error);
+      publicBatchUploadPromises.delete(job.item);
+      job.reject(error);
+    }).finally(()=>{
+      publicBatchUploadsActive = Math.max(0, publicBatchUploadsActive - 1);
+      schedulePublicBatchThumbRender();
+      drainPublicBatchUploadQueue();
+    });
+  }
+}
+function stagePublicBatchMedia(item){
+  if(!isPublicClient || !item) return Promise.resolve(item?.batch_upload_id || '');
+  if(item.batch_upload_id) return Promise.resolve(item.batch_upload_id);
+  const existing = publicBatchUploadPromises.get(item);
+  if(existing) return existing;
+  let resolveUpload;
+  let rejectUpload;
+  const promise = new Promise((resolve,reject)=>{ resolveUpload=resolve; rejectUpload=reject; });
+  publicBatchUploadPromises.set(item, promise);
+  item.batch_upload_state = 'queued';
+  publicBatchUploadQueue.push({item, resolve:resolveUpload, reject:rejectUpload});
+  schedulePublicBatchThumbRender();
+  drainPublicBatchUploadQueue();
+  return promise;
+}
+function prestagePublicBatchMedia(items=[]){
+  if(!isPublicClient) return;
+  for(const item of items) stagePublicBatchMedia(item).catch(()=>{});
+}
+async function ensurePublicBatchMediaUploaded(items=[], onProgress=()=>{}){
+  const list = (items || []).filter(Boolean);
+  let completed = list.filter(item=>item.batch_upload_id).length;
+  onProgress(completed, list.length);
+  const pending = list.filter(item=>!item.batch_upload_id);
+  await Promise.all(pending.map(async item=>{
+      await stagePublicBatchMedia(item);
+      completed += 1;
+      onProgress(completed, list.length);
+  }));
+  return list.map(item=>item.batch_upload_id).filter(Boolean);
 }
 function toggleImage(id){ if(selectedImages.has(id)) selectedImages.delete(id); else selectedImages.add(id); syncImageSelectionUI(); }
 $('#selectAllBtn').addEventListener('click',()=>{ imageRowsCache.forEach(i=>selectedImages.add(i.id)); syncImageSelectionUI(); });

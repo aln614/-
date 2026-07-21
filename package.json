@@ -1,13 +1,13 @@
 {
   "name": "local-api-image-generator-webui",
-  "version": "1.0.31",
+  "version": "1.0.32",
   "description": "Local APIMart and Flow2API image generator with batch management",
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
     "start:docker": "node src/docker-server.js",
-    "docker:build": "docker build -t tenying-ai:1.0.31 .",
-    "check": "node --check src/main.js && node --check src/renderer/static/app.js && node --check src/services/apiClient.js && node scripts/verify-image-models.js && node scripts/verify-midjourney.js && node scripts/verify-chat-models.js && node scripts/verify-task-retry-db.js && node scripts/verify-video-duration-rules.js && node scripts/verify-shortcuts.js",
+    "docker:build": "docker build -t tenying-ai:1.0.32 .",
+    "check": "node --check src/main.js && node --check src/renderer/static/app.js && node --check src/services/apiClient.js && node scripts/verify-image-models.js && node scripts/verify-midjourney.js && node scripts/verify-chat-models.js && node scripts/verify-task-retry-db.js && node scripts/verify-video-duration-rules.js && node scripts/verify-shortcuts.js && node scripts/verify-public-batch-submit.js",
     "sync:unpacked": "npm run check && node scripts/sync-unpacked-asar.js --restart",
     "dist": "npm run check && electron-builder --win portable --config.win.signAndEditExecutable=false --config.forceCodeSigning=false",
     "dist:dir": "npm run check && electron-builder --win dir --config.win.signAndEditExecutable=false --config.forceCodeSigning=false"
