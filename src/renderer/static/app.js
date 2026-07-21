@@ -3712,22 +3712,18 @@ async function submitMjRegionModal(){
   $('#mjRegionGoBtn') && ($('#mjRegionGoBtn').disabled = true);
   try{
     setMjRegionStatus('第一步：正在提交变化区域入口...');
-    const regionPayload = { action:'inpaint', task_id: sourceTaskId, local_task_id: sourceLocalTaskId, source_task_local_id: sourceLocalTaskId, batch_id: batchId, custom_id: button.custom_id || '', button_label: button.label || 'Vary (Region)', speed };
+    const regionPayload = { action:'inpaint', task_id: sourceTaskId, local_task_id: sourceLocalTaskId, source_task_local_id: sourceLocalTaskId, batch_id: batchId, custom_id: button.custom_id || '', button_label: button.label || 'Vary (Region)', speed, pending_modal_prompt:prompt, pending_modal_mask:maskData, pending_modal_speed:speed };
     if(!regionPayload.custom_id) regionPayload.index = Number(meta.mj_variant_index || 0) || '';
     const first = await submitMjDirect(regionPayload);
     const firstTaskId = first.task_id || '';
     const firstLocalTaskId = first.local_task_id || '';
-    const modalReady = mjTaskHasModalStatus(first.raw || first) ? first : await waitForMjModalReady(firstTaskId, firstLocalTaskId);
-    const modalTaskId = modalReady.task_id || firstTaskId;
-    setMjRegionStatus('第二步：正在提交遮罩图与提示词...');
-    const second = await submitMjDirect({ action:'modal', task_id: modalTaskId, modal_task_id: modalTaskId, local_task_id: firstLocalTaskId, source_task_local_id: firstLocalTaskId || sourceLocalTaskId, batch_id: batchId || first.batch_id || '', modal_prompt: prompt, prompt, speed, modal_speed: speed, modal_mask: maskData });
-    mjState.lastJson = second;
-    if(second.task_id) mjState.lastTaskId = second.task_id;
-    if(second.local_task_id) mjState.lastLocalTaskId = second.local_task_id;
-    if(second.batch_id) mjState.lastBatchId = second.batch_id;
-    updateMjStatus('submitted', 0, second.task_id ? '已提交局部重绘' : '已提交局部重绘', second.batch_name || second.batch_id || '', second.task_id || '');
-    if(second.task_id) startMjPolling(second.task_id, second.local_task_id || '');
-    toast('变化区域任务已提交');
+    mjState.lastJson = first;
+    if(firstTaskId) mjState.lastTaskId = firstTaskId;
+    if(firstLocalTaskId) mjState.lastLocalTaskId = firstLocalTaskId;
+    if(first.batch_id) mjState.lastBatchId = first.batch_id;
+    updateMjStatus('submitted', 5, '已提交局部重绘，主进程将自动续传遮罩', first.batch_name || first.batch_id || '', firstTaskId);
+    if(firstTaskId) startMjPolling(firstTaskId, firstLocalTaskId);
+    toast('变化区域任务已提交，关闭窗口后也会继续处理');
     closeMjRegionModal();
     refreshAll();
   }catch(e){

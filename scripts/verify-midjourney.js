@@ -89,6 +89,15 @@ if (!appJs.includes("label:'遮罩图（必填）'")) fail('MJ Modal mask is not
 if (!mainJs.includes("task.status='等待补充参数'")) fail('MJ MODAL state handling is missing');
 if (!mainJs.includes("if (action === 'modal')") || !mainJs.includes('return { batch:reusableBatch, task:reusableTask, reused:true }')) fail('MJ Modal submission does not reuse the Inpaint task and batch');
 if (!mainJs.includes("if(isModal) batch.status='等待补充参数'")) fail('MJ MODAL batch waiting state is missing');
+if (!mainJs.includes('function startMidjourneyReconciler')) fail('MJ active tasks are not reconciled after an app restart');
+if (!mainJs.includes('function submitPendingMidjourneyModal')) fail('MJ Vary Region pending Modal payload cannot resume in the main process');
+if (!mainJs.includes("'等待补充参数']).has")) fail('MJ reconciler does not track the pending Modal state');
+if (!mainJs.includes("? String(localTask.remote_task_id).trim()")) fail('MJ polling does not follow a replacement task ID returned by Modal submit');
+if (!appJs.includes('pending_modal_mask:maskData')) fail('MJ region editor does not persist its mask before waiting for MODAL');
+const regionSubmitStart = appJs.indexOf('async function submitMjRegionModal');
+const regionSubmitEnd = appJs.indexOf('\nfunction initMjRegionModal', regionSubmitStart);
+if (regionSubmitStart < 0 || regionSubmitEnd < 0) fail('MJ region submit flow cannot be inspected');
+if (appJs.slice(regionSubmitStart, regionSubmitEnd).includes('await waitForMjModalReady')) fail('MJ region editor still owns the restart-fragile MODAL wait loop');
 if (!mainJs.includes('hasVideoUrls && (isVideoAction || !hasImageUrls)')) fail('MJ non-video actions do not prefer image results over ambiguous video URLs');
 if (!mainJs.includes('if (changed) getDB()._save()')) fail('MJ completed-image repair is not persisted');
 if (!mainJs.includes('const gridUrl = reportedGridUrl')) fail('MJ explicit grid_image_url is not preserved as the grid image');

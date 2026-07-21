@@ -22,6 +22,9 @@ let activeOpenAppShortcut = '';
 let isAppQuitting = false;
 let tray = null;
 let lastMidjourneyImageRepairAt = 0;
+let midjourneyReconcileTimer = null;
+let midjourneyReconcileRunning = false;
+const midjourneyModalSubmitLocks = new Set();
 let tunnelProcess = null;
 let tunnelState = { running: false, provider: '', url: '', logs: [], last_error: '' };
 const staticDir = path.join(__dirname, 'renderer');
@@ -31,6 +34,7 @@ const MEDIA_BODY_LIMIT_BYTES = Number(process.env.LAIG_MEDIA_BODY_LIMIT_MB || 15
 const STATUS_CACHE_TTL_MS = 1800;
 const HOST_STATS_CACHE_TTL_MS = 8000;
 const STALE_CLEANUP_TTL_MS = 15000;
+const MIDJOURNEY_RECONCILE_INTERVAL_MS = 10000;
 const BASE_SECURITY_HEADERS = {
   'X-Content-Type-Options': 'nosniff',
   'Referrer-Policy': 'no-referrer'
@@ -6583,6 +6587,17 @@ async function submitMidjourneyAction(body={}, owner='local') {
       if (uploadedRef[0]) body[ref.field] = uploadedRef[0];
     }
   }
+  let pendingModal = null;
+  if (action === 'inpaint' && (body.pending_modal_mask || body.pending_modal_mask_url)) {
+    const maskUrl = String(body.pending_modal_mask_url || '').trim() ||
+      (await uploadMidjourneyItemsToUrls([body.pending_modal_mask], owner, apiKey))[0] || '';
+    if (!maskUrl) throw new Error('变化区域任务的遮罩图上传失败，请重试');
+    pendingModal = {
+      prompt:String(body.pending_modal_prompt || '').trim(),
+      mask_url:maskUrl,
+      speed:String(body.pending_modal_speed || body.speed || 'relax').trim() || 'relax'
+    };
+  }
   const endpointMap={ imagine:'/midjourney/generations', blend:'/midjourney/generations/blend', describe:'/midjourney/generations/describe', edits:'/midjourney/generations/edits', upscale:'/midjourney/generations/upscale', variation:'/midjourney/generations/variation', high_variation:'/midjourney/generations/high-variation', low_variation:'/midjourney/generations/low-variation', reroll:'/midjourney/generations/reroll', zoom:'/midjourney/generations/zoom', pan:'/midjourney/generations/pan', inpaint:'/midjourney/generations/inpaint', modal:'/midjourney/generations/modal', video:'/midjourney/generations/video' };
   let endpoint=endpointMap[action]; if(action==='remix') endpoint=`/midjourney/generations/remix-${String(body.remix_strength||'strong').trim().toLowerCase()==='subtle'?'subtle':'strong'}`; if(!endpoint) throw new Error('不支持的 Midjourney 操作：'+action);
   const prompt=buildMidjourneyPrompt(body); const speed=String(body.speed || body.modal_speed || '').trim(); const index=Number(body.index || body.image_no || body.image_index || 0); const customId=String(body.custom_id || '').trim(); const structured=buildMidjourneyStructuredFields(body); let payload={}; let describePreviewItem=null;
@@ -6616,18 +6631,131 @@ async function submitMidjourneyAction(body={}, owner='local') {
   if(body.metadata && typeof body.metadata === 'object' && !Array.isArray(body.metadata)) payload.metadata=body.metadata;
   const ctx=ensureMjBatchAndTask(body, owner); const batch=ctx.batch, task=ctx.task;
   if(describePreviewItem) saveMidjourneyInputPreview(task, describePreviewItem, 'describe_input');
+  if (pendingModal) {
+    task.mj_pending_modal_json = JSON.stringify(pendingModal);
+    task.mj_pending_modal_state = 'waiting_modal';
+    task.mj_pending_modal_attempts = 0;
+    task.mj_pending_modal_last_error = '';
+    task.mj_pending_modal_next_retry_at = 0;
+    getDB()._save();
+  }
   payload=sanitizeMjPayload(payload); addLog(`Midjourney ${action} 提交：${compactJsonForLog(payload,1200)}`);
-  try { const raw=await postJsonApimart(endpoint, apiKey, payload, 180000); const remoteTaskId=pickTaskIdFromApimart(raw) || (action==='modal' ? String(body.modal_task_id || body.task_id || '').trim() : ''); if(!remoteTaskId) throw new Error('APIMart Midjourney 提交成功但未返回 task_id'); Object.assign(task,{ remote_task_id:remoteTaskId, status:'生成中', progress:5, progress_text:'已提交，等待 Midjourney 查询结果', updated_at:nowISO(), mj_action:action, mj_submission_json:JSON.stringify(payload) }); batch.status='生成中'; batch.updated_at=nowISO(); if(body.source_task_local_id && (body.button_label || body.custom_id)) markMjButtonExecuted(String(body.source_task_local_id||''), {label:body.button_label||'', custom_id:body.custom_id||''}); getDB()._save(); return { ok:true, action, endpoint:`/v1${endpoint}`, task_id:remoteTaskId, local_task_id:task.id, batch_id:batch.id, batch_name:batch.note||batch.name||'', submitted_payload:payload, raw }; }
+  try { const raw=await postJsonApimart(endpoint, apiKey, payload, 180000); const remoteTaskId=pickTaskIdFromApimart(raw) || (action==='modal' ? String(body.modal_task_id || body.task_id || '').trim() : ''); if(!remoteTaskId) throw new Error('APIMart Midjourney 提交成功但未返回 task_id'); Object.assign(task,{ remote_task_id:remoteTaskId, status:'生成中', progress:5, progress_text:'已提交，等待 Midjourney 查询结果', updated_at:nowISO(), mj_action:action, mj_submission_json:JSON.stringify(payload) }); if(action==='modal'){ task.mj_pending_modal_json=''; task.mj_pending_modal_state='submitted'; task.mj_pending_modal_last_error=''; } batch.status='生成中'; batch.updated_at=nowISO(); if(body.source_task_local_id && (body.button_label || body.custom_id)) markMjButtonExecuted(String(body.source_task_local_id||''), {label:body.button_label||'', custom_id:body.custom_id||''}); getDB()._save(); return { ok:true, action, endpoint:`/v1${endpoint}`, task_id:remoteTaskId, local_task_id:task.id, batch_id:batch.id, batch_name:batch.note||batch.name||'', submitted_payload:payload, raw }; }
   catch(e){ Object.assign(task,{status:'失败', progress:100, progress_text:'提交失败', error_message:e.message||String(e), updated_at:nowISO(), finished_at:nowISO()}); batch.running_count=Math.max(0,Number(batch.running_count||0)-1); batch.fail_count=Number(batch.fail_count||0)+1; batch.updated_at=nowISO(); getDB()._save(); throw e; }
+}
+async function submitPendingMidjourneyModal(task, apiKey='') {
+  if (!task || !task.id || midjourneyModalSubmitLocks.has(task.id)) return { submitted:false, in_progress:true };
+  const pending = safeJsonParse(task.mj_pending_modal_json || '', null);
+  if (!pending || !pending.mask_url || task.mj_pending_modal_state === 'submitted') return { submitted:false };
+  const nextRetryAt = Number(task.mj_pending_modal_next_retry_at || 0);
+  if (nextRetryAt && Date.now() < nextRetryAt) return { submitted:false, waiting_retry:true };
+  const remoteTaskId = String(task.remote_task_id || '').trim();
+  if (!remoteTaskId) return { submitted:false };
+  midjourneyModalSubmitLocks.add(task.id);
+  const attempts = Number(task.mj_pending_modal_attempts || 0) + 1;
+  task.mj_pending_modal_state = 'submitting';
+  task.mj_pending_modal_attempts = attempts;
+  task.progress_text = '已进入区域重绘，正在自动提交遮罩与提示词';
+  task.updated_at = nowISO();
+  getDB()._save();
+  try {
+    const payload = sanitizeMjPayload({
+      task_id:remoteTaskId,
+      prompt:String(pending.prompt || '').trim(),
+      mask_url:String(pending.mask_url || '').trim(),
+      speed:String(pending.speed || 'relax').trim() || 'relax'
+    });
+    const raw = await postJsonApimart('/midjourney/generations/modal', apiKey, payload, 180000);
+    const nextRemoteTaskId = pickTaskIdFromApimart(raw) || remoteTaskId;
+    Object.assign(task, {
+      remote_task_id:nextRemoteTaskId,
+      status:'生成中',
+      progress:5,
+      progress_text:'遮罩与提示词已自动提交，等待局部重绘结果',
+      error_message:'',
+      finished_at:'',
+      updated_at:nowISO(),
+      mj_action:'modal',
+      mj_submission_json:JSON.stringify(payload),
+      mj_pending_modal_json:'',
+      mj_pending_modal_state:'submitted',
+      mj_pending_modal_last_error:'',
+      mj_pending_modal_next_retry_at:0
+    });
+    const batch = getDB()._store.batches.find(b => b.id === task.batch_id);
+    if (batch) { batch.status='生成中'; batch.updated_at=nowISO(); }
+    getDB()._save();
+    addLog(`Midjourney 区域重绘遮罩已自动续传：${nextRemoteTaskId}`, { ownerId:task.owner_id, batchId:task.batch_id });
+    return { submitted:true, task_id:nextRemoteTaskId, raw };
+  } catch (error) {
+    const message = error && error.message ? error.message : String(error);
+    task.mj_pending_modal_state = 'waiting_modal';
+    task.mj_pending_modal_last_error = message;
+    task.mj_pending_modal_next_retry_at = Date.now() + Math.min(60000, attempts * 10000);
+    task.status = '等待补充参数';
+    task.progress = Math.max(50, Number(task.progress || 0));
+    task.progress_text = `遮罩参数自动提交失败，稍后重试：${message}`;
+    task.updated_at = nowISO();
+    getDB()._save();
+    addLog(`Midjourney 区域重绘遮罩自动续传失败：${message}`, { level:'warn', ownerId:task.owner_id, batchId:task.batch_id });
+    return { submitted:false, error:message };
+  } finally {
+    midjourneyModalSubmitLocks.delete(task.id);
+  }
 }
 async function queryMidjourneyTask(body={}) {
   const cfg=readConfig(); const apiKey=String(body.api_key || cfg.api_key || cfg.apiKey || '').trim(); if(!apiKey) throw new Error('请先填写 APIMart API Key');
-  const taskId=String(body.task_id || '').trim(); if(!taskId) throw new Error('task_id 不能为空');
-  const localTask=resolveMidjourneyLocalTask(body) || getDB()._store.tasks.find(t=>t.remote_task_id===taskId) || null;
+  const requestedTaskId=String(body.task_id || '').trim(); if(!requestedTaskId) throw new Error('task_id 不能为空');
+  const localTask=resolveMidjourneyLocalTask(body) || getDB()._store.tasks.find(t=>t.remote_task_id===requestedTaskId) || null;
+  const taskId=localTask && String(body.local_task_id || '').trim() && String(localTask.remote_task_id || '').trim()
+    ? String(localTask.remote_task_id).trim()
+    : requestedTaskId;
   const raw = await queryMidjourneyTaskRaw(taskId, apiKey, 180000);
   const ret=normalizeMidjourneyTaskResult(taskId, raw, localTask);
-  if(localTask){ await syncMidjourneyTaskState(localTask, ret); return normalizeMidjourneyTaskResult(taskId, raw, localTask); }
+  if(localTask){
+    await syncMidjourneyTaskState(localTask, ret);
+    const synced = normalizeMidjourneyTaskResult(taskId, raw, localTask);
+    if (/modal/i.test(String(synced.status || '')) && localTask.mj_pending_modal_json) {
+      const continued = await submitPendingMidjourneyModal(localTask, apiKey);
+      if (continued.submitted) return { ...synced, task_id:continued.task_id || taskId, status:'submitted', progress:5, modal_submitted:true };
+    }
+    return synced;
+  }
   return ret;
+}
+
+function isActiveMidjourneyTask(task) {
+  if (!task || task.mj_source !== 'midjourney' || !String(task.remote_task_id || '').trim()) return false;
+  return new Set(['等待中','提交生成中','生成中','下载中','等待补充参数']).has(String(task.status || ''));
+}
+async function reconcileActiveMidjourneyTasks() {
+  if (midjourneyReconcileRunning) return;
+  const cfg = readConfig();
+  const apiKey = String(cfg.api_key || cfg.apiKey || '').trim();
+  if (!apiKey) return;
+  const active = (getDB()._store.tasks || []).filter(isActiveMidjourneyTask);
+  if (!active.length) return;
+  midjourneyReconcileRunning = true;
+  try {
+    await Promise.allSettled(active.map(task => queryMidjourneyTask({
+      task_id:task.remote_task_id,
+      local_task_id:task.id,
+      api_key:apiKey
+    })));
+  } finally {
+    midjourneyReconcileRunning = false;
+  }
+}
+function startMidjourneyReconciler() {
+  if (midjourneyReconcileTimer) return;
+  const firstRun = setTimeout(() => reconcileActiveMidjourneyTasks().catch(()=>{}), 2500);
+  if (typeof firstRun.unref === 'function') firstRun.unref();
+  midjourneyReconcileTimer = setInterval(() => reconcileActiveMidjourneyTasks().catch(()=>{}), MIDJOURNEY_RECONCILE_INTERVAL_MS);
+  if (typeof midjourneyReconcileTimer.unref === 'function') midjourneyReconcileTimer.unref();
+}
+function stopMidjourneyReconciler() {
+  if (midjourneyReconcileTimer) clearInterval(midjourneyReconcileTimer);
+  midjourneyReconcileTimer = null;
 }
 
 function findMjUpscaleChild(parentLocalId='', index=0, owner='') {
@@ -7350,6 +7478,7 @@ app.whenReady().then(() => {
   startNetworkTimeSync();
   queue = new TaskQueue();
   queue.recoverInterruptedBatches();
+  startMidjourneyReconciler();
   if (!SERVER_ONLY) {
     createWindow();
     createTray();
@@ -7375,5 +7504,5 @@ app.on('activate', () => {
   if (!mainWindow || mainWindow.isDestroyed()) createWindow();
   bringMainWindowToFront();
 });
-app.on('before-quit', () => { isAppQuitting = true; try { if (queue && typeof queue.clearAllRunning === 'function') queue.clearAllRunning(); } catch {} try { const db = getDB(); if (db && typeof db._flushSync === 'function') db._flushSync(); } catch {} try { mirrorRuntimeDataToOutputDir(); } catch {} try { stopTunnelProcess({ preserveConfig:true }); } catch {} try { if (server) server.close(); } catch {} });
+app.on('before-quit', () => { isAppQuitting = true; try { stopMidjourneyReconciler(); } catch {} try { if (queue && typeof queue.clearAllRunning === 'function') queue.clearAllRunning(); } catch {} try { const db = getDB(); if (db && typeof db._flushSync === 'function') db._flushSync(); } catch {} try { mirrorRuntimeDataToOutputDir(); } catch {} try { stopTunnelProcess({ preserveConfig:true }); } catch {} try { if (server) server.close(); } catch {} });
 app.on('will-quit', () => { try { globalShortcut.unregisterAll(); } catch {} activeOpenAppShortcut = ''; try { if (tray && !tray.isDestroyed()) tray.destroy(); } catch {} tray = null; });
