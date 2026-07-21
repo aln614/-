@@ -154,6 +154,18 @@ if (!mainJs.includes('texts = normalizeDescribePromptTexts(texts.length ? texts 
 if (!mainJs.includes('if (isReferencedServedFile(resolved, cfg)) return resolved;')) fail('Describe source images referenced by task rows are blocked by the media route');
 if (!mainJs.includes('thumb_url: localThumb || localFull || remoteSource')) fail('Describe recent-history thumbnails do not fall back to a valid local/remote source');
 if (!appJs.includes('function bindDescribeImageFallback')) fail('Describe cards do not retry the full image when a thumbnail fails');
+const setPageStart = appJs.indexOf('function setPage(name)');
+const setPageEnd = appJs.indexOf("$$('.nav[data-page]')", setPageStart);
+if (setPageStart < 0 || setPageEnd < 0) fail('page navigation handler cannot be inspected');
+const setPageBlock = appJs.slice(setPageStart, setPageEnd);
+if (!setPageBlock.includes("name === 'midjourney' && previousPage !== 'page-midjourney'")) fail('Midjourney sidebar entry does not reset to Imagine');
+if (!setPageBlock.includes("mjState.tab = 'imagine'")) fail('Midjourney sidebar entry can still reopen the last Describe tab');
+if (!setPageBlock.includes("if(name === 'midjourney') renderMidjourneyTab()")) fail('Midjourney Imagine form is not rendered after resetting the entry tab');
+if (/if\s*\(c\.mj_tab\)\s*mjState\.tab\s*=\s*c\.mj_tab/.test(appJs)) fail('startup still restores the last Midjourney tab');
+if (!appJs.includes("name:'prompt', label:'提示词'")) fail('Midjourney Imagine prompt field is missing');
+if (!appJs.includes("const MJ_NON_PERSISTED_IMAGINE_FIELDS = new Set(['prompt', 'hd'])")) fail('Imagine prompt and HD settings can still persist between entries');
+if (!appJs.includes("mjState?.tab === 'imagine' && MJ_NON_PERSISTED_IMAGINE_FIELDS.has(name)")) fail('Imagine transient fields are still written to local settings');
+if (!appJs.includes("mjState.tab === 'imagine' && MJ_NON_PERSISTED_IMAGINE_FIELDS.has(name)")) fail('legacy Imagine prompt and HD settings are still restored');
 if (/action==='reroll' && prompt/.test(mainJs)) fail('Reroll must not submit an unsupported prompt field');
 if (!mainJs.includes('const nestedError = json && json.error')) fail('Nested APIMart error response validation is missing');
 

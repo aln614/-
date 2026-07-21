@@ -740,11 +740,13 @@ function readClientSettings(){
     return removeInvalidStoredApiKey(cfg, CURRENT_SETTINGS_KEY);
   }catch(e){ return {}; }
 }
+const MJ_NON_PERSISTED_IMAGINE_FIELDS = new Set(['prompt', 'hd']);
 function collectMjCurrentSettings(){
   const fields = {};
   document.querySelectorAll('#mjFormContainer [data-mj-field]').forEach(el=>{
     const name = el.dataset.mjField;
     if(!name || el.type === 'file') return;
+    if(mjState?.tab === 'imagine' && MJ_NON_PERSISTED_IMAGINE_FIELDS.has(name)) return;
     fields[name] = el.type === 'checkbox' ? !!el.checked : (el.value || '');
   });
   return { tab: mjState?.tab || 'imagine', fields };
@@ -1708,6 +1710,11 @@ function applyPermissionUI(){
 }
 
 function setPage(name){
+  const previousPage = document.querySelector('.page.active')?.id || '';
+  if(name === 'midjourney' && previousPage !== 'page-midjourney'){
+    // Midjourney always opens on Imagine; each tab's saved form values remain intact.
+    mjState.tab = 'imagine';
+  }
   $$('.nav').forEach(n => n.classList.toggle('active', n.dataset.page === name));
   $$('.page').forEach(p => p.classList.toggle('active', p.id === 'page-' + name));
   repairMobileBottomNav();
@@ -1722,6 +1729,7 @@ function setPage(name){
   if(name === 'tools') syncToolConfigFromHome();
   if(name === 'chat') { syncChatConfigFromHome(); renderChat(); setPanelCollapsed(true); }
   if(name === 'public') refreshPublicStatus();
+  if(name === 'midjourney') renderMidjourneyTab();
 }
 
 $$('.nav[data-page]').forEach(btn => btn.addEventListener('click', () => setPage(btn.dataset.page === 'batches' ? 'history' : btn.dataset.page)));
@@ -1776,7 +1784,8 @@ async function loadConfig(){
   isLocalClient = c.is_local_client !== false;
   isPublicClient = c.is_public_client === true;
   c = mergeClientSettings(c);
-  if(c.mj_tab) mjState.tab = c.mj_tab;
+  // The Midjourney entry page is always Imagine, regardless of the tab used last time.
+  mjState.tab = 'imagine';
   // 局域网访问端使用自己的本地 API Key 配置，不覆盖服务端全局设置。
   if(!isLocalClient){
     const localDeviceCfg = loadClientConfig();
@@ -7392,6 +7401,7 @@ function applyMjSavedFormSettings(){
   const legacyNiji = String(fields.version || '').trim().match(/^niji\s*([67])$/i);
   const nijiEl = document.querySelector('#mjFormContainer [data-mj-field="niji"]');
   Object.entries(fields).forEach(([name, value])=>{
+    if(mjState.tab === 'imagine' && MJ_NON_PERSISTED_IMAGINE_FIELDS.has(name)) return;
     const el = document.querySelector(`#mjFormContainer [data-mj-field="${CSS.escape(name)}"]`);
     if(!el || el.type === 'file') return;
     if(el.type === 'checkbox') el.checked = !!value;
