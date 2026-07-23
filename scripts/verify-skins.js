@@ -10,6 +10,7 @@ const assert = (condition, message) => {
 const skinIds = ['starlight', 'cloud', 'sakura', 'academy', 'hangar', 'classic'];
 const assets = [
   'anime-assistant-atlas.png',
+  'mascot-cloud-atlas.png',
   'mascot-sakura-atlas.png',
   'mascot-academy-atlas.png',
   'mascot-hangar-atlas.png',
@@ -42,5 +43,6 @@ assert(html.includes('id="themeSkinGrid"'), 'Missing skin selector');
 assert(html.includes('id="themeMascotEnabled"'), 'Missing mascot switch');
 assert(css.includes('*::-webkit-scrollbar{width:4px!important;height:4px!important'), 'Missing global slim scrollbar rule');
 assert(css.includes('*::-webkit-scrollbar-button{display:none!important'), 'Scrollbar buttons must remain hidden');
+assert(css.includes("--skin-atlas:url('/static/assets/skins/mascot-cloud-atlas.png')"), 'Cloud skin must use its own mascot atlas');
 
 console.log('Skin system verification passed.');
