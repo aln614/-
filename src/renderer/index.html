@@ -9,9 +9,12 @@
 <body>
   <div class="app-shell">
     <header class="topbar glass">
-      <div>
-        <div class="brand" id="appBrand">TENYING_AI 1.0</div>
-        <div class="subtitle" id="appSubtitle">APIMart 批量生成工具 · 多批次 · 图片/视频 · AI聊天</div>
+      <div class="skin-brand-shell">
+        <div class="skin-mascot-avatar" id="skinMascotAvatar" aria-label="当前皮肤助手"></div>
+        <div>
+          <div class="brand" id="appBrand">TENYING_AI 1.0</div>
+          <div class="subtitle" id="appSubtitle">APIMart 批量生成工具 · 多批次 · 图片/视频 · AI聊天</div>
+        </div>
       </div>
       <div class="top-status">
         <button class="pill prompt-library-pill" id="promptLibraryBtn" title="打开提示词库">提示词库</button>
@@ -39,15 +42,30 @@
       </div>
       <div class="nav-bottom">
         <button class="nav" id="shortcutSettingsBtn" title="快捷键"><span class="nav-icon shortcut-nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="18" height="12" rx="3"></rect><path d="M7 10h.01M11 10h.01M15 10h.01M18 10h.01M7 14h7M17 14h1"></path></svg></span><span class="nav-label">快捷键</span></button>
-        <button class="nav nav-theme" id="themeCycleBtn" title="切换布局主题"><span class="nav-icon icon-theme"></span><span class="nav-label" id="themeCycleLabel">深色模式</span></button>
+        <button class="nav nav-theme" id="themeCycleBtn" title="外观与皮肤"><span class="nav-icon icon-theme"></span><span class="nav-label" id="themeCycleLabel">外观与皮肤</span></button>
         <button class="nav" data-page="settings" title="设置中心"><span class="nav-icon icon-settings"></span><span class="nav-label">设置中心</span></button>
       </div>
     </aside>
 
-    <div class="theme-popover glass" id="themePopover">
-      <button data-theme="light">☀️ 日间模式</button>
-      <button data-theme="dark">🌙 深色模式</button>
-      <button data-theme="auto">⏱ 自动模式</button>
+    <div class="theme-popover theme-skin-panel glass" id="themePopover" role="dialog" aria-label="外观与皮肤">
+      <div class="theme-panel-head">
+        <div><strong>外观与皮肤</strong><span id="themePanelCurrent">经典毛玻璃 · 自动主题</span></div>
+        <button class="theme-panel-close" id="themePanelCloseBtn" type="button" title="关闭" aria-label="关闭外观与皮肤"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></button>
+      </div>
+      <div class="theme-mode-segment" aria-label="显示模式">
+        <button data-theme="light" type="button">日间</button>
+        <button data-theme="dark" type="button">深色</button>
+        <button data-theme="auto" type="button">自动</button>
+      </div>
+      <div class="theme-skin-grid" id="themeSkinGrid">
+        <button class="theme-skin-card" data-skin="starlight" type="button"><img src="/static/assets/skins/skin-starlight.png" alt="星穹 AI 助手皮肤预览" /><span><b>星穹 AI 助手</b><small>冰蓝轻科幻</small></span><i aria-hidden="true"><em style="--swatch:#3489ff"></em><em style="--swatch:#35d4d0"></em><em style="--swatch:#846cff"></em></i></button>
+        <button class="theme-skin-card" data-skin="cloud" type="button"><img src="/static/assets/skins/skin-cloud.png" alt="云海终端皮肤预览" /><span><b>云海终端</b><small>晴空轻盈</small></span><i aria-hidden="true"><em style="--swatch:#4da7ff"></em><em style="--swatch:#74ded1"></em><em style="--swatch:#ff8c7e"></em></i></button>
+        <button class="theme-skin-card" data-skin="sakura" type="button"><img src="/static/assets/skins/skin-sakura.png" alt="樱雪画室皮肤预览" /><span><b>樱雪画室</b><small>日系创作</small></span><i aria-hidden="true"><em style="--swatch:#f078a7"></em><em style="--swatch:#89b8f8"></em><em style="--swatch:#343b4b"></em></i></button>
+        <button class="theme-skin-card" data-skin="academy" type="button"><img src="/static/assets/skins/skin-academy.png" alt="银河学院皮肤预览" /><span><b>银河学院</b><small>天文研究院</small></span><i aria-hidden="true"><em style="--swatch:#18243a"></em><em style="--swatch:#d6bd83"></em><em style="--swatch:#3baed8"></em></i></button>
+        <button class="theme-skin-card" data-skin="hangar" type="button"><img src="/static/assets/skins/skin-hangar.png" alt="极光机库皮肤预览" /><span><b>极光机库</b><small>机甲研发部</small></span><i aria-hidden="true"><em style="--swatch:#27333b"></em><em style="--swatch:#38c7c9"></em><em style="--swatch:#9cdb72"></em></i></button>
+        <button class="theme-skin-card" data-skin="classic" type="button"><img src="/static/assets/skins/skin-classic.png" alt="经典毛玻璃皮肤预览" /><span><b>经典毛玻璃</b><small>原版风格</small></span><i aria-hidden="true"><em style="--swatch:#ffffff"></em><em style="--swatch:#24c7c8"></em><em style="--swatch:#64748b"></em></i></button>
+      </div>
+      <label class="theme-mascot-toggle"><span><b>动漫助手</b><small>显示角色头像和任务状态助手</small></span><input id="themeMascotEnabled" type="checkbox" checked /><i aria-hidden="true"></i></label>
     </div>
 
     <div class="shortcut-settings-layer" id="shortcutSettingsLayer" aria-hidden="true">
@@ -517,7 +535,8 @@
         <div class="section-head"><div><h1>设置中心</h1><p>默认输出目录、缓存、轮询间隔、主题偏好。自动主题按 24 小时制切换。</p></div></div>
         <div class="card">
           <div class="row"><div><label>API 地址</label><select id="apiEndpoint"><option value="https://api.apimart.ai">https://api.apimart.ai（APIMart）</option><option value="http://127.0.0.1:38000">http://127.0.0.1:38000（本地 Flow2API）</option></select></div><div><label>软件名称</label><input id="appName" placeholder="例如：TENYING_AI 1.0" /></div></div>
-          <div class="row"><div><label>布局主题</label><select id="themeMode"><option value="light">日间模式</option><option value="dark">深色模式</option><option value="auto">自动（按时间）</option></select></div><div class="setting-note-box">API 地址已移动到本机设置中心，首页只保留 API Key 和生成参数。</div></div>
+          <div class="row"><div><label>显示模式</label><select id="themeMode"><option value="light">日间模式</option><option value="dark">深色模式</option><option value="auto">自动（按时间）</option></select></div><div><label>界面皮肤</label><select id="skinIdSettings"><option value="starlight">星穹 AI 助手</option><option value="cloud">云海终端</option><option value="sakura">樱雪画室</option><option value="academy">银河学院</option><option value="hangar">极光机库</option><option value="classic">经典毛玻璃</option></select></div></div>
+          <div class="row"><div><label>动漫助手</label><label class="switch-line"><input id="mascotEnabledSettings" type="checkbox" checked /> 显示皮肤角色与任务状态助手</label></div><div class="setting-note-box">API 地址已移动到本机设置中心，首页只保留 API Key 和生成参数。</div></div>
           <div class="row"><div><label>输出目录</label><input id="outputDir" /></div><div><label>默认清晰度</label><select id="claritySettings"><option value="1K">1K 标准清晰</option><option value="2K">2K 高清</option><option value="4K">4K 超清</option></select></div></div>
           <div class="row"><div><label>日志保留天数</label><input id="logKeepDays" type="number" value="3" /></div><div><label>轮询间隔 ms</label><input id="pollInterval" type="number" value="800" /></div></div><div class="row"><div><label>APIMart 代理地址（可选）</label><input id="apimartProxyUrl" placeholder="例如：http://127.0.0.1:7890；不使用代理请留空" /></div><div class="setting-note-box">如果日志出现 ETIMEDOUT / Connection timed out，说明当前网络无法直连 api.apimart.ai，可在这里填系统代理地址。</div></div>
           <div class="row"><div><label>单任务累计多少秒算超时</label><input id="timeoutSeconds" type="number" value="1200" /><div class="field-help">从单个任务创建开始累计计时，包含提交 API、等待远端生成、轮询查询和下载保存。图片生成已恢复 V9.8 模式，不再使用单次网络请求 30000ms 强制中断。</div></div><div><label>后台运行</label><label class="switch-line"><input id="backgroundKeepalive" type="checkbox" checked /> 允许后台持续运行，不掉线</label><div class="field-help">开启后会保持页面心跳，并尽量防止浏览器休眠；任务本身会在本地程序后台继续跑。</div></div></div>

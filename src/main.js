@@ -519,6 +519,8 @@ const DEFAULT_CONFIG = {
   image_n: 1,
   mask_url: '',
   theme_mode: 'auto',
+  skin_id: 'classic',
+  mascot_enabled: true,
   concurrency: 30,
   retry_times: 2,
   repeat_count: 1,
@@ -774,6 +776,10 @@ function readConfig() {
     const shortcutConfig = validateShortcutConfiguration(migrated);
     migrated.shortcuts_enabled = shortcutConfig.shortcuts_enabled;
     migrated.shortcut_settings = shortcutConfig.shortcut_settings;
+    migrated.skin_id = ['starlight','cloud','sakura','academy','hangar','classic'].includes(String(migrated.skin_id || '').toLowerCase())
+      ? String(migrated.skin_id).toLowerCase()
+      : 'classic';
+    migrated.mascot_enabled = migrated.mascot_enabled !== false;
     delete migrated.repaired;
     if (SERVER_ONLY) {
       if (!String(migrated.output_dir || '').trim()) migrated.output_dir = process.env.LAIG_OUTPUT_DIR || '/data/output';
@@ -817,6 +823,10 @@ function saveConfig(partial) {
   next.shortcut_settings = shortcutConfig.shortcut_settings;
   delete next.repaired;
   next.announcement_custom_enabled = next.announcement_custom_enabled === true;
+  next.skin_id = ['starlight','cloud','sakura','academy','hangar','classic'].includes(String(next.skin_id || '').toLowerCase())
+    ? String(next.skin_id).toLowerCase()
+    : 'classic';
+  next.mascot_enabled = next.mascot_enabled !== false;
   if (!next.port) next.port = 7860;
   fs.writeFileSync(configPath, JSON.stringify(next, null, 2), 'utf8');
   try { mirrorRuntimeDataToOutputDir(next, { configOnly: true }); } catch {}
@@ -990,6 +1000,8 @@ function toCamelConfig(cfg) {
     repeatCount: Number(cfg.repeat_count || 1),
     outputDir: cfg.output_dir || '',
     theme: cfg.theme_mode || 'auto',
+    skinId: cfg.skin_id || 'classic',
+    mascotEnabled: cfg.mascot_enabled !== false,
     keepAlive: cfg.background_keepalive !== false,
     pollIntervalMs: Number(cfg.poll_interval_ms || 1200),
     timeoutMs: Number(cfg.timeout_seconds || 1200) * 1000,

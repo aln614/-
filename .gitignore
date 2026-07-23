@@ -1,5 +1,6 @@
 node_modules/
 dist/
+release-build-*/
 .electron_builder_cache/
 build_log.txt
 last_error.txt

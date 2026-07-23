@@ -753,7 +753,7 @@ function collectMjCurrentSettings(){
 }
 function saveCurrentClientSettings(cfg = {}){
   const existing = readClientSettings();
-  const allowed = ['image_api_platform','api_endpoint','legacy_api_endpoint','api_key','model','size','clarity','quality','background','moderation','output_format','output_compression','image_n','theme_mode','concurrency','retry_times','repeat_count','poll_interval_ms','timeout_seconds','background_keepalive','prompt_multiline_tasks'];
+  const allowed = ['image_api_platform','api_endpoint','legacy_api_endpoint','api_key','model','size','clarity','quality','background','moderation','output_format','output_compression','image_n','theme_mode','skin_id','mascot_enabled','concurrency','retry_times','repeat_count','poll_interval_ms','timeout_seconds','background_keepalive','prompt_multiline_tasks'];
   const next = { ...existing };
   allowed.forEach(k=>{
     if(typeof cfg[k] === 'undefined') return;
@@ -784,7 +784,7 @@ function saveClientConfig(cfg){
   const safeCfg = sanitizePlatformEndpoint(cfg || {}, p);
   if(safeCfg.api_key && looksLikeApiUrl(safeCfg.api_key)) delete safeCfg.api_key;
   localStorage.setItem(IMAGE_PLATFORM_ACTIVE_KEY, p);
-  const allowed = ['image_api_platform','api_endpoint','legacy_api_endpoint','api_key','model','size','clarity','quality','background','moderation','output_format','output_compression','image_n','mask_url','theme_mode','concurrency','retry_times','repeat_count','poll_interval_ms','timeout_seconds','background_keepalive','prompt_multiline_tasks'];
+  const allowed = ['image_api_platform','api_endpoint','legacy_api_endpoint','api_key','model','size','clarity','quality','background','moderation','output_format','output_compression','image_n','mask_url','theme_mode','skin_id','mascot_enabled','concurrency','retry_times','repeat_count','poll_interval_ms','timeout_seconds','background_keepalive','prompt_multiline_tasks'];
   const cleaned = { image_api_platform:p };
   allowed.forEach(k => { if(typeof safeCfg[k] !== 'undefined') cleaned[k] = safeCfg[k]; });
   localStorage.setItem(platformConfigKey(p), JSON.stringify(cleaned));
@@ -925,6 +925,51 @@ function updateAppTitle(name){
   document.title = appName;
 }
 
+const SKIN_IDS = ['starlight','cloud','sakura','academy','hangar','classic'];
+const SKIN_NAMES = {
+  starlight:'星穹 AI 助手', cloud:'云海终端', sakura:'樱雪画室',
+  academy:'银河学院', hangar:'极光机库', classic:'经典毛玻璃'
+};
+function normalizeSkinId(value){
+  return SKIN_IDS.includes(String(value || '').toLowerCase()) ? String(value).toLowerCase() : 'classic';
+}
+function updateAppearanceSummary(){
+  const skin = normalizeSkinId(document.body.dataset.skin || 'classic');
+  const mode = document.body.dataset.themeMode || 'auto';
+  const modeName = {light:'日间模式',dark:'深色模式',auto:'自动主题'}[mode] || '自动主题';
+  if($('#themePanelCurrent')) $('#themePanelCurrent').textContent = `${SKIN_NAMES[skin]} · ${modeName}`;
+  $$('#themeSkinGrid [data-skin]').forEach(btn=>btn.classList.toggle('active', normalizeSkinId(btn.dataset.skin) === skin));
+  $$('#themePopover [data-theme]').forEach(btn=>btn.classList.toggle('active', btn.dataset.theme === mode));
+}
+function applySkinSettings(skinId, mascotEnabled=true){
+  const skin = normalizeSkinId(skinId);
+  const mascot = mascotEnabled !== false;
+  document.body.dataset.skin = skin;
+  document.body.dataset.mascotEnabled = mascot ? 'true' : 'false';
+  if($('#skinIdSettings')) $('#skinIdSettings').value = skin;
+  if($('#mascotEnabledSettings')) $('#mascotEnabledSettings').checked = mascot;
+  if($('#themeMascotEnabled')) $('#themeMascotEnabled').checked = mascot;
+  updateAppearanceSummary();
+}
+let appearanceSaveTimer = null;
+function persistAppearanceSettings(){
+  const payload = {
+    theme_mode: document.body.dataset.themeMode || 'auto',
+    skin_id: normalizeSkinId(document.body.dataset.skin || 'classic'),
+    mascot_enabled: document.body.dataset.mascotEnabled !== 'false'
+  };
+  saveCurrentClientSettings(payload);
+  clearTimeout(appearanceSaveTimer);
+  appearanceSaveTimer = setTimeout(()=>{
+    if(!isLocalClient) return;
+    api('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).catch(()=>{});
+  }, 220);
+}
+function setSkinAndSave(next){
+  applySkinSettings(next, document.body.dataset.mascotEnabled !== 'false');
+  persistAppearanceSettings();
+}
+
 function timeBasedTheme(){
   const hour = new Date().getHours();
   // 24小时制：07:00-18:59 为日间，19:00-06:59 为深色。
@@ -940,17 +985,17 @@ function applyThemeMode(mode){
   if($('#themeMode')) $('#themeMode').value = value;
   if($('#themeModeQuick')) $('#themeModeQuick').value = value;
   updateThemeCycleLabel(value);
+  updateAppearanceSummary();
 }
 function updateThemeCycleLabel(mode){
-  const m = mode || document.body.dataset.themeMode || 'auto';
-  const map = {light:'日间模式', dark:'深色模式', auto:'自动主题'};
-  if($('#themeCycleLabel')) $('#themeCycleLabel').textContent = map[m] || '布局主题';
+  if($('#themeCycleLabel')) $('#themeCycleLabel').textContent = '外观与皮肤';
 }
 function setThemeModeAndSave(next){
   if(!['light','dark','auto'].includes(next)) next = 'auto';
   if($('#themeMode')) $('#themeMode').value = next;
   if($('#themeModeQuick')) $('#themeModeQuick').value = next;
   applyThemeMode(next);
+  saveCurrentClientSettings({theme_mode:next});
   handleConfigSave({...collectConfig(), theme_mode: next}, '主题已切换').catch(()=>{});
 }
 function cycleThemeMode(){
@@ -1734,7 +1779,13 @@ function setPage(name){
 
 $$('.nav[data-page]').forEach(btn => btn.addEventListener('click', () => setPage(btn.dataset.page === 'batches' ? 'history' : btn.dataset.page)));
 $('#themeCycleBtn')?.addEventListener('click', cycleThemeMode);
-$$('#themePopover [data-theme]').forEach(btn=>btn.addEventListener('click',()=>{ $('#themePopover')?.classList.remove('show'); setThemeModeAndSave(btn.dataset.theme); }));
+$$('#themePopover [data-theme]').forEach(btn=>btn.addEventListener('click',()=>setThemeModeAndSave(btn.dataset.theme)));
+$$('#themeSkinGrid [data-skin]').forEach(btn=>btn.addEventListener('click',()=>setSkinAndSave(btn.dataset.skin)));
+$('#themeMascotEnabled')?.addEventListener('change', e=>{
+  applySkinSettings(document.body.dataset.skin || 'classic', e.target.checked);
+  persistAppearanceSettings();
+});
+$('#themePanelCloseBtn')?.addEventListener('click',()=>$('#themePopover')?.classList.remove('show'));
 document.addEventListener('click', e=>{ if(!e.target.closest('#themeCycleBtn') && !e.target.closest('#themePopover')) $('#themePopover')?.classList.remove('show'); });
 document.addEventListener('click', async e=>{ const btn=e.target.closest('.icon-copy[data-copy-target]'); if(!btn) return; e.preventDefault(); const el=$('#'+btn.dataset.copyTarget); await copyTextSmart(el?.value || el?.textContent || '', '内容'); toast('已复制'); });
 
@@ -1802,6 +1853,7 @@ async function loadConfig(){
   const platformCfg = sanitizePlatformEndpoint({ ...defaultPlatformConfig(initialPlatform), ...(useServerAsSeed ? c : {}), ...savedPlatformCfg, image_api_platform: initialPlatform }, initialPlatform);
   applyImagePlatformFields(platformCfg, initialPlatform);
   updateOfficialImageOptions();
+  applySkinSettings(c.skin_id || 'classic', c.mascot_enabled !== false);
   applyThemeMode(c.theme_mode || 'auto');
   $('#concurrency').value = c.concurrency || 30;
   $('#retryTimes').value = c.retry_times || 2;
@@ -2032,6 +2084,8 @@ $('#servicePort')?.addEventListener('input', ()=>updateLanDisplay({lan_enabled: 
 $('#backgroundKeepalive')?.addEventListener('change', ()=>enableKeepAlive($('#backgroundKeepalive').checked));
 $('#themeMode')?.addEventListener('change', ()=>{ if($('#themeModeQuick')) $('#themeModeQuick').value = $('#themeMode').value; applyThemeMode($('#themeMode').value); });
 $('#themeModeQuick')?.addEventListener('change', ()=>{ $('#themeMode').value = $('#themeModeQuick').value; applyThemeMode($('#themeModeQuick').value); });
+$('#skinIdSettings')?.addEventListener('change', ()=>applySkinSettings($('#skinIdSettings').value, $('#mascotEnabledSettings')?.checked !== false));
+$('#mascotEnabledSettings')?.addEventListener('change', ()=>applySkinSettings($('#skinIdSettings')?.value || 'classic', $('#mascotEnabledSettings').checked));
 $('#clarity')?.addEventListener('change', ()=>{ if($('#claritySettings')) $('#claritySettings').value = $('#clarity').value; updateSizeHint(); });
 $('#claritySettings')?.addEventListener('change', ()=>{ if($('#clarity')) $('#clarity').value = $('#claritySettings').value; updateSizeHint(); });
 $('#outputFormat')?.addEventListener('change', updateOfficialImageOptions);
@@ -2194,6 +2248,8 @@ function collectConfig(){
     output_compression: Number($('#outputCompression')?.value || 90),
     image_n: Math.max(1, Math.min(15, Number($('#imageN')?.value || 1))),
     theme_mode: $('#themeMode')?.value || $('#themeModeQuick')?.value || 'auto',
+    skin_id: normalizeSkinId($('#skinIdSettings')?.value || document.body.dataset.skin || 'classic'),
+    mascot_enabled: $('#mascotEnabledSettings') ? $('#mascotEnabledSettings').checked : document.body.dataset.mascotEnabled !== 'false',
     concurrency: Number($('#concurrency').value || 30),
     retry_times: Number($('#retryTimes').value || 0),
     repeat_count: Math.max(1, Number($('#repeatCount').value || 1)),
@@ -2245,6 +2301,7 @@ async function handleConfigSave(payload, successMsg='当前设置已保存'){
       if($('#clarity')) $('#clarity').value = ret.config.clarity || payload.clarity || '1K';
       if($('#claritySettings')) $('#claritySettings').value = ret.config.clarity || payload.clarity || '1K';
       updateRuntimeDataDirHint(ret.config);
+      applySkinSettings(ret.config.skin_id || payload.skin_id || 'classic', (typeof ret.config.mascot_enabled === 'boolean' ? ret.config.mascot_enabled : payload.mascot_enabled) !== false);
       applyThemeMode(ret.config.theme_mode || payload.theme_mode || 'auto');
       enableKeepAlive($('#backgroundKeepalive')?.checked);
       loadAnnouncements(true, false).catch(()=>{});
@@ -3229,7 +3286,9 @@ function renderImageTaskProgress(list = []){
     const meta = storeImageTaskPreview(t) || {};
     const p = Math.max(0, Math.min(100, Number(t.progress || 0)));
     const title = t.batch_name ? `${t.batch_name} · #${t.task_index}` : `任务 #${t.task_index}`;
-    return `<div class="task-progress-item clickable" data-image-task-id="${escapeHtml(t.id)}" title="点击查看生成信息">
+    const statusText = String(t.status || '').toLowerCase();
+    const mascotState = /fail|error|失败|cancel/.test(statusText) ? 'warning' : (/success|complete|done|完成/.test(statusText) ? 'success' : (/upload|submit|pending|上传|提交/.test(statusText) || p < 8 ? 'upload' : 'working'));
+    return `<div class="task-progress-item clickable" data-mascot-state="${mascotState}" data-image-task-id="${escapeHtml(t.id)}" title="点击查看生成信息">
       <div class="task-progress-top"><b>${escapeHtml(title)}</b><span>${escapeHtml(t.status || '')}</span></div>
       <div class="progress"><div class="bar" style="width:${p}%"></div></div>
       <div class="task-progress-meta"><span>${p}%</span><span>${escapeHtml(t.progress_text || '')}</span></div>
