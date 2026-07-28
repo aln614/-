@@ -4528,6 +4528,9 @@ let videoManageVisibleCount = 160;
 let videoManageScrollBound = false;
 let videoManageScrollRoot = null;
 let videoManageScrollTimer = 0;
+let videoResumePendingInFlight = false;
+let videoResumePendingLastAt = 0;
+const VIDEO_RESUME_ACTIVE_STATUSES = new Set(['已提交', '生成中', '查询中', '下载中']);
 function stableSig(obj){ try{return JSON.stringify(obj);}catch{return String(Date.now());} }
 let currentVideoPreviewMeta = null;
 const imageTaskPreviewMap = new Map();
@@ -5108,6 +5111,28 @@ async function submitVideoTask(){
   }catch(e){ alert(e.message || '视频任务提交失败'); }
   finally{ $('#startVideoBtn').disabled=false; $('#startVideoBtn').textContent='开始生成视频'; syncVideoApiKeyFromHome(); }
 }
+async function resumePendingVideoTasks(rows = []){
+  const hasResumable = rows.some(v => String(v.platform || '').toLowerCase() === 'apimart'
+    && VIDEO_RESUME_ACTIVE_STATUSES.has(String(v.status || ''))
+    && String(v.task_id || v.remote_task_id || '').trim());
+  const apiKey = getHomeApiKey();
+  const now = Date.now();
+  if(!hasResumable || !apiKey || videoResumePendingInFlight || now - videoResumePendingLastAt < 15000) return;
+  videoResumePendingInFlight = true;
+  videoResumePendingLastAt = now;
+  try{
+    const ret = await api('/api/video_resume_pending', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({api_key:apiKey})
+    });
+    if(Number(ret.resumed || 0) > 0) setTimeout(loadVideoTasks, 1400);
+  }catch(e){
+    console.warn('恢复视频任务查询失败：', e);
+  }finally{
+    videoResumePendingInFlight = false;
+  }
+}
 async function loadVideoTasks(){
   try{
     const manageActive = $('#page-video-manage')?.classList.contains('active');
@@ -5125,6 +5150,7 @@ async function loadVideoTasks(){
       lastVideoManageSignature = '';
     }
     videoTasksCache = rows;
+    void resumePendingVideoTasks(rows);
     if(dataChanged){
       lastVideoTasksSignature = sig;
       renderVideoLibrary();
@@ -5222,7 +5248,9 @@ function renderVideoCard(v, opts = {}){
   const progress = Math.max(0, Math.min(100, Number(v.progress || 0)));
   const progressText = v.progress_text || (v.status === '已完成' ? '已完成' : '');
   const failed = String(v.status || '').includes('失败');
-  return `<div class="video-card ${selected?'selected':''} ${compact?'compact':''}" data-video-id="${escapeHtml(v.id)}" title="${previewTitle}">
+  const mascotState = failed ? 'warning' : (String(v.status || '') === '已完成' ? 'success' : 'upload');
+  const mascotClass = playable ? '' : 'video-mascot-card';
+  return `<div class="video-card ${selected?'selected':''} ${compact?'compact':''} ${mascotClass}" data-video-id="${escapeHtml(v.id)}" data-mascot-state="${mascotState}" title="${previewTitle}">
     ${selectable ? `<div class="video-select-badge">${selected?'✓ 已选择':'Shift + 右键选择'}</div>` : ''}
     <div class="video-click-zone" data-video-act="preview" data-video-id="${escapeHtml(v.id)}" title="${previewTitle}">
       ${playable ? `<div class="video-first-frame" data-video-id="${escapeHtml(v.id)}" data-cache-ready="${v.video_cache_ready ? '1' : '0'}" data-src="${escapeHtml(playable)}"><div class="video-lazy-icon">▶</div><small>懒加载第一帧</small></div>` : `<div class="video-pending ${failed?'failed':''}"><strong>${escapeHtml(v.status || '生成中')}</strong><span>${failed ? '!' : `${progress}%`}</span><small>${escapeHtml(failed ? '任务失败，点击查看生成信息' : (progressText || '左右键同时点击查看生成信息'))}</small></div>`}

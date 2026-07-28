@@ -1796,6 +1796,26 @@ function ensureVideoStore() {
   if (changed) db._save();
   return st;
 }
+const activeApimartVideoPolls = new Set();
+const APIMART_VIDEO_ACTIVE_STATUSES = new Set(['已提交', '生成中', '查询中', '下载中']);
+const APIMART_VIDEO_TERMINAL_STATUSES = new Set(['已完成', '失败', '已取消', '取消']);
+const STALE_VIDEO_SUBMIT_ERROR = '任务长时间停留在提交中，且没有后端 task_id，已自动标记失败。请重新提交。';
+function videoRemoteTaskId(row = {}) {
+  return String(row.task_id || row.remote_task_id || '').trim();
+}
+function clearFalseVideoTerminalState(row = {}) {
+  let changed = false;
+  if (APIMART_VIDEO_ACTIVE_STATUSES.has(String(row.status || '')) && videoRemoteTaskId(row)) {
+    if (row.finished_at) { row.finished_at = ''; changed = true; }
+    if (String(row.error_message || '') === STALE_VIDEO_SUBMIT_ERROR) { row.error_message = ''; changed = true; }
+    if (String(row.last_error || '') === STALE_VIDEO_SUBMIT_ERROR) { row.last_error = ''; changed = true; }
+  }
+  if (String(row.status || '') === '已完成' && String(row.error_message || '') === STALE_VIDEO_SUBMIT_ERROR) {
+    row.error_message = '';
+    changed = true;
+  }
+  return changed;
+}
 function cleanupStaleVideoTasks(owner = '') {
   const st = ensureVideoStore();
   const stuck = new Set(['等待提交', '提交中', '重试中']);
@@ -1803,12 +1823,13 @@ function cleanupStaleVideoTasks(owner = '') {
   let changed = false;
   for (const row of st.video_tasks || []) {
     if (owner && row.owner_id !== owner) continue;
-    if (row.task_id || !stuck.has(String(row.status || ''))) continue;
+    if (clearFalseVideoTerminalState(row)) changed = true;
+    if (videoRemoteTaskId(row) || !stuck.has(String(row.status || ''))) continue;
     const ts = Date.parse(row.updated_at || row.created_at || '');
     if (!Number.isFinite(ts) || ts > cutoff) continue;
     row.status = '失败';
     row.progress_text = '提交超时，未收到远端 task_id';
-    row.error_message = row.error_message || '任务长时间停留在提交中，且没有后端 task_id，已自动标记失败。请重新提交。';
+    row.error_message = row.error_message || STALE_VIDEO_SUBMIT_ERROR;
     row.finished_at = nowISO();
     row.updated_at = nowISO();
     changed = true;
@@ -2885,89 +2906,165 @@ function videoOutputFilePath(row = {}) {
 async function pollApimartVideoTask(taskId, apiKey, localTaskId) {
   const st = ensureVideoStore();
   const task = st.video_tasks.find(x=>x.id===localTaskId);
-  if (!task) return;
-  task.status = '生成中';
-  task.progress = Math.max(8, Number(task.progress || 0));
-  task.progress_text = '已提交，等待首轮批量查询';
-  task.updated_at = nowISO();
-  getDB()._save();
-  const started = Date.now();
-  const timeoutMs = 40 * 60 * 1000;
-  let firstPoll = true;
-  while (Date.now() - started < timeoutMs) {
-    task.status = '查询中';
-    task.progress = Math.max(10, Number(task.progress || 0));
-    task.progress_text = '正在批量查询远端状态';
+  if (!task || !String(taskId || '').trim()) return false;
+  if (activeApimartVideoPolls.has(localTaskId)) return false;
+  if (APIMART_VIDEO_TERMINAL_STATUSES.has(String(task.status || ''))) return false;
+  activeApimartVideoPolls.add(localTaskId);
+  try {
+    task.task_id = String(taskId || '').trim();
+    task.status = '生成中';
+    task.progress = Math.max(8, Number(task.progress || 0));
+    task.progress_text = task.progress > 10 ? (task.progress_text || '继续查询远端结果') : '已提交，等待首轮批量查询';
+    task.finished_at = '';
+    if (String(task.error_message || '') === STALE_VIDEO_SUBMIT_ERROR) task.error_message = '';
     task.updated_at = nowISO();
     getDB()._save();
-    await new Promise(r=>setTimeout(r, firstPoll ? 5000 : 3500));
-    firstPoll = false;
-    let status;
-    try { status = await queryApimartTaskBatchAware(taskId, apiKey, 120000); }
-    catch(e){ task.status = '查询中'; task.last_error = e.message; task.progress_text = '批量查询失败，稍后自动重试'; task.updated_at = nowISO(); getDB()._save(); continue; }
-    const sText = pickApimartStatus(status);
-    const remoteProgress = pickApimartProgress(status);
-    const mappedProgress = remoteProgress || (isApimartPendingStatusText(sText) ? 18 : 72);
-    task.progress = Math.max(0, Math.min(100, mappedProgress));
-    task.status_payload = status;
-    task.updated_at = nowISO();
-    if (sText === 'failed' || sText === 'cancelled') {
-      let failureStatus = status;
-      try {
-        const single = await getJsonApimart(`/tasks/${encodeURIComponent(taskId)}`, apiKey, 120000);
-        if (single) {
-          failureStatus = single;
-          task.status_payload = single;
-        }
-      } catch (detailError) {
-        task.last_error = detailError.message || String(detailError);
-      }
-      task.status = '失败';
-      task.progress_text = '任务失败';
-      task.raw_error_message = pickApimartTaskErrorMessage(failureStatus, '视频任务失败');
-      task.error_message = task.raw_error_message;
-      if (/interaction status=failed/i.test(task.error_message) && String(task.model || '').toLowerCase() === 'gemini-omni-flash-preview') {
-        task.error_message = 'Gemini Omni Flash 上游交互失败：请求已通过 APIMart 参数校验，但 Google 视频处理阶段拒绝或中止。请缩短并简化编辑指令，避免把“续写/延长视频”和“编辑原视频”混在同一个任务中；也可能是临时内容审核或上游故障。';
-      }
-      task.finished_at = nowISO();
-      getDB()._save();
-      addLog(`视频任务失败：${task.error_message}`, { ownerId: task.owner_id, level:'error' });
-      throw new Error(task.error_message);
-    }
-    task.status = '生成中';
-    task.progress_text = videoProgressTextByStatus(sText, task.progress, 'query');
-    let videoUrl = pickApimartVideoUrl(status);
-    if ((sText === 'completed' || sText === 'succeeded' || sText === 'success' || sText === 'finished') && !videoUrl) {
-      try {
-        const single = await getJsonApimart(`/tasks/${encodeURIComponent(taskId)}`, apiKey, 120000);
-        task.status_payload = single;
-        videoUrl = pickApimartVideoUrl(single);
-        if (!videoUrl) {
-          task.status = '失败';
-          task.progress_text = '任务失败';
-          task.error_message = 'APIMart 视频任务已完成，但程序未能从响应中解析视频 URL。批量响应：' + compactJsonForLog(status, 700) + '；单任务响应：' + compactJsonForLog(single, 1200);
-          task.finished_at = nowISO();
-          task.updated_at = nowISO();
-          closePublicVideoByPath(task.local_video_path);
-          getDB()._save();
-          addLog(`视频任务解析失败：${task.error_message}`, { ownerId: task.owner_id, level:'error' });
-          return;
-        }
-      } catch(e) { task.last_error = e.message || String(e); }
-    }
-    if ((sText === 'completed' || sText === 'succeeded' || sText === 'success' || sText === 'finished' || videoUrl) && videoUrl) {
-      const filePath = videoOutputFilePath(task);
-      task.status = '下载中';
-      task.progress = Math.max(96, Number(task.progress || 0));
-      task.progress_text = videoProgressTextByStatus('completed', task.progress, 'download');
+    const started = Date.now();
+    const timeoutMs = 40 * 60 * 1000;
+    let firstPoll = true;
+    let consecutiveQueryErrors = 0;
+    while (Date.now() - started < timeoutMs) {
+      if (!st.video_tasks.includes(task) || APIMART_VIDEO_TERMINAL_STATUSES.has(String(task.status || ''))) return false;
+      task.poll_heartbeat_at = nowISO();
+      task.progress = Math.max(10, Number(task.progress || 0));
+      if (!task.progress_text) task.progress_text = '正在查询远端状态';
       task.updated_at = nowISO();
       getDB()._save();
-      try { await downloadVideoResult(videoUrl, filePath); task.file_path = filePath; } catch(e) { task.download_error = e.message; }
-      task.remote_url = videoUrl; task.status = '已完成'; task.progress = 100; task.progress_text = '已完成'; task.finished_at = nowISO(); task.updated_at = nowISO(); closePublicVideoByPath(task.local_video_path); getDB()._save(); addLog(`视频任务完成：${task.id}`, { ownerId: task.owner_id }); return;
+      await new Promise(r=>setTimeout(r, firstPoll ? 1200 : 3500));
+      firstPoll = false;
+      if (!st.video_tasks.includes(task) || APIMART_VIDEO_TERMINAL_STATUSES.has(String(task.status || ''))) return false;
+      let status;
+      try {
+        status = await queryApimartTaskBatchAware(taskId, apiKey, 120000);
+        consecutiveQueryErrors = 0;
+        task.last_error = '';
+      } catch(e) {
+        consecutiveQueryErrors += 1;
+        task.status = '生成中';
+        task.last_error = e.message;
+        task.progress_text = `远端查询重试 ${consecutiveQueryErrors}/6`;
+        task.updated_at = nowISO();
+        getDB()._save();
+        if (consecutiveQueryErrors >= 6) throw new Error(`连续查询远端任务失败：${e.message || e}`);
+        continue;
+      }
+      const sText = pickApimartStatus(status);
+      const remoteProgress = pickApimartProgress(status);
+      const mappedProgress = remoteProgress || (isApimartPendingStatusText(sText) ? Math.max(18, Number(task.progress || 0)) : 72);
+      task.progress = Math.max(0, Math.min(100, mappedProgress));
+      task.status_payload = status;
+      task.status = '生成中';
+      task.progress_text = videoProgressTextByStatus(sText, task.progress, 'query');
+      task.updated_at = nowISO();
+      if (sText === 'failed' || sText === 'cancelled') {
+        let failureStatus = status;
+        try {
+          const single = await getJsonApimart(`/tasks/${encodeURIComponent(taskId)}`, apiKey, 120000);
+          if (single) {
+            failureStatus = single;
+            task.status_payload = single;
+          }
+        } catch (detailError) {
+          task.last_error = detailError.message || String(detailError);
+        }
+        task.status = '失败';
+        task.progress_text = '任务失败';
+        task.raw_error_message = pickApimartTaskErrorMessage(failureStatus, '视频任务失败');
+        task.error_message = task.raw_error_message;
+        if (/interaction status=failed/i.test(task.error_message) && String(task.model || '').toLowerCase() === 'gemini-omni-flash-preview') {
+          task.error_message = 'Gemini Omni Flash 上游交互失败：请求已通过 APIMart 参数校验，但 Google 视频处理阶段拒绝或中止。请缩短并简化编辑指令，避免把“续写/延长视频”和“编辑原视频”混在同一个任务中；也可能是临时内容审核或上游故障。';
+        }
+        task.finished_at = nowISO();
+        getDB()._save();
+        addLog(`视频任务失败：${task.error_message}`, { ownerId: task.owner_id, level:'error' });
+        throw new Error(task.error_message);
+      }
+      let videoUrl = pickApimartVideoUrl(status);
+      if ((sText === 'completed' || sText === 'succeeded' || sText === 'success' || sText === 'finished') && !videoUrl) {
+        try {
+          const single = await getJsonApimart(`/tasks/${encodeURIComponent(taskId)}`, apiKey, 120000);
+          task.status_payload = single;
+          videoUrl = pickApimartVideoUrl(single);
+          if (!videoUrl) {
+            task.status = '失败';
+            task.progress_text = '任务失败';
+            task.error_message = 'APIMart 视频任务已完成，但程序未能从响应中解析视频 URL。批量响应：' + compactJsonForLog(status, 700) + '；单任务响应：' + compactJsonForLog(single, 1200);
+            task.finished_at = nowISO();
+            task.updated_at = nowISO();
+            closePublicVideoByPath(task.local_video_path);
+            getDB()._save();
+            addLog(`视频任务解析失败：${task.error_message}`, { ownerId: task.owner_id, level:'error' });
+            return false;
+          }
+        } catch(e) { task.last_error = e.message || String(e); }
+      }
+      if ((sText === 'completed' || sText === 'succeeded' || sText === 'success' || sText === 'finished' || videoUrl) && videoUrl) {
+        const filePath = videoOutputFilePath(task);
+        task.status = '下载中';
+        task.progress = Math.max(96, Number(task.progress || 0));
+        task.progress_text = videoProgressTextByStatus('completed', task.progress, 'download');
+        task.updated_at = nowISO();
+        getDB()._save();
+        try { await downloadVideoResult(videoUrl, filePath); task.file_path = filePath; } catch(e) { task.download_error = e.message; }
+        task.remote_url = videoUrl;
+        task.status = '已完成';
+        task.progress = 100;
+        task.progress_text = '已完成';
+        task.error_message = '';
+        task.last_error = '';
+        task.finished_at = nowISO();
+        task.updated_at = nowISO();
+        closePublicVideoByPath(task.local_video_path);
+        getDB()._save();
+        addLog(`视频任务完成：${task.id}`, { ownerId: task.owner_id });
+        return true;
+      }
+      getDB()._save();
     }
+    task.status = '失败';
+    task.progress_text = '视频任务累计超时';
+    task.error_message = '视频任务累计超时';
+    task.finished_at = nowISO();
+    task.updated_at = nowISO();
+    closePublicVideoByPath(task.local_video_path);
     getDB()._save();
+    throw new Error(task.error_message);
+  } finally {
+    activeApimartVideoPolls.delete(localTaskId);
   }
-  task.status = '失败'; task.progress_text = '视频任务累计超时'; task.error_message = '视频任务累计超时'; task.finished_at = nowISO(); task.updated_at = nowISO(); closePublicVideoByPath(task.local_video_path); getDB()._save();
+}
+
+function resumeApimartVideoTasks(apiKey, owner = '') {
+  const key = String(apiKey || '').trim();
+  if (!key) throw new Error('请先填写 APIMart API Key，程序才能继续查询未完成的视频任务。');
+  const st = ensureVideoStore();
+  let resumed = 0;
+  let alreadyPolling = 0;
+  for (const row of st.video_tasks || []) {
+    if (owner && row.owner_id !== owner) continue;
+    if (String(row.platform || '').toLowerCase() !== 'apimart') continue;
+    if (!APIMART_VIDEO_ACTIVE_STATUSES.has(String(row.status || ''))) continue;
+    const remoteId = videoRemoteTaskId(row);
+    if (!remoteId) continue;
+    if (activeApimartVideoPolls.has(row.id)) { alreadyPolling += 1; continue; }
+    clearFalseVideoTerminalState(row);
+    row.task_id = remoteId;
+    row.status = '生成中';
+    row.progress_text = row.progress > 10 ? '程序已恢复，继续查询远端结果' : '程序已恢复，等待远端结果';
+    row.updated_at = nowISO();
+    resumed += 1;
+    pollApimartVideoTask(remoteId, key, row.id).catch(error => {
+      if (!APIMART_VIDEO_ACTIVE_STATUSES.has(String(row.status || ''))) return;
+      row.status = '失败';
+      row.progress_text = '恢复查询失败';
+      row.error_message = error?.message || String(error || '恢复查询失败');
+      row.finished_at = nowISO();
+      row.updated_at = nowISO();
+      getDB()._save();
+    });
+  }
+  if (resumed) getDB()._save();
+  return { ok:true, resumed, already_polling:alreadyPolling };
 }
 
 function splitVideoPrompts(text, multiline=true) {
@@ -7257,6 +7354,11 @@ async function apiHandler(req, res, parsed) {
     }
     if (method === 'POST' && p === '/api/video_submit') { const body=await readBody(req); if(String(body.video_platform||'').toLowerCase()==='flow2api'){const ret=await createFlow2VideoBatch({...body,prompts:body.prompt||body.prompts,copies:1},deviceOwner);return send(res,{ok:true,task:ret.rows[0]||null});} const row = await createApimartVideoTask(body, deviceOwner, req, cfg); return send(res,{ok:true, task:formatVideoTask(row)}); }
     if (method === 'POST' && p === '/api/video_batch_submit') { const body=await readBody(req); return send(res, String(body.video_platform||'').toLowerCase()==='flow2api' ? await createFlow2VideoBatch(body, deviceOwner) : await createApimartVideoBatch(body, deviceOwner, req, cfg)); }
+    if (method === 'POST' && p === '/api/video_resume_pending') {
+      const body = await readBody(req);
+      const key = String(body.api_key || (local ? cfg.api_key : '') || '').trim();
+      return send(res, resumeApimartVideoTasks(key, dataOwner));
+    }
     if (method === 'GET' && p === '/api/video_tasks') { const scopedOwner = local && parsed.query.all_owners === '1' ? '' : dataOwner; cleanupStaleVideoTasks(scopedOwner); const st=ensureVideoStore(); const allOwners = !scopedOwner; const pageSize = Math.max(1, Math.min(local ? 5000 : 500, Number(parsed.query.limit || parsed.query.page_size || (local ? 1200 : 500)))); const rawRows=st.video_tasks.filter(v=>!scopedOwner || v.owner_id===scopedOwner).sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at))).slice(0,pageSize); const rows=rawRows.map(row=>formatVideoTask(row, { allOwners, fast:true })); return send(res,{ok:true, rows, video_stats: videoTodayStats(scopedOwner), scope: scopedOwner ? 'device' : 'all_owners'}); }
     if (method === 'POST' && p === '/api/video_delete_selected') { const body=await readBody(req); const scopedOwner = local && body.all_owners === true ? '' : owner; return send(res, deleteVideoTasks(body.ids || [], scopedOwner)); }
     if (method === 'POST' && p === '/api/video_export_selected') { const body=await readBody(req); const scopedOwner = local && body.all_owners === true ? '' : owner; const zipPath=exportSelectedVideos(body.ids || [], scopedOwner); return send(res,{ok:true,url:`/download?path=${encodeURIComponent(zipPath)}`}); }
