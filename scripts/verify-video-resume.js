@@ -23,5 +23,7 @@ assert(app.includes('VIDEO_RESUME_ACTIVE_STATUSES'), 'Renderer active video stat
 assert(css.includes('#videoDrop::after'), 'Video upload zone does not inherit the active mascot');
 assert(css.includes('.video-mascot-card::after'), 'Video status cards do not inherit the active mascot');
 assert(css.includes('body[data-skin] #page-video>.grid>.card'), 'Video workspace does not inherit the active skin');
+assert(css.includes('.video-realtime-panel .video-library>.video-card'), 'Recent video cards need an explicit non-shrinking layout');
+assert(css.includes('flex:0 0 auto'), 'Recent video cards must not collapse inside the scrolling library');
 
 console.log('[verify-video-resume] OK: interrupted APIMart video polling resumes once and video UI inherits the active skin.');
