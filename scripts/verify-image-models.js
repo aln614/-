@@ -82,9 +82,29 @@ function main() {
   const missingRuntime = unique(indexModels.filter(x => !frontendSet.has(String(x).toLowerCase())));
   if (missingRuntime.length) fail(`index.html APIMart options missing in runtime APIMART_MODEL_OPTIONS: ${missingRuntime.join(', ')}`);
 
-  const required = ['doubao-seedream-5-0-pro'];
+  const required = [
+    'doubao-seedream-5-0-pro',
+    'flux-kontext-pro',
+    'flux-kontext-max',
+    'flux-2-flex',
+    'flux-2-pro',
+    'flux-2-max'
+  ];
   const missingRequired = required.filter(x => !frontendSet.has(x) || !backendSet.has(x) || !indexModels.map(v => v.toLowerCase()).includes(x));
   if (missingRequired.length) fail(`Required homepage models are not wired end-to-end: ${missingRequired.join(', ')}`);
+
+  const requiredRuleSnippets = [
+    "maxImageUrls: 4",
+    "noResolution: true",
+    "resolutions: ['1MP','2MP','3MP','4MP']",
+    "'flux-2-flex': FLUX2_FLEX_RULE",
+    "payload.prompt_upsampling",
+    "payload.safety_tolerance",
+    "payload.steps",
+    "payload.guidance"
+  ];
+  const missingRules = requiredRuleSnippets.filter(snippet => !apiClientJs.includes(snippet));
+  if (missingRules.length) fail(`Flux request rules are incomplete: ${missingRules.join(', ')}`);
 
   console.log(`[verify-image-models] OK: ${frontendModels.length} frontend APIMart models match backend list.`);
 }

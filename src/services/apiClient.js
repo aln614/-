@@ -291,6 +291,8 @@ const APIMART_IMAGE_MODELS = [
   'doubao-seedance-4-0','doubao-seedream-4.0','doubao-seedream-4-0',
   'doubao-seedream-5-0-lite','doubao-seedream-5.0-lite',
   'doubao-seedream-5-0-pro','doubao-seedream-5.0-pro',
+  'flux-kontext-pro','flux-kontext-max',
+  'flux-2-flex','flux-2-pro','flux-2-max',
   'qwen-image','qwen-image-2.0','z-image-turbo',
   'grok-imagine-1.0','grok-imagine-1.0-edit',
   'grok-imagine-1.5-apimart','grok-imagine-1.0-edit-apimart','grok-imagine-1.5-edit-apimart',
@@ -322,6 +324,29 @@ const SEEDREAM5_PRO_RULE = {
   resolutions: ['1K','2K'], defaultResolution: '2K',
   outputFormats: ['jpeg','png'], defaultOutputFormat: 'jpeg', allowOutputFormat: true,
   allowWatermark: true
+};
+const FLUX_KONTEXT_RULE = {
+  endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 4,
+  nMin: 1, nMax: 1, defaultN: 1,
+  sizes: ['auto','1:1','4:3','3:4','16:9','9:16','3:2','2:3','21:9','9:21'], defaultSize: '1:1',
+  noResolution: true,
+  outputFormats: ['png','jpeg','webp'], defaultOutputFormat: 'png', allowOutputFormat: true,
+  allowSeed: true, allowPromptUpsampling: true, allowSafetyTolerance: true,
+  safetyToleranceMin: 0, safetyToleranceMax: 6, defaultSafetyTolerance: 2
+};
+const FLUX2_RULE = {
+  endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 8,
+  nMin: 1, nMax: 1, defaultN: 1,
+  sizes: ['auto','1:1','4:3','3:4','16:9','9:16','3:2','2:3','21:9','9:21'], defaultSize: '1:1',
+  resolutions: ['1MP','2MP','3MP','4MP'], defaultResolution: '2MP',
+  outputFormats: ['jpeg','png','webp'], defaultOutputFormat: 'jpeg', allowOutputFormat: true,
+  allowSeed: true, allowPromptUpsampling: true, allowSafetyTolerance: true,
+  safetyToleranceMin: 0, safetyToleranceMax: 5, defaultSafetyTolerance: 2
+};
+const FLUX2_FLEX_RULE = {
+  ...FLUX2_RULE,
+  allowSteps: true, stepsMin: 1, stepsMax: 50, defaultSteps: 50,
+  allowGuidance: true, guidanceMin: 1.5, guidanceMax: 10, defaultGuidance: 5
 };
 const GROK_IMAGINE_15_RULE = {
   endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 0,
@@ -364,6 +389,11 @@ const APIMART_MODEL_RULES = {
   'seedream-5.0-pro': SEEDREAM5_PRO_RULE,
   'doubao-seedream-5-0-pro': SEEDREAM5_PRO_RULE,
   'doubao-seedream-5.0-pro': SEEDREAM5_PRO_RULE,
+  'flux-kontext-pro': FLUX_KONTEXT_RULE,
+  'flux-kontext-max': FLUX_KONTEXT_RULE,
+  'flux-2-flex': FLUX2_FLEX_RULE,
+  'flux-2-pro': FLUX2_RULE,
+  'flux-2-max': FLUX2_RULE,
   'grok-imagine-1.0': GROK_IMAGINE_15_RULE,
   'grok-imagine-1.5-apimart': GROK_IMAGINE_15_RULE,
   'grok-imagine-1.0-edit': GROK_IMAGINE_EDIT_RULE,
@@ -410,8 +440,8 @@ function sanitizeApimartImagePayload(rawPayload = {}, model = '') {
 
   if (hasRefs) {
     if (rule.textOnly || Number(rule.maxImageUrls || 0) <= 0) throw new Error(`${payload.model} 仅支持文生图，不支持上传参考图`);
-    // 按用户要求：本地不再限制参考图数量，最终以 APIMart 服务端模型规则为准。
-    payload.image_urls = rawPayload.image_urls.filter(Boolean);
+    const maxImages = Math.max(1, Number(rule.maxImageUrls || rawPayload.image_urls.length));
+    payload.image_urls = rawPayload.image_urls.filter(Boolean).slice(0, maxImages);
   }
   const quality = String(rawPayload.quality || '').trim().toLowerCase();
   if (rule.allowQuality && quality && (rule.qualities || ['auto','low','medium','high']).includes(quality)) payload.quality = quality;
@@ -436,6 +466,23 @@ function sanitizeApimartImagePayload(rawPayload = {}, model = '') {
     if (payload.sequential_image_generation === 'auto') payload.sequential_image_generation_options = { max_images: payload.n };
   }
   if (rule.allowWatermark && rawPayload.watermark !== undefined) payload.watermark = !!rawPayload.watermark;
+  const seed = Number(rawPayload.seed);
+  if (rule.allowSeed && Number.isInteger(seed)) payload.seed = seed;
+  if (rule.allowPromptUpsampling && rawPayload.prompt_upsampling !== undefined) {
+    payload.prompt_upsampling = rawPayload.prompt_upsampling === true || String(rawPayload.prompt_upsampling).toLowerCase() === 'true';
+  }
+  const safetyTolerance = Number(rawPayload.safety_tolerance);
+  if (rule.allowSafetyTolerance && Number.isFinite(safetyTolerance)) {
+    payload.safety_tolerance = Math.max(rule.safetyToleranceMin ?? 0, Math.min(rule.safetyToleranceMax ?? 6, Math.round(safetyTolerance)));
+  }
+  const steps = Number(rawPayload.steps);
+  if (rule.allowSteps && Number.isFinite(steps)) {
+    payload.steps = Math.max(rule.stepsMin || 1, Math.min(rule.stepsMax || 50, Math.round(steps)));
+  }
+  const guidance = Number(rawPayload.guidance);
+  if (rule.allowGuidance && Number.isFinite(guidance)) {
+    payload.guidance = Math.max(rule.guidanceMin || 1.5, Math.min(rule.guidanceMax || 10, guidance));
+  }
   return payload;
 }
 function isApimartBase(base){ return /api\.apimart\.ai/i.test(String(base || '')) || /docs\.apimart\.ai/i.test(String(base || '')); }
@@ -935,7 +982,12 @@ async function generateOne({ cfg, prompt, mainImagePath, refImages = [], outputP
     mask_url: cfg.mask_url || cfg.maskUrl,
     optimize_prompt_options: cfg.optimize_prompt_options || cfg.promptOptimize,
     sequential_image_generation: cfg.sequential_image_generation,
-    watermark: cfg.watermark
+    watermark: cfg.watermark,
+    seed: cfg.seed,
+    prompt_upsampling: cfg.prompt_upsampling,
+    safety_tolerance: cfg.safety_tolerance,
+    steps: cfg.steps,
+    guidance: cfg.guidance
   };
   if (apimartMode && imageUrls.length) rawPayload.image_urls = imageUrls;
   const payload = apimartMode ? sanitizeApimartImagePayload(rawPayload, model) : {
@@ -1657,4 +1709,4 @@ async function grsaiTool({ baseUrl, apiKey, action, model, extra = {}, queryApiK
   return postJson(base + path, apiKey, payload);
 }
 
-module.exports = { generateOne, grsaiTool, chatCompletion, APIMART_RESPONSE_CHAT_MODELS, getApimartChatModels, refreshApimartChatModels, sizeToAspect, resolveModelSize, GPT_IMAGE_2_VIP_SIZES, GPT_IMAGE_2_SIZES, APIMART_IMAGE_MODELS, APIMART_MODEL_RULES, getApimartImageRule };
+module.exports = { generateOne, grsaiTool, chatCompletion, APIMART_RESPONSE_CHAT_MODELS, getApimartChatModels, refreshApimartChatModels, sizeToAspect, resolveModelSize, GPT_IMAGE_2_VIP_SIZES, GPT_IMAGE_2_SIZES, APIMART_IMAGE_MODELS, APIMART_MODEL_RULES, getApimartImageRule, sanitizeApimartImagePayload };

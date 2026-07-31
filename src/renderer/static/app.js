@@ -713,6 +713,11 @@ const APIMART_MODEL_OPTIONS = [
   ['seedream-4.5','Seedream-4.5'],
   ['doubao-seedream-5-0-lite','doubao-seedream-5-0-lite'],
   ['doubao-seedream-5-0-pro','Seedream-5.0-Pro'],
+  ['flux-kontext-pro','Flux Kontext Pro'],
+  ['flux-kontext-max','Flux Kontext Max'],
+  ['flux-2-flex','Flux 2.0 Flex'],
+  ['flux-2-pro','Flux 2.0 Pro'],
+  ['flux-2-max','Flux 2.0 Max'],
   ['qwen-image-2.0','Qwen Image 2.0'],
   ['z-image-turbo','Z-Image-Turbo'],
   ['grok-imagine-1.5-apimart','grok-imagine-1.5-apimart'],
@@ -831,6 +836,8 @@ function rebuildImageParameterOptions(platform='apimart'){
     size.innerHTML = apimartSizeOptionsHtml;
     clarity.innerHTML = apimartClarityOptionsHtml;
   }
+  size.dataset.modelProfile = '';
+  clarity.disabled = false;
 }
 function currentImagePlatform(){ return normalizeImagePlatformValue($('#imageApiPlatformSwitch .platform-btn.active')?.dataset?.platform || localStorage.getItem(IMAGE_PLATFORM_ACTIVE_KEY) || 'apimart'); }
 function rebuildModelPresetOptions(platform='apimart'){
@@ -1036,6 +1043,64 @@ function isSeedream5ProModel(model){
 function isSeedream5OutputFormatModel(model){
   return isSeedream5LiteModel(model) || isSeedream5ProModel(model);
 }
+function isFluxKontextModel(model){
+  return ['flux-kontext-pro','flux-kontext-max'].includes(imageModelKey(model));
+}
+function isFlux2Model(model){
+  return ['flux-2-flex','flux-2-pro','flux-2-max'].includes(imageModelKey(model));
+}
+function isFluxImageModel(model){
+  return isFluxKontextModel(model) || isFlux2Model(model);
+}
+const FLUX_IMAGE_SIZES = ['auto','custom','1:1','4:3','3:4','16:9','9:16','3:2','2:3','21:9','9:21'];
+function applyFluxImageUiGuard(model){
+  if(currentImagePlatform() !== 'apimart') return;
+  const size = $('#size');
+  const clarity = $('#clarity');
+  if(!size || !clarity) return;
+  const profile = isFluxKontextModel(model) ? 'flux-kontext' : (isFlux2Model(model) ? 'flux-2' : 'default');
+  if(size.dataset.modelProfile === profile){
+    if(profile === 'flux-kontext'){
+      clarity.value = '1MP';
+      clarity.disabled = true;
+    }else if(profile === 'flux-2'){
+      if(!['1MP','2MP','3MP','4MP'].includes(clarity.value)) clarity.value = '2MP';
+      clarity.disabled = false;
+    }
+    return;
+  }
+  if(!apimartSizeOptionsHtml) apimartSizeOptionsHtml = size.innerHTML;
+  if(!apimartClarityOptionsHtml) apimartClarityOptionsHtml = clarity.innerHTML;
+  const oldSize = getSizeValue();
+  const oldClarity = clarity.value;
+
+  if(profile === 'default'){
+    size.innerHTML = apimartSizeOptionsHtml;
+    clarity.innerHTML = apimartClarityOptionsHtml;
+    clarity.disabled = false;
+    size.value = [...size.options].some(option=>option.value === oldSize) ? oldSize : 'auto';
+    clarity.value = [...clarity.options].some(option=>option.value === oldClarity) ? oldClarity : '2K';
+  }else{
+    size.innerHTML = FLUX_IMAGE_SIZES.map(value=>`<option value="${value}">${value === 'auto' ? 'auto 跟随参考图' : (value === 'custom' ? '自定义宽高' : value)}</option>`).join('');
+    if([...size.options].some(option=>option.value === oldSize)) size.value = oldSize;
+    else if(/^\d+x\d+$/i.test(oldSize)){
+      size.value = 'custom';
+      const [width,height] = oldSize.split('x');
+      if($('#customWidth')) $('#customWidth').value = width;
+      if($('#customHeight')) $('#customHeight').value = height;
+    }else size.value = '1:1';
+    const resolutions = profile === 'flux-kontext' ? ['1MP'] : ['1MP','2MP','3MP','4MP'];
+    clarity.innerHTML = resolutions.map(value=>`<option value="${value}">${value}${value === '2MP' && profile === 'flux-2' ? ' 默认' : ''}</option>`).join('');
+    clarity.value = profile === 'flux-2' ? '2MP' : '1MP';
+    clarity.disabled = profile === 'flux-kontext';
+    if($('#imageN')) $('#imageN').value = '1';
+    if($('#outputFormat')) $('#outputFormat').value = profile === 'flux-kontext' ? 'png' : 'jpeg';
+  }
+  size.dataset.modelProfile = profile;
+  if($('#claritySettings') && [...$('#claritySettings').options].some(option=>option.value === clarity.value)){
+    $('#claritySettings').value = clarity.value;
+  }
+}
 function isMultiNImageModel(model){
   const m = imageModelKey(model);
   return isOfficialImageModel(m) || ['doubao-seedance-4-0','doubao-seedream-4.0','doubao-seedream-4-0','seedream-4.0','seedream-4.5','doubao-seedream-5-0-lite','doubao-seedream-5.0-lite','seedream-5.0-lite','grok-imagine-1.5-apimart','grok-imagine-1.0','grok-imagine-1.5-edit-apimart','grok-imagine-1.0-edit-apimart','grok-imagine-1.0-edit'].includes(m);
@@ -1052,15 +1117,19 @@ function applySeedream5ProUiGuard(model){
 function updateOfficialImageOptions(){
   const platform = currentImagePlatform();
   const model = $('#model')?.value || $('#modelPreset')?.value || '';
+  applyFluxImageUiGuard(model);
   applySeedream5ProUiGuard(model);
   const grsai = platform === 'grsai';
   const official = !grsai && isOfficialImageModel(model);
-  const showOutput = !grsai && (official || isSeedream5OutputFormatModel(model));
+  const flux = !grsai && isFluxImageModel(model);
+  const showOutput = !grsai && (official || isSeedream5OutputFormatModel(model) || flux);
   const showN = !grsai && isMultiNImageModel(model);
   const showQuality = !grsai && official;
   const row1 = $('#officialImageOptions'); if(row1) row1.style.display = showOutput ? '' : 'none';
   const row2 = $('#officialImageOptions2'); if(row2) row2.style.display = showN ? '' : 'none';
   const row3 = $('#officialImageOptions3'); if(row3) row3.style.display = showQuality ? '' : 'none';
+  const backgroundWrap = $('#imageBackground')?.closest('div');
+  if(backgroundWrap) backgroundWrap.style.display = flux ? 'none' : '';
   const fmt = String($('#outputFormat')?.value || 'png').toLowerCase();
   const compWrap = $('#outputCompression')?.closest('div');
   if(compWrap) compWrap.style.opacity = (fmt === 'jpeg' || fmt === 'webp') ? '1' : '.45';
@@ -1150,6 +1219,7 @@ function applySizeToUI(sizeValue){
 }
 function updateSizeHint(){
   const model = $('#model')?.value || $('#modelPreset')?.value || 'gemini-3.1-flash-image-preview';
+  applyFluxImageUiGuard(model);
   applySeedream5ProUiGuard(model);
   const v = getSizeValue();
   const clarity = $('#clarity')?.value || $('#claritySettings')?.value || '1K';
@@ -1158,6 +1228,14 @@ function updateSizeHint(){
   if(currentImagePlatform() === 'flow2api'){
     const resolvedModel = `${normalizeFlow2ApiBaseModel(model)}-${v === '1:1' ? 'square' : v === '4:3' ? 'four-three' : v === '3:4' ? 'three-four' : v === '9:16' ? 'portrait' : 'landscape'}${String(clarity).toUpperCase() === '1K' ? '' : `-${String(clarity).toLowerCase()}`}`;
     $('#sizeHint').textContent = `Flow2API 提交模型：${resolvedModel}`;
+    return;
+  }
+  if(isFluxKontextModel(model)){
+    $('#sizeHint').textContent = `当前比例：${v}；Flux Kontext 固定约 1MP，不提交 resolution；最多 4 张参考图。`;
+    return;
+  }
+  if(isFlux2Model(model)){
+    $('#sizeHint').textContent = `当前比例：${v}；Flux 2.0 提交参数 size=${actual}，resolution=${clarity}；最多 8 张参考图。`;
     return;
   }
   const supportNote = isSeedream5ProModel(model) ? '（Seedream-5.0-Pro 支持 auto/1:1/4:3/3:4/16:9/9:16/3:2/2:3/21:9，resolution 仅 1K/2K）' : (String(model||'').startsWith('imagen-4.0') ? '（Imagen-4.0 仅支持文生图，上传参考图会被拦截）' : (imageModelKey(model).includes('grok-imagine') ? '（Grok 生成不传 resolution；Grok Edit 会走 /v1/images/edits）' : ''));
