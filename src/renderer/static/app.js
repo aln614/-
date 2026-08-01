@@ -7758,7 +7758,7 @@ async function loadMjDescribeOutput(){
     const rows = Array.isArray(ret.rows) ? ret.rows : [];
     if(!rows.length){ box.innerHTML = '<div class="mj-inline-note">暂无图生文任务结果。</div>'; return; }
     box.innerHTML = rows.map(row=>{
-      const text = (Array.isArray(row.text_outputs) && row.text_outputs.length) ? row.text_outputs.join('\n\n') : '等待返回文本结果...';
+      const text = mjDescribeResultText(row);
       const fullUrl = withPublicAccess(row.full_url || row.source_image_url || '');
       const img = withPublicAccess(row.thumb_url || row.full_url || row.source_image_url || '');
       return `<div class="mj-describe-item collapsed" data-desc-id="${escapeHtml(row.local_task_id || row.task_id || '')}">
@@ -7777,6 +7777,25 @@ async function loadMjDescribeOutput(){
       });
     });
   }catch(e){ box.innerHTML = `<div class="mj-inline-note">加载图生文记录失败：${escapeHtml(e.message || e)}</div>`; }
+}
+
+function mjDescribeResultText(row={}){
+  const outputs = Array.isArray(row.text_outputs) ? row.text_outputs.map(v=>String(v || '').trim()).filter(Boolean) : [];
+  if(outputs.length) return outputs.join('\n\n');
+  const status = String(row.status || '').trim();
+  const statusLower = status.toLowerCase();
+  const terminalError = /失败|fail|error|cancel|取消|超时|timeout/.test(statusLower);
+  if(terminalError){
+    const candidates = [row.error_message, row.fail_reason, row.error, row.progress_text, row.raw?.fail_reason, row.raw?.error_message, row.raw?.error, row.raw?.reason];
+    for(const value of candidates){
+      if(value == null) continue;
+      const text = typeof value === 'string' ? value.trim() : (typeof value === 'object' ? JSON.stringify(value) : String(value).trim());
+      if(text) return text;
+    }
+    return /cancel|取消/.test(statusLower) ? '任务已取消，未返回文本结果。' : '任务失败，未返回文本结果。';
+  }
+  if(/已完成|success|succeed|completed|done|finish/.test(statusLower)) return '任务已完成，但接口未返回文本结果。';
+  return '等待返回文本结果...';
 }
 
 async function collectMjFormData(){

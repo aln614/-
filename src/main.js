@@ -7393,6 +7393,7 @@ async function apiHandler(req, res, parsed) {
           try { submission = JSON.parse(t.mj_submission_json || '{}') || {}; } catch {}
           const raw = safeJsonParse(t.mj_query_raw_json || '{}', {});
           texts = normalizeDescribePromptTexts(texts.length ? texts : pickMidjourneyTextOutputs(raw));
+          const errorMessage = String(t.error_message || pickMidjourneyFailureReason({ raw }) || '').trim();
           const batch = st.batches.find(b=>b.id===t.batch_id) || {};
           const firstRef = refs[0] || {};
           const localPath = t.main_image_path || firstRef.file_path || firstRef.local_path || '';
@@ -7411,6 +7412,9 @@ async function apiHandler(req, res, parsed) {
             batch_name: batch.note || batch.name || '',
             status: t.status || '',
             progress: Number(t.progress || 0),
+            progress_text: t.progress_text || '',
+            error_message: errorMessage,
+            fail_reason: errorMessage,
             created_at: t.created_at || '',
             updated_at: t.updated_at || '',
             prompt: t.prompt || '',
@@ -7515,7 +7519,14 @@ function requestHandler(req, res) {
   }
   const file = safeJoinStatic(parsed.pathname);
   if (!file || !fs.existsSync(file) || fs.statSync(file).isDirectory()) return sendText(res, 'not found', 'text/plain', 404);
-  res.writeHead(200, {...BASE_SECURITY_HEADERS, 'Content-Type': contentType(file)}); fs.createReadStream(file).pipe(res);
+  const extension = path.extname(file).toLowerCase();
+  const appCode = extension === '.html' || extension === '.js' || extension === '.css';
+  res.writeHead(200, {
+    ...BASE_SECURITY_HEADERS,
+    'Content-Type': contentType(file),
+    'Cache-Control': appCode ? 'no-cache, no-store, must-revalidate' : 'public, max-age=86400'
+  });
+  fs.createReadStream(file).pipe(res);
 }
 function startServer(port, retryCount = 0) {
   const desiredPort = Number(port || readConfig().port || 7861);
