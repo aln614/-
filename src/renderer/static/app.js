@@ -1880,9 +1880,12 @@ function normalizeAgentConversation(row = {}){
   const messages = Array.isArray(row.messages)
     ? row.messages.filter(message => message && (message.role === 'user' || message.role === 'assistant') && typeof message.text === 'string').slice(-80)
     : [];
+  const savedTitle = String(row.title || '').trim();
+  const customTitle = !!row.custom_title && !!savedTitle;
   return {
     id: String(row.id || `agent_chat_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`),
-    title: String(row.title || agentConversationTitle(messages) || '新对话').trim() || '新对话',
+    title: customTitle ? savedTitle : (savedTitle || agentConversationTitle(messages) || '新对话'),
+    custom_title: customTitle,
     messages,
     created_at: Number(row.created_at || Date.now()),
     updated_at: Number(row.updated_at || row.created_at || Date.now())
@@ -1893,7 +1896,7 @@ function syncCurrentAgentConversation(){
   const current = agentConversations.find(row => row.id === currentAgentConversationId);
   if(!current) return;
   current.messages = agentMessages.slice(-80);
-  current.title = agentConversationTitle(current.messages);
+  if(!current.custom_title) current.title = agentConversationTitle(current.messages);
   current.updated_at = Date.now();
 }
 function updateAgentConversationLabel(){
@@ -1990,7 +1993,10 @@ function renameAgentConversation(id, item){
     if(finished) return;
     finished = true;
     const next = String(input.value || '').replace(/\s+/g, ' ').trim();
-    if(save && next) current.title = next;
+    if(save && next){
+      current.title = next;
+      current.custom_title = true;
+    }
     current.updated_at = Date.now();
     persistAgentHistory();
     renderAgentHistory();
@@ -2385,7 +2391,8 @@ function restoreAgentWindowFromOrb(){
   bringFloatingLayer('#agentPopoutModal', '#agentFloatingWindow');
 }
 function setupAgentFloatingWindow(){
-  makeFloatingBox('agentFloatingWindow','agentFloatingHead','agentFloatingResize');
+  makeFloatingBox('agentFloatingWindow','agentFloatingHead',null);
+  setupAgentWindowResize();
   const orb = $('#agentOrb');
   if(orb && !orb.dataset.dragReady){
     orb.dataset.dragReady = '1';
@@ -2407,6 +2414,65 @@ function setupAgentFloatingWindow(){
     });
     document.addEventListener('mouseup', ()=>{ agentOrbDragging = false; });
   }
+}
+function setupAgentWindowResize(){
+  const win = $('#agentFloatingWindow');
+  const handle = $('#agentFloatingResize');
+  if(!win || !handle || handle.dataset.resizeReady) return;
+  handle.dataset.resizeReady = '1';
+  let resizing = false;
+  let pointerId = null;
+  let startX = 0;
+  let startY = 0;
+  let startWidth = 0;
+  let startHeight = 0;
+  let nextWidth = 0;
+  let nextHeight = 0;
+  const begin = event => {
+    if(resizing || (event.button !== undefined && event.button !== 0)) return;
+    const rect = win.getBoundingClientRect();
+    resizing = true;
+    pointerId = event.pointerId ?? null;
+    startX = event.clientX;
+    startY = event.clientY;
+    startWidth = rect.width;
+    startHeight = rect.height;
+    nextWidth = startWidth;
+    nextHeight = startHeight;
+    win.classList.add('agent-resizing');
+    document.body.classList.add('agent-resize-active');
+    if(pointerId !== null){
+      try{ handle.setPointerCapture(pointerId); }catch(e){}
+    }
+    event.preventDefault();
+    event.stopPropagation();
+  };
+  const move = event => {
+    if(!resizing || (pointerId !== null && event.pointerId !== undefined && event.pointerId !== pointerId)) return;
+    const rect = win.getBoundingClientRect();
+    const maxWidth = Math.max(540, window.innerWidth - rect.left - 12);
+    const maxHeight = Math.max(480, window.innerHeight - rect.top - 12);
+    nextWidth = Math.min(maxWidth, Math.max(540, startWidth + event.clientX - startX));
+    nextHeight = Math.min(maxHeight, Math.max(480, startHeight + event.clientY - startY));
+    applyAgentWindowSize(nextWidth, nextHeight, false);
+    event.preventDefault();
+  };
+  const finish = event => {
+    if(!resizing || (pointerId !== null && event?.pointerId !== undefined && event.pointerId !== pointerId)) return;
+    resizing = false;
+    if(pointerId !== null){
+      try{ handle.releasePointerCapture(pointerId); }catch(e){}
+    }
+    pointerId = null;
+    win.classList.remove('agent-resizing');
+    document.body.classList.remove('agent-resize-active');
+    applyAgentWindowSize(nextWidth, nextHeight, true);
+  };
+  handle.addEventListener('pointerdown', begin, true);
+  window.addEventListener('pointermove', move, true);
+  window.addEventListener('pointerup', finish, true);
+  window.addEventListener('pointercancel', finish, true);
+  handle.addEventListener('contextmenu', event => event.preventDefault());
 }
 function applyAgentWindowSize(width, height, persist = false){
   const win = $('#agentFloatingWindow');
@@ -2433,22 +2499,16 @@ function setupAgent(){
   }
   const toolbar = $('.agent-toolbar');
   if(toolbar && !toolbar.dataset.layoutReady){
-    const label = toolbar.querySelector('label');
-    const sync = $('#agentSyncChatModelBtn');
     const status = $('#agentApiStatus');
-    const modelField = document.createElement('div');
     const statusRow = document.createElement('div');
     const current = document.createElement('span');
-    modelField.className = 'agent-model-field';
     statusRow.className = 'agent-toolbar-status';
     current.className = 'agent-current-conversation';
     current.id = 'agentCurrentConversation';
     current.textContent = '新对话';
-    if(label) modelField.appendChild(label);
-    if(sync) modelField.appendChild(sync);
     if(status) statusRow.appendChild(status);
     statusRow.appendChild(current);
-    toolbar.replaceChildren(modelField, statusRow);
+    toolbar.replaceChildren(statusRow);
     toolbar.dataset.layoutReady = '1';
   }
   setupAgentFloatingWindow();
@@ -2457,6 +2517,7 @@ function setupAgent(){
   $('#newAgentConversationBtn')?.addEventListener('click', createNewAgentConversation);
   $('#agentHistoryBtn')?.addEventListener('click', toggleAgentHistory);
   $('#closeAgentHistoryBtn')?.addEventListener('click', ()=>{ $('#agentHistoryPanel')?.classList.remove('show'); if($('#agentHistoryPanel')) $('#agentHistoryPanel').hidden = true; });
+  let historySelectTimer = null;
   $('#agentHistoryList')?.addEventListener('click', event=>{
     const deleteButton = event.target.closest('[data-delete-agent-conversation]');
     if(deleteButton){
@@ -2466,11 +2527,19 @@ function setupAgent(){
       return;
     }
     const item = event.target.closest('[data-agent-conversation-id]');
-    if(item) selectAgentConversation(item.dataset.agentConversationId);
+    if(!item || item.dataset.renaming === '1' || event.target.closest('.agent-history-rename-input')) return;
+    clearTimeout(historySelectTimer);
+    historySelectTimer = setTimeout(()=>{
+      if(item.isConnected && item.dataset.renaming !== '1') selectAgentConversation(item.dataset.agentConversationId);
+    }, 220);
   });
   $('#agentHistoryList')?.addEventListener('dblclick', event=>{
     const item = event.target.closest('[data-agent-conversation-id]');
-    if(item && !event.target.closest('[data-delete-agent-conversation]')) renameAgentConversation(item.dataset.agentConversationId, item);
+    if(!item || event.target.closest('[data-delete-agent-conversation]')) return;
+    clearTimeout(historySelectTimer);
+    event.preventDefault();
+    event.stopPropagation();
+    renameAgentConversation(item.dataset.agentConversationId, item);
   });
   $('#closeAgentWindow')?.addEventListener('click', closeAgentWindow);
   $('#minimizeAgentWindow')?.addEventListener('click', minimizeAgentWindow);
@@ -2495,13 +2564,6 @@ function setupAgent(){
   });
   renderAgentAttachments();
   $('#agentModelPreset')?.addEventListener('change', ()=>{ agentConfig.model = $('#agentModelPreset').value; saveAgentConfig(); });
-  $('#agentSyncChatModelBtn')?.addEventListener('click', ()=>{
-    const model = $('#chatModel')?.value || 'gpt-5.5';
-    agentConfig.model = model;
-    renderAgentModelOptions();
-    saveAgentConfig();
-    toast('Agent 已同步 AI聊天模型');
-  });
   $('#agentPopoutModal')?.addEventListener('pointerdown', ()=>bringFloatingLayer('#agentPopoutModal','#agentFloatingWindow'), true);
 }
 function clearChat(){

@@ -731,8 +731,6 @@
       </div>
       <div class="agent-window-body">
         <div class="agent-toolbar">
-          <label><span>模型</span><select id="agentModelPreset"></select></label>
-          <button class="secondary" id="agentSyncChatModelBtn" type="button">同步 AI聊天模型</button>
           <span class="agent-api-status" id="agentApiStatus">APIMart API Key：检查中</span>
         </div>
         <div class="agent-messages" id="agentMessages"></div>
@@ -741,6 +739,7 @@
           <textarea id="agentInput" placeholder="告诉 Agent 你想完成什么，例如：帮我规划一组电商主图提示词"></textarea>
           <div class="agent-composer-foot">
             <span id="agentThinkingBadge"></span>
+            <label class="agent-composer-model" title="选择 Agent 模型"><span>模型</span><select id="agentModelPreset" aria-label="Agent 模型"></select></label>
             <button class="primary" id="sendAgentBtn" type="button">发送</button>
           </div>
         </div>
