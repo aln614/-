@@ -4164,6 +4164,121 @@ async function writeChatHistory(owner = '', payload = {}, cfg = readConfig()) {
   finally { if (chatHistoryWriteChains.get(key) === write) chatHistoryWriteChains.delete(key); }
 }
 
+const agentHistoryCache = new Map();
+const agentHistoryWriteChains = new Map();
+function agentHistoryStoragePaths(owner = '', cfg = readConfig()) {
+  const filename = `${chatHistoryOwnerKey(owner)}.json`;
+  const outputRuntime = runtimeMirrorDir(cfg);
+  const outputFile = outputRuntime ? path.join(outputRuntime, 'agent_history', filename) : '';
+  const localFile = path.join(DATA_ROOT, 'data', 'agent_history', filename);
+  // Keep the configured output directory first. When two copies have identical
+  // mtimes (common on NAS shares), the output-directory copy wins deterministically.
+  return uniqueExistingPaths([outputFile, localFile]);
+}
+function agentHistoryStorageMeta(owner = '', cfg = readConfig()) {
+  const filename = `${chatHistoryOwnerKey(owner)}.json`;
+  const outputRuntime = runtimeMirrorDir(cfg);
+  const outputFile = outputRuntime ? path.join(outputRuntime, 'agent_history', filename) : '';
+  const localFile = path.join(DATA_ROOT, 'data', 'agent_history', filename);
+  return {
+    output_configured: !!outputFile,
+    storage_dir: outputRuntime || path.dirname(localFile),
+    storage_file: outputFile || localFile,
+    local_backup_file: localFile
+  };
+}
+async function writeHistoryJsonAtomic(file, json) {
+  const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
+  await fs.promises.mkdir(path.dirname(file), { recursive:true });
+  await fs.promises.writeFile(temporary, json, 'utf8');
+  try {
+    await fs.promises.rename(temporary, file);
+  } catch (error) {
+    // Some SMB/NAS configurations briefly lock an existing destination. Copying
+    // is a safe fallback and retains a valid previous JSON file until it succeeds.
+    await fs.promises.copyFile(temporary, file);
+    await fs.promises.unlink(temporary).catch(()=>{});
+  }
+}
+function normalizeAgentHistoryPayload(payload = {}) {
+  const conversations = Array.isArray(payload.conversations) ? payload.conversations : [];
+  return {
+    version: 1,
+    current_agent_conversation_id: String(payload.current_agent_conversation_id || ''),
+    updated_at: new Date().toISOString(),
+    conversations: conversations
+      .filter(item => item && typeof item === 'object' && String(item.id || '').trim())
+      .map(item => ({
+        ...item,
+        id: String(item.id || '').slice(0, 160),
+        title: String(item.title || 'New conversation').slice(0, 500),
+        custom_title: item.custom_title === true,
+        created_at: Number(item.created_at || Date.now()),
+        updated_at: Number(item.updated_at || item.created_at || Date.now()),
+        messages: Array.isArray(item.messages)
+          ? item.messages.filter(message => message && typeof message === 'object').map(message => ({ ...message, streaming:false }))
+          : []
+      }))
+      .sort((a, b) => Number(b.updated_at || b.created_at || 0) - Number(a.updated_at || a.created_at || 0))
+  };
+}
+async function readAgentHistory(owner = '', cfg = readConfig()) {
+  const key = chatHistoryOwnerKey(owner);
+  const storage = agentHistoryStorageMeta(key, cfg);
+  const cached = agentHistoryCache.get(key);
+  if (cached) return { ok:true, ...cached, storage:storage.output_configured ? 'output' : 'local', ...storage };
+  const candidates = [];
+  for (const file of agentHistoryStoragePaths(key, cfg)) {
+    try {
+      const stat = await fs.promises.stat(file);
+      candidates.push({ file, mtime:stat.mtimeMs });
+    } catch {}
+  }
+  candidates.sort((a, b) => b.mtime - a.mtime);
+  for (const candidate of candidates) {
+    try {
+      const normalized = normalizeAgentHistoryPayload(JSON.parse(await fs.promises.readFile(candidate.file, 'utf8')));
+      agentHistoryCache.set(key, normalized);
+      return { ok:true, ...normalized, storage:storage.output_configured ? 'output' : 'local', ...storage };
+    } catch {}
+  }
+  const empty = normalizeAgentHistoryPayload({ conversations:[], current_agent_conversation_id:'' });
+  agentHistoryCache.set(key, empty);
+  return { ok:true, ...empty, storage:storage.output_configured ? 'output' : 'local', ...storage };
+}
+async function writeAgentHistory(owner = '', payload = {}, cfg = readConfig()) {
+  const key = chatHistoryOwnerKey(owner);
+  const storage = agentHistoryStorageMeta(key, cfg);
+  const normalized = normalizeAgentHistoryPayload(payload);
+  agentHistoryCache.set(key, normalized);
+  const previous = agentHistoryWriteChains.get(key) || Promise.resolve();
+  const write = previous.catch(()=>{}).then(async () => {
+    const json = JSON.stringify(normalized);
+    let written = 0;
+    let outputWritten = false;
+    let lastError = null;
+    for (const file of agentHistoryStoragePaths(key, cfg)) {
+      try {
+        await writeHistoryJsonAtomic(file, json);
+        written += 1;
+        if (storage.output_configured && pathKey(file) === pathKey(storage.storage_file)) outputWritten = true;
+      } catch (error) { lastError = error; }
+    }
+    if (!written && lastError) throw lastError;
+    return {
+      ok:true,
+      count:normalized.conversations.length,
+      updated_at:normalized.updated_at,
+      storage:outputWritten ? 'output' : 'local',
+      output_sync_pending:storage.output_configured && !outputWritten,
+      ...storage
+    };
+  });
+  agentHistoryWriteChains.set(key, write);
+  try { return await write; }
+  finally { if (agentHistoryWriteChains.get(key) === write) agentHistoryWriteChains.delete(key); }
+}
+
 const outputMediaIndexState = {
   running:false,
   root:'',
@@ -7316,6 +7431,11 @@ async function apiHandler(req, res, parsed) {
     if (method === 'POST' && p === '/api/chat_history') {
       const body = await readBody(req);
       return send(res, await writeChatHistory(deviceOwner, body, cfg));
+    }
+    if (method === 'GET' && p === '/api/agent_history') return send(res, await readAgentHistory(deviceOwner, cfg));
+    if (method === 'POST' && p === '/api/agent_history') {
+      const body = await readBody(req);
+      return send(res, await writeAgentHistory(deviceOwner, body, cfg));
     }
     if (method === 'GET' && p === '/api/output_media_index_status') return send(res, {ok:true, ...outputMediaIndexState});
     if (method === 'POST' && p === '/api/reindex_output_media') {

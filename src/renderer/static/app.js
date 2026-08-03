@@ -111,6 +111,12 @@ let agentSending = false;
 let agentAttachments = [];
 let agentConfig = { model:'', image_model:'', video_model:'', system_prompt:AGENT_DEFAULT_SYSTEM_PROMPT };
 const agentResultTimers = new Map();
+let agentHistoryHydrated = false;
+let agentHistoryHydrationPromise = null;
+let agentHistorySyncTimer = 0;
+let agentHistorySyncing = false;
+let agentHistorySyncQueued = false;
+let agentHistoryStorageInfo = null;
 let agentOrbDragging = false;
 let agentOrbDrag = {sx:0, sy:0, sl:0, st:0};
 let runtimeConfigSnapshot = {};
@@ -1987,13 +1993,97 @@ function renderAgentHistory(){
   }).join('') || '<div class="agent-history-empty">暂无对话历史</div>';
   updateAgentConversationLabel();
 }
-function persistAgentHistory(){
+function mergeAgentConversationLists(localList = [], remoteList = []){
+  const merged = new Map();
+  [...remoteList, ...localList].forEach(row=>{
+    if(!row?.id) return;
+    const current = merged.get(row.id);
+    if(!current || Number(row.updated_at || row.created_at || 0) >= Number(current.updated_at || current.created_at || 0)) merged.set(row.id, normalizeAgentConversation(row));
+  });
+  let rows = [...merged.values()].sort((a,b)=>Number(b.updated_at || b.created_at || 0) - Number(a.updated_at || a.created_at || 0));
+  if(rows.length > 1) rows = rows.filter(row => (row.messages || []).length || row.custom_title || row.title !== '新对话');
+  return rows;
+}
+function agentHistoryPayload(){
+  return {
+    current_agent_conversation_id: currentAgentConversationId,
+    conversations: agentConversations.slice(0, 60).map(row => ({...row, messages:agentPersistableMessages(row.messages || [])}))
+  };
+}
+function updateAgentHistoryStorageStatus(info = agentHistoryStorageInfo){
+  const status = $('#agentHistoryStorageStatus');
+  if(!status) return;
+  const configured = !!info?.output_configured;
+  const file = String(info?.storage_file || '').trim();
+  status.classList.toggle('missing', !configured);
+  status.classList.toggle('pending', !!info?.output_sync_pending);
+  if(!configured){
+    status.textContent = '对话记录：请先在设置中心配置输出目录';
+    status.title = status.textContent;
+    return;
+  }
+  status.textContent = info?.output_sync_pending
+    ? '对话记录：输出目录暂时不可写入，将自动重试'
+    : `对话记录：${file}`;
+  status.title = file || status.textContent;
+}
+async function flushAgentHistorySync(){
+  if(!agentHistoryHydrated){ agentHistorySyncQueued = true; return; }
+  if(agentHistorySyncing){ agentHistorySyncQueued = true; return; }
+  agentHistorySyncing = true;
+  agentHistorySyncQueued = false;
+  try{
+    const result = await api('/api/agent_history',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(agentHistoryPayload())});
+    agentHistoryStorageInfo = result || agentHistoryStorageInfo;
+    updateAgentHistoryStorageStatus();
+    if(result?.output_sync_pending) queueAgentHistorySync(5000);
+  }catch(error){
+    console.warn('Agent 历史写入输出目录失败，已保留浏览器本地缓存', error);
+  }finally{
+    agentHistorySyncing = false;
+    if(agentHistorySyncQueued){ agentHistorySyncQueued = false; queueAgentHistorySync(500); }
+  }
+}
+function queueAgentHistorySync(delay = 450){
+  if(!agentHistoryHydrated){ agentHistorySyncQueued = true; return; }
+  clearTimeout(agentHistorySyncTimer);
+  agentHistorySyncTimer = window.setTimeout(()=>{ agentHistorySyncTimer = 0; flushAgentHistorySync(); }, Math.max(0, Number(delay || 0)));
+}
+async function hydrateAgentHistoryFromOutput(){
+  if(agentHistoryHydrated) return;
+  if(agentHistoryHydrationPromise) return agentHistoryHydrationPromise;
+  agentHistoryHydrationPromise = api('/api/agent_history').then(ret=>{
+    agentHistoryStorageInfo = ret || agentHistoryStorageInfo;
+    const remoteRows = Array.isArray(ret?.conversations) ? ret.conversations.map(normalizeAgentConversation) : [];
+    const merged = mergeAgentConversationLists(agentConversations, remoteRows);
+    agentConversations = merged.length ? merged : [normalizeAgentConversation({})];
+    const preferred = String(currentAgentConversationId || ret?.current_agent_conversation_id || '');
+    currentAgentConversationId = agentConversations.some(row=>row.id === preferred) ? preferred : agentConversations[0].id;
+    agentMessages = (agentConversations.find(row=>row.id === currentAgentConversationId)?.messages || []).slice(-80);
+    agentHistoryHydrated = true;
+    persistAgentHistory({immediate:true});
+    renderAgentMessages();
+    renderAgentHistory();
+    updateAgentHistoryStorageStatus();
+    return ret;
+  }).catch(error=>{
+    console.warn('读取 Agent 输出目录历史失败，继续使用浏览器本地缓存', error);
+    // Keep future changes eligible for sync. Otherwise one temporary NAS/network
+    // error leaves this renderer permanently stuck in the pre-hydration state.
+    agentHistoryHydrated = true;
+    updateAgentHistoryStorageStatus();
+    return null;
+  }).finally(()=>{ agentHistoryHydrationPromise = null; });
+  return agentHistoryHydrationPromise;
+}
+function persistAgentHistory(opts = {}){
   syncCurrentAgentConversation();
   try{
-    const persisted = agentConversations.slice(0, 60).map(row => ({...row, messages:agentPersistableMessages(row.messages || [])}));
+    const persisted = agentHistoryPayload().conversations;
     localStorage.setItem(AGENT_CONVERSATIONS_KEY, JSON.stringify(persisted));
     localStorage.setItem(AGENT_HISTORY_KEY, JSON.stringify(agentPersistableMessages(agentMessages.slice(-80))));
   }catch(e){}
+  queueAgentHistorySync(opts.immediate ? 0 : 450);
   renderAgentHistory();
 }
 function loadAgentHistory(){
@@ -2014,6 +2104,7 @@ function loadAgentHistory(){
   agentMessages = (agentConversations.find(row => row.id === currentAgentConversationId)?.messages || []).slice(-80);
   renderAgentMessages();
   renderAgentHistory();
+  hydrateAgentHistoryFromOutput().catch(()=>{});
 }
 function createNewAgentConversation(){
   if(agentSending) return toast('当前 Agent 正在执行，请完成后再新建对话');
@@ -2638,12 +2729,16 @@ function setupAgent(){
     const status = $('#agentApiStatus');
     const statusRow = document.createElement('div');
     const current = document.createElement('span');
+    const storage = document.createElement('span');
     statusRow.className = 'agent-toolbar-status';
     current.className = 'agent-current-conversation';
     current.id = 'agentCurrentConversation';
     current.textContent = '新对话';
+    storage.className = 'agent-history-storage-status';
+    storage.id = 'agentHistoryStorageStatus';
     if(status) statusRow.appendChild(status);
     statusRow.appendChild(current);
+    statusRow.appendChild(storage);
     toolbar.replaceChildren(statusRow);
     toolbar.dataset.layoutReady = '1';
   }
@@ -2700,6 +2795,7 @@ function setupAgent(){
     }
   });
   renderAgentAttachments();
+  updateAgentHistoryStorageStatus();
   $('#agentModelPreset')?.addEventListener('change', ()=>{ agentConfig.model = $('#agentModelPreset').value; saveAgentConfig(); });
   $('#agentImageModelPreset')?.addEventListener('change', ()=>{ agentConfig.image_model = $('#agentImageModelPreset').value; saveAgentConfig(); });
   $('#agentVideoModelPreset')?.addEventListener('change', ()=>{ agentConfig.video_model = $('#agentVideoModelPreset').value; saveAgentConfig(); });
@@ -3292,6 +3388,8 @@ async function handleConfigSave(payload, successMsg='当前设置已保存'){
     const ret = await api('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     toast(successMsg || '当前设置已保存到主机本地');
     if(ret.config){
+      const previousOutputDir = String(runtimeConfigSnapshot?.output_dir || '').trim();
+      runtimeConfigSnapshot = {...runtimeConfigSnapshot, ...ret.config};
       updateLanDisplay(ret.config);
       updateAppTitle(ret.config.app_name || payload.app_name || 'TENYING_AI 1.0');
       if($('#appName')) $('#appName').value = ret.config.app_name || payload.app_name || 'TENYING_AI 1.0';
@@ -3299,6 +3397,14 @@ async function handleConfigSave(payload, successMsg='当前设置已保存'){
       if($('#clarity')) $('#clarity').value = ret.config.clarity || payload.clarity || '1K';
       if($('#claritySettings')) $('#claritySettings').value = ret.config.clarity || payload.clarity || '1K';
       updateRuntimeDataDirHint(ret.config);
+      if(previousOutputDir !== String(ret.config.output_dir || '').trim()){
+        agentHistoryStorageInfo = null;
+        // A configured output directory is also the durable home for Agent
+        // conversations. Push the current in-memory history to a new location
+        // immediately rather than waiting for the next chat message.
+        if(agentHistoryHydrated) queueAgentHistorySync(0);
+        else hydrateAgentHistoryFromOutput().catch(()=>{});
+      }
       applySkinSettings(ret.config.skin_id || payload.skin_id || 'classic', (typeof ret.config.mascot_enabled === 'boolean' ? ret.config.mascot_enabled : payload.mascot_enabled) !== false);
       applyThemeMode(ret.config.theme_mode || payload.theme_mode || 'auto');
       enableKeepAlive($('#backgroundKeepalive')?.checked);
