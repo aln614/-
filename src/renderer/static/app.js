@@ -101,10 +101,14 @@ const CHAT_CONFIG_KEY = 'local_api_image_generator_chat_config_v1498';
 const CHAT_HISTORY_KEY = 'local_api_image_generator_chat_conversations_v1498';
 const AGENT_CONFIG_KEY = 'local_api_image_generator_agent_config_v1498';
 const AGENT_HISTORY_KEY = 'local_api_image_generator_agent_history_v1498';
+const AGENT_CONVERSATIONS_KEY = 'local_api_image_generator_agent_conversations_v1498';
 const AGENT_WINDOW_SIZE_KEY = 'local_api_image_generator_agent_window_size_v1498';
 const AGENT_DEFAULT_SYSTEM_PROMPT = '你是 TENYING AI 的程序 Agent。你拥有调用程序内工具完成任务的能力。先判断用户目标，再选择最少且正确的工具；工具返回成功后，明确告诉用户已完成的操作，工具返回权限错误时如实说明。不要编造工具结果，不要调用程序外的系统命令、外部网址或读取未授权数据。';
 let agentMessages = [];
+let agentConversations = [];
+let currentAgentConversationId = '';
 let agentSending = false;
+let agentAttachments = [];
 let agentConfig = { model:'', system_prompt:AGENT_DEFAULT_SYSTEM_PROMPT };
 let agentOrbDragging = false;
 let agentOrbDrag = {sx:0, sy:0, sl:0, st:0};
@@ -1857,15 +1861,169 @@ function renderAgentMessages(){
   }).join('');
   box.scrollTop = box.scrollHeight;
 }
-function persistAgentHistory(){
+function legacyPersistAgentHistory(){
   try{ localStorage.setItem(AGENT_HISTORY_KEY, JSON.stringify(agentMessages.slice(-80))); }catch(e){}
 }
-function loadAgentHistory(){
+function legacyLoadAgentHistory(){
   try{
     const rows = JSON.parse(localStorage.getItem(AGENT_HISTORY_KEY) || '[]');
     agentMessages = Array.isArray(rows) ? rows.filter(row=>row && (row.role === 'user' || row.role === 'assistant') && typeof row.text === 'string').slice(-80) : [];
   }catch(e){ agentMessages = []; }
   renderAgentMessages();
+}
+function agentConversationTitle(messages = []){
+  const first = (messages || []).find(message => message && message.role === 'user' && String(message.text || '').trim());
+  const text = String(first?.text || '').replace(/\s+/g, ' ').trim();
+  return text ? text.slice(0, 32) : '新对话';
+}
+function normalizeAgentConversation(row = {}){
+  const messages = Array.isArray(row.messages)
+    ? row.messages.filter(message => message && (message.role === 'user' || message.role === 'assistant') && typeof message.text === 'string').slice(-80)
+    : [];
+  return {
+    id: String(row.id || `agent_chat_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`),
+    title: String(row.title || agentConversationTitle(messages) || '新对话').trim() || '新对话',
+    messages,
+    created_at: Number(row.created_at || Date.now()),
+    updated_at: Number(row.updated_at || row.created_at || Date.now())
+  };
+}
+function syncCurrentAgentConversation(){
+  if(!currentAgentConversationId) return;
+  const current = agentConversations.find(row => row.id === currentAgentConversationId);
+  if(!current) return;
+  current.messages = agentMessages.slice(-80);
+  current.title = agentConversationTitle(current.messages);
+  current.updated_at = Date.now();
+}
+function updateAgentConversationLabel(){
+  const label = $('#agentCurrentConversation');
+  if(!label) return;
+  const current = agentConversations.find(row => row.id === currentAgentConversationId);
+  label.textContent = current?.title || '新对话';
+  label.title = current?.title || '新对话';
+}
+function renderAgentHistory(){
+  const panel = $('#agentHistoryPanel');
+  const list = $('#agentHistoryList');
+  if(!panel || !list) return;
+  const rows = [...agentConversations].sort((a,b) => Number(b.updated_at || 0) - Number(a.updated_at || 0));
+  list.innerHTML = rows.map(row => {
+    const active = row.id === currentAgentConversationId ? ' active' : '';
+    const count = Array.isArray(row.messages) ? row.messages.length : 0;
+    const time = row.updated_at ? new Date(row.updated_at).toLocaleString() : '';
+    return `<div class="agent-history-item${active}" data-agent-conversation-id="${escapeHtml(row.id)}" role="button" tabindex="0"><span class="agent-history-item-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14v11a2 2 0 0 1-2 2H9l-4 3V5Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg></span><span class="agent-history-item-copy"><strong>${escapeHtml(row.title || '新对话')}</strong><small>${escapeHtml(time)} · ${count} 条消息</small></span><button type="button" class="agent-history-delete" data-delete-agent-conversation="${escapeHtml(row.id)}" title="删除对话" aria-label="删除对话"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M10 7V4h4v3m-7 0 1 13h8l1-13M10 11v5m4-5v5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div>`;
+  }).join('') || '<div class="agent-history-empty">暂无对话历史</div>';
+  updateAgentConversationLabel();
+}
+function persistAgentHistory(){
+  syncCurrentAgentConversation();
+  try{
+    const persisted = agentConversations.slice(0, 60).map(row => ({...row, messages:agentPersistableMessages(row.messages || [])}));
+    localStorage.setItem(AGENT_CONVERSATIONS_KEY, JSON.stringify(persisted));
+    localStorage.setItem(AGENT_HISTORY_KEY, JSON.stringify(agentPersistableMessages(agentMessages.slice(-80))));
+  }catch(e){}
+  renderAgentHistory();
+}
+function loadAgentHistory(){
+  let rows = [];
+  try{
+    const saved = JSON.parse(localStorage.getItem(AGENT_CONVERSATIONS_KEY) || '[]');
+    if(Array.isArray(saved)) rows = saved.map(normalizeAgentConversation);
+  }catch(e){}
+  if(!rows.length){
+    try{
+      const legacy = JSON.parse(localStorage.getItem(AGENT_HISTORY_KEY) || '[]');
+      if(Array.isArray(legacy) && legacy.length) rows = [normalizeAgentConversation({id:`agent_chat_legacy_${Date.now()}`, messages:legacy, title:agentConversationTitle(legacy)})];
+    }catch(e){}
+  }
+  if(!rows.length) rows = [normalizeAgentConversation({})];
+  agentConversations = rows;
+  if(!currentAgentConversationId || !agentConversations.some(row => row.id === currentAgentConversationId)) currentAgentConversationId = agentConversations[0].id;
+  agentMessages = (agentConversations.find(row => row.id === currentAgentConversationId)?.messages || []).slice(-80);
+  renderAgentMessages();
+  renderAgentHistory();
+}
+function createNewAgentConversation(){
+  if(agentSending) return toast('当前 Agent 正在执行，请完成后再新建对话');
+  persistAgentHistory();
+  const next = normalizeAgentConversation({title:'新对话', messages:[]});
+  agentConversations.unshift(next);
+  currentAgentConversationId = next.id;
+  agentMessages = [];
+  persistAgentHistory();
+  renderAgentMessages();
+  renderAgentHistory();
+  $('#agentHistoryPanel')?.classList.remove('show');
+  if($('#agentHistoryPanel')) $('#agentHistoryPanel').hidden = true;
+  $('#agentInput')?.focus();
+  toast('已新建 Agent 对话');
+}
+function selectAgentConversation(id){
+  if(agentSending) return toast('当前 Agent 正在执行，请完成后再切换对话');
+  const nextId = String(id || '');
+  const next = agentConversations.find(row => row.id === nextId);
+  if(!next) return;
+  persistAgentHistory();
+  currentAgentConversationId = next.id;
+  agentMessages = next.messages.slice(-80);
+  renderAgentMessages();
+  renderAgentHistory();
+  $('#agentHistoryPanel')?.classList.remove('show');
+  if($('#agentHistoryPanel')) $('#agentHistoryPanel').hidden = true;
+}
+function renameAgentConversation(id, item){
+  if(agentSending) return toast('当前 Agent 正在执行，请完成后再重命名');
+  const current = agentConversations.find(row => row.id === String(id || ''));
+  const strong = item?.querySelector('.agent-history-item-copy strong');
+  if(!current || !strong || item.dataset.renaming === '1') return;
+  item.dataset.renaming = '1';
+  const input = document.createElement('input');
+  input.className = 'agent-history-rename-input';
+  input.value = current.title || '新对话';
+  input.maxLength = 80;
+  strong.replaceWith(input);
+  input.focus();
+  input.select();
+  let finished = false;
+  const finish = save => {
+    if(finished) return;
+    finished = true;
+    const next = String(input.value || '').replace(/\s+/g, ' ').trim();
+    if(save && next) current.title = next;
+    current.updated_at = Date.now();
+    persistAgentHistory();
+    renderAgentHistory();
+  };
+  input.addEventListener('keydown', event => {
+    if(event.key === 'Enter'){ event.preventDefault(); finish(true); }
+    if(event.key === 'Escape'){ event.preventDefault(); finish(false); }
+  });
+  input.addEventListener('blur', () => finish(true));
+}
+function deleteAgentConversation(id){
+  if(agentSending) return toast('当前 Agent 正在执行，请完成后再删除');
+  const targetId = String(id || '');
+  if(!targetId) return;
+  agentConversations = agentConversations.filter(row => row.id !== targetId);
+  if(!agentConversations.length) agentConversations = [normalizeAgentConversation({title:'新对话', messages:[]})];
+  if(currentAgentConversationId === targetId){
+    currentAgentConversationId = agentConversations[0].id;
+    agentMessages = agentConversations[0].messages.slice(-80);
+    renderAgentMessages();
+  }
+  persistAgentHistory();
+  renderAgentHistory();
+  toast('对话已删除');
+}
+function toggleAgentHistory(){
+  const panel = $('#agentHistoryPanel');
+  if(!panel) return;
+  const open = !panel.classList.contains('show');
+  if(open) persistAgentHistory();
+  panel.classList.toggle('show', open);
+  panel.hidden = !open;
+  if(open) renderAgentHistory();
 }
 const AGENT_TOOL_CATALOG = [
   {name:'get_app_status', description:'读取当前程序状态、运行任务统计和主机/访问端权限。'},
@@ -1934,7 +2092,22 @@ function buildAgentMessages(userText='', history=agentMessages){
   const messages = [{role:'system', content:buildAgentSystemPrompt()}];
   (history || []).slice(-14).forEach(message=>{
     const text = String(message.text || '').trim();
-    if(text) messages.push({role:message.role === 'assistant' ? 'assistant' : 'user', content:text.slice(0,10000)});
+    if(!text && !Array.isArray(message.attachments)) return;
+    const attachments = Array.isArray(message.attachments) ? message.attachments : [];
+    if(message.role === 'user' && attachments.length){
+      const content = [{type:'input_text', text:text.slice(0,10000)}];
+      attachments.forEach(file=>{
+        if(String(file.type || '').startsWith('image/') && file.data){
+          content.push({type:'input_image', image_url:file.data});
+          return;
+        }
+        const preview = file.textContent ? `\n内容预览：\n${String(file.textContent).slice(0,8000)}` : '';
+        content.push({type:'text', text:`\n[附件] ${file.name || '未命名文件'}\n类型：${file.type || 'unknown'}\n大小：${prettyBytes(file.size || 0)}${preview}`});
+      });
+      messages.push({role:'user', content});
+    }else if(text){
+      messages.push({role:message.role === 'assistant' ? 'assistant' : 'user', content:text.slice(0,10000)});
+    }
   });
   if(userText) messages.push({role:'user', content:userText});
   return messages;
@@ -2054,7 +2227,7 @@ async function runAgentTool(tool='', args={}){
   if(name === 'call_program_api') return agentCallProgramApi(args);
   throw new Error(`未知 Agent 工具：${name}`);
 }
-async function runAgentLoop(userText, assistantMessage, badge, started){
+async function runAgentLoop(userText, assistantMessage, badge, started, attachments = []){
   const working = buildAgentMessages('', agentMessages.filter(message=>message !== assistantMessage));
   const maxSteps = 8;
   for(let step=0; step<maxSteps; step++){
@@ -2065,7 +2238,7 @@ async function runAgentLoop(userText, assistantMessage, badge, started){
       api_key:credentials.api_key,
       model,
       messages:working,
-      attachments:[],
+      attachments:step === 0 ? attachments : [],
       stream:true,
       options:{}
     }, event=>{
@@ -2095,18 +2268,58 @@ function updateAgentStreamingMessage(message){
   row.innerHTML = escapeHtml(message?.text || '').replace(/\n/g,'<br>') || '<span class="agent-cursor">▋</span>';
   box.scrollTop = box.scrollHeight;
 }
+function renderAgentAttachments(){
+  const box = $('#agentAttachmentStrip');
+  if(!box) return;
+  box.innerHTML = agentAttachments.map((file, index) => `<span class="agent-attachment-chip" title="${escapeHtml(file.name || '附件')}"><span class="agent-attachment-chip-icon">${String(file.type || '').startsWith('image/') ? 'IMG' : 'FILE'}</span><span class="agent-attachment-chip-name">${escapeHtml(file.name || '未命名文件')}</span><small>${prettyBytes(file.size || 0)}</small><button type="button" data-agent-attachment-index="${index}" aria-label="移除附件">×</button></span>`).join('');
+  $$('#agentAttachmentStrip [data-agent-attachment-index]').forEach(button => button.addEventListener('click', event => {
+    event.stopPropagation();
+    agentAttachments.splice(Number(button.dataset.agentAttachmentIndex), 1);
+    renderAgentAttachments();
+  }));
+}
+async function addAgentFiles(files){
+  const list = [...(files || [])].filter(Boolean);
+  if(!list.length) return;
+  const existing = new Set(agentAttachments.map(file => `${file.name}|${file.size}|${file.type}|${file.lastModified || 0}`));
+  for(const file of list){
+    const key = `${file.name}|${file.size}|${file.type}|${file.lastModified || 0}`;
+    if(existing.has(key)) continue;
+    const item = await fileToData(file);
+    item.lastModified = Number(file.lastModified || 0);
+    if(isTextLike(file)) item.textContent = await fileToText(file);
+    agentAttachments.push(item);
+    existing.add(key);
+  }
+  renderAgentAttachments();
+}
+function agentPersistableMessages(messages = []){
+  return (messages || []).map(message => {
+    const next = {...message};
+    if(Array.isArray(next.attachments)){
+      next.attachments = next.attachments.map(file => ({
+        name:file.name || '',
+        type:file.type || '',
+        size:Number(file.size || 0),
+        textContent:String(file.textContent || '').slice(0, 8000)
+      }));
+    }
+    return next;
+  });
+}
 async function sendAgentMessage(){
   if(agentSending) return;
   const input = $('#agentInput');
   const text = String(input?.value || '').trim();
-  if(!text) return toast('请输入 Agent 任务');
+  if(!text && !agentAttachments.length) return toast('请输入 Agent 任务或添加附件');
   const credentials = agentApimartCredentials();
   if(!credentials.api_key) return toast('请先在首页或设置中心填写 APIMart API Key');
   agentSending = true;
   const sendBtn = $('#sendAgentBtn');
   if(sendBtn){ sendBtn.disabled = true; sendBtn.textContent = '执行中...'; }
   const started = performance.now();
-  const userMessage = {role:'user', text, created_at:Date.now()};
+  const attachments = agentAttachments.slice();
+  const userMessage = {role:'user', text, attachments, created_at:Date.now()};
   const assistantMessage = {role:'assistant', text:'', streaming:true, created_at:Date.now()};
   agentMessages.push(userMessage, assistantMessage);
   input.value = '';
@@ -2117,11 +2330,13 @@ async function sendAgentMessage(){
     const model = String($('#agentModelPreset')?.value || agentConfig.model || $('#chatModel')?.value || 'gpt-5.5').trim();
     agentConfig.model = model;
     saveAgentConfig();
-    await runAgentLoop(text, assistantMessage, badge, started);
+    await runAgentLoop(text, assistantMessage, badge, started, attachments);
     assistantMessage.streaming = false;
     assistantMessage.text = assistantMessage.text || 'Agent 已完成请求，但没有返回文本结果。';
     persistAgentHistory();
     renderAgentMessages();
+    agentAttachments = [];
+    renderAgentAttachments();
     if(badge) badge.textContent = `完成 ${(Number((performance.now()-started)/1000)).toFixed(1)}s`;
     setTimeout(()=>{ if($('#agentThinkingBadge')) $('#agentThinkingBadge').textContent = ''; }, 2600);
   }catch(error){
@@ -2129,6 +2344,8 @@ async function sendAgentMessage(){
     assistantMessage.text = '请求失败：' + (error.message || error);
     persistAgentHistory();
     renderAgentMessages();
+    agentAttachments = [];
+    renderAgentAttachments();
     if(badge) badge.textContent = '请求失败';
   }finally{
     agentSending = false;
@@ -2210,9 +2427,51 @@ function restoreAgentWindowSize(){
   }catch(e){}
 }
 function setupAgent(){
+  const agentWindow = $('#agentFloatingWindow');
+  if(agentWindow && !$('#agentHistoryPanel')){
+    agentWindow.insertAdjacentHTML('beforeend','<div class="agent-history-panel" id="agentHistoryPanel" hidden><div class="agent-history-head"><strong>对话历史</strong><button class="agent-history-close" id="closeAgentHistoryBtn" title="关闭对话历史" aria-label="关闭对话历史">×</button></div><div class="agent-history-list" id="agentHistoryList"></div></div>');
+  }
+  const toolbar = $('.agent-toolbar');
+  if(toolbar && !toolbar.dataset.layoutReady){
+    const label = toolbar.querySelector('label');
+    const sync = $('#agentSyncChatModelBtn');
+    const status = $('#agentApiStatus');
+    const modelField = document.createElement('div');
+    const statusRow = document.createElement('div');
+    const current = document.createElement('span');
+    modelField.className = 'agent-model-field';
+    statusRow.className = 'agent-toolbar-status';
+    current.className = 'agent-current-conversation';
+    current.id = 'agentCurrentConversation';
+    current.textContent = '新对话';
+    if(label) modelField.appendChild(label);
+    if(sync) modelField.appendChild(sync);
+    if(status) statusRow.appendChild(status);
+    statusRow.appendChild(current);
+    toolbar.replaceChildren(modelField, statusRow);
+    toolbar.dataset.layoutReady = '1';
+  }
   setupAgentFloatingWindow();
   loadAgentHistory();
   $('#agentBtn')?.addEventListener('click', openAgentWindow);
+  $('#newAgentConversationBtn')?.addEventListener('click', createNewAgentConversation);
+  $('#agentHistoryBtn')?.addEventListener('click', toggleAgentHistory);
+  $('#closeAgentHistoryBtn')?.addEventListener('click', ()=>{ $('#agentHistoryPanel')?.classList.remove('show'); if($('#agentHistoryPanel')) $('#agentHistoryPanel').hidden = true; });
+  $('#agentHistoryList')?.addEventListener('click', event=>{
+    const deleteButton = event.target.closest('[data-delete-agent-conversation]');
+    if(deleteButton){
+      event.preventDefault();
+      event.stopPropagation();
+      deleteAgentConversation(deleteButton.dataset.deleteAgentConversation);
+      return;
+    }
+    const item = event.target.closest('[data-agent-conversation-id]');
+    if(item) selectAgentConversation(item.dataset.agentConversationId);
+  });
+  $('#agentHistoryList')?.addEventListener('dblclick', event=>{
+    const item = event.target.closest('[data-agent-conversation-id]');
+    if(item && !event.target.closest('[data-delete-agent-conversation]')) renameAgentConversation(item.dataset.agentConversationId, item);
+  });
   $('#closeAgentWindow')?.addEventListener('click', closeAgentWindow);
   $('#minimizeAgentWindow')?.addEventListener('click', minimizeAgentWindow);
   $('#agentOrb')?.addEventListener('dblclick', restoreAgentWindowFromOrb);
@@ -2220,6 +2479,21 @@ function setupAgent(){
   $('#agentInput')?.addEventListener('keydown', e=>{
     if(e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); sendAgentMessage(); }
   });
+  const composer = $('#agentInput')?.closest('.agent-composer');
+  if(composer && !composer.dataset.fileReady){
+    composer.dataset.fileReady = '1';
+    ['dragenter','dragover'].forEach(type=>composer.addEventListener(type, event=>{ event.preventDefault(); composer.classList.add('drag-active'); }));
+    ['dragleave','drop'].forEach(type=>composer.addEventListener(type, event=>{ event.preventDefault(); composer.classList.remove('drag-active'); }));
+    composer.addEventListener('drop', event=>{ addAgentFiles(event.dataTransfer?.files || []).catch(error=>toast(error.message || '附件读取失败')); });
+  }
+  composer?.addEventListener('paste', event=>{
+    const files = event.clipboardData?.files;
+    if(files && files.length){
+      event.preventDefault();
+      addAgentFiles(files).catch(error=>toast(error.message || '剪贴板文件读取失败'));
+    }
+  });
+  renderAgentAttachments();
   $('#agentModelPreset')?.addEventListener('change', ()=>{ agentConfig.model = $('#agentModelPreset').value; saveAgentConfig(); });
   $('#agentSyncChatModelBtn')?.addEventListener('click', ()=>{
     const model = $('#chatModel')?.value || 'gpt-5.5';
@@ -7069,13 +7343,14 @@ function makeFloatingBox(boxId, headId, resizeId){
   if(resize){
     const isAgentBox = boxId === 'agentFloatingWindow';
     let rs=false,rw=0,rh=0,pendingW=0,pendingH=0;
-    resize.addEventListener('mousedown',e=>{
+    const startResize = e=>{
       rs=true; sx=e.clientX; sy=e.clientY;
       const r=box.getBoundingClientRect(); rw=r.width; rh=r.height;
       pendingW=rw; pendingH=rh;
+      box.classList.toggle('agent-resizing', isAgentBox);
       e.preventDefault(); e.stopPropagation();
-    });
-    document.addEventListener('mousemove',e=>{
+    };
+    const moveResize = e=>{
       if(!rs) return;
       const maxW = Math.max(isAgentBox ? 540 : 520, window.innerWidth - Math.max(20, box.getBoundingClientRect().left));
       const maxH = Math.max(isAgentBox ? 480 : 420, window.innerHeight - Math.max(20, box.getBoundingClientRect().top));
@@ -7083,12 +7358,21 @@ function makeFloatingBox(boxId, headId, resizeId){
       pendingH=Math.min(maxH,Math.max(isAgentBox ? 480 : 420,rh+e.clientY-sy));
       if(isAgentBox) applyAgentWindowSize(pendingW,pendingH,false);
       else { box.style.width=pendingW+'px'; box.style.height=pendingH+'px'; }
-    });
-    document.addEventListener('mouseup',()=>{
+    };
+    const finishResize = ()=>{
       if(!rs) return;
       rs=false;
+      box.classList.remove('agent-resizing');
       if(isAgentBox) applyAgentWindowSize(pendingW,pendingH,true);
+    };
+    resize.addEventListener('pointerdown', e=>{
+      if(e.button !== undefined && e.button !== 0) return;
+      try{ resize.setPointerCapture(e.pointerId); }catch{}
+      startResize(e);
     });
+    document.addEventListener('pointermove', moveResize);
+    document.addEventListener('pointerup', finishResize);
+    document.addEventListener('pointercancel', finishResize);
   }
 }
 

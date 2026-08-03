@@ -722,7 +722,9 @@
     <div class="chat-floating-window agent-floating-window" id="agentFloatingWindow">
       <div class="chat-floating-head agent-floating-head" id="agentFloatingHead">
         <div class="agent-window-title"><strong>Agent</strong><span>APIMart · 使用 AI聊天模型</span></div>
-        <div class="chat-window-controls">
+         <div class="chat-window-controls">
+           <button class="agent-icon-btn" id="newAgentConversationBtn" title="新建对话" aria-label="新建对话"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><path d="M4 4h7l2 2h7v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg></button>
+           <button class="agent-icon-btn" id="agentHistoryBtn" title="对话历史" aria-label="对话历史"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M18 16v5m0 0 2-2m-2 2-2-2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
           <button class="chat-window-min" id="minimizeAgentWindow" title="最小化"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg></button>
           <button class="chat-window-close" id="closeAgentWindow" title="关闭"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg></button>
         </div>
@@ -734,7 +736,8 @@
           <span class="agent-api-status" id="agentApiStatus">APIMart API Key：检查中</span>
         </div>
         <div class="agent-messages" id="agentMessages"></div>
-        <div class="agent-composer">
+         <div class="agent-composer">
+           <div class="agent-attachment-strip" id="agentAttachmentStrip" aria-live="polite"></div>
           <textarea id="agentInput" placeholder="告诉 Agent 你想完成什么，例如：帮我规划一组电商主图提示词"></textarea>
           <div class="agent-composer-foot">
             <span id="agentThinkingBadge"></span>
