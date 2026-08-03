@@ -1902,6 +1902,10 @@ function agentImageThumbUrl(row = {}){
   const raw = String(row.thumb_url || row.url || row.full_url || row.local_url || row.remote_url || '').trim();
   return raw ? withPublicAccess(raw) : '';
 }
+function agentVideoMediaUrl(row = {}){
+  const raw = String(row.stream_url || row.url || row.remote_url || row.download_url || '').trim();
+  return raw ? withPublicAccess(raw) : '';
+}
 function agentImageTaskIsTerminal(row = {}){
   return /(completed|succeeded|failed|cancelled|canceled|完成|失败|取消|停止|错误)/i.test(String(row.status || row.progress_text || ''));
 }
@@ -1912,7 +1916,20 @@ function agentImageTaskSucceeded(row = {}){
   return /(completed|succeeded|success|done|完成|成功)/i.test(String(row.status || row.progress_text || '')) && !agentImageTaskFailed(row);
 }
 function agentGenerationGroupIsTerminal(group = {}){
+  if(['completed','failed','partial_failed','cancelled','needs_input'].includes(String(group.state || '').trim())) return true;
   return /(已完成|生成失败|已取消|任务已完成|completed|failed|cancelled|[，,]\s*失败)/i.test(String(group.status || ''));
+}
+function agentGenerationLabel(kind = ''){
+  return ({
+    image_batch:'图片生成',
+    video_batch:'视频生成',
+    midjourney_task:'Midjourney 生成'
+  })[kind] || '生成结果';
+}
+function agentResultTextOutputsHtml(values = []){
+  const rows = Array.isArray(values) ? values.map(value=>String(value || '').trim()).filter(Boolean).slice(0, 12) : [];
+  if(!rows.length) return '';
+  return `<div class="agent-result-texts">${rows.map((value, index)=>`<button type="button" class="agent-result-text" data-agent-copy-result="${escapeHtml(value)}" title="点击复制结果 ${index + 1}">${escapeHtml(value)}</button>`).join('')}</div>`;
 }
 function agentMessageMediaHtml(message = {}){
   const groups = Array.isArray(message.generation_results) ? message.generation_results : [];
@@ -1923,16 +1940,21 @@ function agentMessageMediaHtml(message = {}){
       const full = String(item.full_url || item.url || '').trim();
       const thumb = String(item.thumb_url || full).trim();
       if(!full || !thumb) return '';
+      if(String(item.media_type || group.media_type || '').toLowerCase() === 'video'){
+        return `<button type="button" class="agent-result-thumb agent-result-video" data-agent-video-preview="${escapeHtml(full)}" title="点击预览视频"><video preload="metadata" muted playsinline src="${escapeHtml(thumb)}"></video><span class="agent-result-play" aria-hidden="true">▶</span></button>`;
+      }
       return `<button type="button" class="agent-result-thumb" data-agent-preview="${escapeHtml(full)}" title="点击查看原图"><img loading="lazy" src="${escapeHtml(thumb)}" alt="生成结果预览" /></button>`;
     }).join('');
-    const label = group.kind === 'image_batch' ? '图片生成' : '生成结果';
+    const label = agentGenerationLabel(group.kind);
     const state = String(group.state || '').trim();
     const status = String(group.status || (items.length ? `已返回 ${items.length} 张` : '等待结果')).trim();
     const error = String(group.error_message || '').trim();
     const pendingText = state === 'failed'
       ? '此批次生成失败，失败原因已同步到这里。'
-      : (state === 'partial_failed' ? '部分任务失败，已返回的图片仍可继续查看。' : '生成任务已提交，结果会自动显示在这里。');
-    return `<div class="agent-result-group${state ? ` ${escapeHtml(state)}` : ''}"><div class="agent-result-head"><span>${label}</span><small title="${escapeHtml(status)}">${escapeHtml(status)}</small></div>${cards ? `<div class="agent-result-grid">${cards}</div>` : `<div class="agent-result-pending">${pendingText}</div>`}${error ? `<div class="agent-result-error" title="${escapeHtml(error)}">${escapeHtml(error)}</div>` : ''}</div>`;
+      : (state === 'partial_failed'
+        ? '部分任务失败，已返回的结果仍可继续查看。'
+        : (state === 'needs_input' ? '该 Midjourney 任务需要补充参数后才能继续。' : '生成任务已提交，结果会自动显示在这里。'));
+    return `<div class="agent-result-group${state ? ` ${escapeHtml(state)}` : ''}"><div class="agent-result-head"><span>${label}</span><small title="${escapeHtml(status)}">${escapeHtml(status)}</small></div>${cards ? `<div class="agent-result-grid">${cards}</div>` : `<div class="agent-result-pending">${pendingText}</div>`}${agentResultTextOutputsHtml(group.text_outputs)}${error ? `<div class="agent-result-error" title="${escapeHtml(error)}">${escapeHtml(error)}</div>` : ''}</div>`;
   }).join('');
 }
 function renderAgentMessages(){
@@ -1948,6 +1970,8 @@ function renderAgentMessages(){
     return `<div class="agent-message ${message.role === 'user' ? 'user' : 'assistant'}"><div class="agent-message-role">${role}</div><div class="agent-message-bubble">${text || '<span class="agent-cursor">▋</span>'}${agentMessageMediaHtml(message)}</div></div>`;
   }).join('');
   $$('#agentMessages [data-agent-preview]').forEach(button=>button.addEventListener('click',()=>showPreview(button.dataset.agentPreview)));
+  $$('#agentMessages [data-agent-video-preview]').forEach(button=>button.addEventListener('click',()=>showVideoPreview({url:button.dataset.agentVideoPreview,stream_url:button.dataset.agentVideoPreview,remote_url:button.dataset.agentVideoPreview})));
+  $$('#agentMessages [data-agent-copy-result]').forEach(button=>button.addEventListener('click',()=>copyTextSmart(button.dataset.agentCopyResult || '', '生成结果').then(()=>toast('已复制生成结果'))));
   box.scrollTop = box.scrollHeight;
 }
 function legacyPersistAgentHistory(){
@@ -2372,8 +2396,7 @@ async function runAgentTool(tool='', args={}){
   }
   if(name === 'start_current_image_batch'){
     if(!$('#startBatchBtn')) throw new Error('首页生成按钮不可用');
-    $('#startBatchBtn').click();
-    return {ok:true,started:true};
+    return submitCurrentImageBatch({fromAgent:true});
   }
   if(name === 'set_current_video_prompt'){
     const value = String(args.prompt || '');
@@ -2401,10 +2424,13 @@ async function runAgentTool(tool='', args={}){
   }
   if(name === 'start_current_video_batch'){
     if(!$('#startVideoBtn')) throw new Error('视频生成按钮不可用');
-    $('#startVideoBtn').click();
-    return {ok:true,started:true};
+    return submitVideoTask({fromAgent:true});
   }
-  if(name === 'submit_midjourney') return api('/api/mj_submit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(args || {})});
+  if(name === 'submit_midjourney'){
+    const body = {...(args || {})};
+    if(!body.api_key) body.api_key = agentApimartCredentials().api_key;
+    return api('/api/mj_submit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  }
   if(name === 'query_midjourney_task') return api('/api/mj_task',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(args || {})});
   if(name === 'stop_batch') return api('/api/stop_batch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({batch_id:String(args.batch_id || '')})});
   if(name === 'delete_batch') return api('/api/delete_batch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({batch_id:String(args.batch_id || '')})});
@@ -2426,7 +2452,8 @@ async function runAgentTool(tool='', args={}){
 }
 function trackAgentImageBatch(message, batchId, expectedCount = 0){
   const id = String(batchId || '').trim();
-  if(!message || !id || agentResultTimers.has(id)) return;
+  const timerKey = `image_batch:${id}`;
+  if(!message || !id || agentResultTimers.has(timerKey)) return;
   const groups = Array.isArray(message.generation_results) ? message.generation_results : (message.generation_results = []);
   let group = groups.find(item=>item.kind === 'image_batch' && item.batch_id === id);
   if(!group){
@@ -2490,36 +2517,195 @@ function trackAgentImageBatch(message, batchId, expectedCount = 0){
       }
       attempts += 1;
       if(pending && attempts < 360){
-        agentResultTimers.set(id, setTimeout(poll, 2500));
+        agentResultTimers.set(timerKey, setTimeout(poll, 2500));
       }else{
-        agentResultTimers.delete(id);
+        agentResultTimers.delete(timerKey);
       }
     }catch(e){
       attempts += 1;
-      if(attempts < 24) agentResultTimers.set(id, setTimeout(poll, 3500));
-      else agentResultTimers.delete(id);
+      if(attempts < 24) agentResultTimers.set(timerKey, setTimeout(poll, 3500));
+      else agentResultTimers.delete(timerKey);
     }
   };
-  agentResultTimers.set(id, 0);
+  agentResultTimers.set(timerKey, 0);
+  poll();
+}
+function agentUniqueValues(values = []){
+  const seen = new Set();
+  return (values || []).map(value=>String(value || '').trim()).filter(value=>value && !seen.has(value) && seen.add(value));
+}
+function updateAgentGenerationGroup(group, next = {}){
+  const changed = Object.keys(next).some(key=>JSON.stringify(group[key]) !== JSON.stringify(next[key]));
+  if(!changed) return false;
+  Object.assign(group, next);
+  renderAgentMessages();
+  persistAgentHistory();
+  return true;
+}
+function trackAgentVideoBatch(message, sourceRows = [], batchId = '', expectedCount = 0){
+  const initialRows = Array.isArray(sourceRows) ? sourceRows.filter(Boolean) : [];
+  const ids = agentUniqueValues(initialRows.map(row=>row.id || row.local_task_id || row.task_id));
+  const resolvedBatchId = String(batchId || initialRows.find(row=>row.video_batch_id)?.video_batch_id || '').trim();
+  const trackerId = resolvedBatchId || ids.slice().sort().join(',');
+  const timerKey = `video_batch:${trackerId}`;
+  if(!message || !trackerId || agentResultTimers.has(timerKey)) return;
+  const groups = Array.isArray(message.generation_results) ? message.generation_results : (message.generation_results = []);
+  let group = groups.find(item=>item.kind === 'video_batch' && item.tracker_id === trackerId);
+  if(!group){
+    group = {
+      kind:'video_batch',
+      tracker_id:trackerId,
+      video_batch_id:resolvedBatchId,
+      task_ids:ids,
+      expected_count:Math.max(Number(expectedCount || 0), ids.length),
+      state:'pending',
+      status:'视频任务已提交，等待生成结果',
+      items:[]
+    };
+    groups.push(group);
+  }else{
+    group.task_ids = agentUniqueValues([...(group.task_ids || []), ...ids]);
+    group.video_batch_id = group.video_batch_id || resolvedBatchId;
+    group.expected_count = Math.max(Number(group.expected_count || 0), Number(expectedCount || 0), group.task_ids.length);
+  }
+  let attempts = 0;
+  const poll = async()=>{
+    try{
+      const ret = await api('/api/video_tasks?limit=500');
+      const taskIds = new Set(agentUniqueValues(group.task_ids || []));
+      const rows = (Array.isArray(ret?.rows) ? ret.rows : []).filter(row=>
+        taskIds.has(String(row.id || ''))
+        || taskIds.has(String(row.local_task_id || ''))
+        || taskIds.has(String(row.task_id || ''))
+        || (group.video_batch_id && String(row.video_batch_id || '') === String(group.video_batch_id))
+      );
+      const expected = Math.max(Number(group.expected_count || 0), taskIds.size, rows.length);
+      const terminal = rows.length >= expected && rows.length > 0 && rows.every(agentImageTaskIsTerminal);
+      const failures = rows.filter(agentImageTaskFailed);
+      const successes = rows.filter(agentImageTaskSucceeded);
+      const items = rows.map(row=>({
+        id:String(row.id || row.task_id || ''),
+        media_type:'video',
+        thumb_url:agentVideoMediaUrl(row),
+        full_url:agentVideoMediaUrl(row),
+        status:String(row.status || row.progress_text || ''),
+        prompt:String(row.prompt || '')
+      })).filter(item=>item.full_url);
+      const errorMessage = String(failures.map(row=>row.error_message || row.progress_text || row.status).find(Boolean) || '').trim();
+      const waitForSavedVideo = terminal && successes.length > 0 && !items.length && attempts < 24;
+      const pending = !terminal || waitForSavedVideo;
+      const state = pending ? 'pending' : (failures.length ? (items.length ? 'partial_failed' : 'failed') : 'completed');
+      let status = '';
+      if(pending) status = items.length ? `已返回 ${items.length} 个视频，继续生成中` : '视频生成中，结果会自动显示在这里';
+      else if(failures.length) status = items.length ? `已返回 ${items.length} 个视频，失败 ${failures.length}/${expected || failures.length}` : `视频生成失败：${failures.length}/${expected || failures.length}`;
+      else if(items.length) status = `已完成，返回 ${items.length} 个视频`;
+      else status = '视频任务已完成，但未返回可预览视频';
+      updateAgentGenerationGroup(group, {task_ids:agentUniqueValues([...taskIds]), expected_count:expected, items, status, state, error_message:errorMessage});
+      attempts += 1;
+      if(pending && attempts < 360) agentResultTimers.set(timerKey, setTimeout(poll, 2800));
+      else agentResultTimers.delete(timerKey);
+    }catch(e){
+      attempts += 1;
+      if(attempts < 24) agentResultTimers.set(timerKey, setTimeout(poll, 4000));
+      else agentResultTimers.delete(timerKey);
+    }
+  };
+  agentResultTimers.set(timerKey, 0);
+  poll();
+}
+function trackAgentMidjourneyTask(message, taskId = '', localTaskId = ''){
+  const remoteId = String(taskId || '').trim();
+  const localId = String(localTaskId || '').trim();
+  const trackerId = localId || remoteId;
+  const timerKey = `midjourney_task:${trackerId}`;
+  if(!message || !remoteId || !trackerId || agentResultTimers.has(timerKey)) return;
+  const groups = Array.isArray(message.generation_results) ? message.generation_results : (message.generation_results = []);
+  let group = groups.find(item=>item.kind === 'midjourney_task' && item.tracker_id === trackerId);
+  if(!group){
+    group = {kind:'midjourney_task', tracker_id:trackerId, task_id:remoteId, local_task_id:localId, state:'pending', status:'Midjourney 任务已提交，等待生成结果', items:[], text_outputs:[]};
+    groups.push(group);
+  }
+  let attempts = 0;
+  const poll = async()=>{
+    try{
+      const credentials = agentApimartCredentials();
+      const ret = await api('/api/mj_task', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({task_id:group.task_id, local_task_id:group.local_task_id || '', api_key:credentials.api_key || ''})});
+      const imageUrls = agentUniqueValues([
+        ret?.grid_image_url,
+        ...(Array.isArray(ret?.all_image_urls) ? ret.all_image_urls : []),
+        ...(Array.isArray(ret?.image_urls) ? ret.image_urls : [])
+      ]);
+      const videoUrls = agentUniqueValues(Array.isArray(ret?.video_urls) ? ret.video_urls : []);
+      const items = [
+        ...imageUrls.map((url, index)=>({id:`image_${index}_${url}`, media_type:'image', thumb_url:withPublicAccess(url), full_url:withPublicAccess(url)})),
+        ...videoUrls.map((url, index)=>({id:`video_${index}_${url}`, media_type:'video', thumb_url:withPublicAccess(url), full_url:withPublicAccess(url)}))
+      ];
+      const textOutputs = Array.isArray(ret?.text_outputs) ? ret.text_outputs.map(value=>String(value || '').trim()).filter(Boolean) : [];
+      const needsInput = /modal|等待补充参数/i.test(String(ret?.status || ret?.progress_text || ''));
+      const failed = agentImageTaskFailed(ret || {});
+      const succeeded = agentImageTaskSucceeded(ret || {});
+      const terminal = needsInput || failed || succeeded;
+      const errorMessage = String(ret?.error_message || ret?.fail_reason || ret?.error || '').trim();
+      const waitForSavedResult = terminal && succeeded && !items.length && !textOutputs.length && attempts < 24;
+      const pending = !terminal || waitForSavedResult;
+      const state = pending ? 'pending' : (needsInput ? 'needs_input' : (failed ? 'failed' : 'completed'));
+      let status = '';
+      if(pending) status = `Midjourney ${ret?.progress ? `${Number(ret.progress).toFixed(0)}%` : '生成中'}，结果会自动显示在这里`;
+      else if(needsInput) status = '任务等待补充参数';
+      else if(failed) status = 'Midjourney 生成失败';
+      else if(items.length || textOutputs.length) status = `已完成，返回 ${items.length + textOutputs.length} 项结果`;
+      else status = '任务已完成，但未返回可预览结果';
+      updateAgentGenerationGroup(group, {task_id:String(ret?.task_id || group.task_id), local_task_id:String(ret?.local_task_id || group.local_task_id || ''), items, text_outputs:textOutputs, status, state, error_message:errorMessage});
+      attempts += 1;
+      if(pending && attempts < 360) agentResultTimers.set(timerKey, setTimeout(poll, 3000));
+      else agentResultTimers.delete(timerKey);
+    }catch(e){
+      attempts += 1;
+      if(attempts < 24) agentResultTimers.set(timerKey, setTimeout(poll, 4500));
+      else agentResultTimers.delete(timerKey);
+    }
+  };
+  agentResultTimers.set(timerKey, 0);
   poll();
 }
 function resumeAgentGenerationTracking(){
   for(const conversation of agentConversations){
     for(const message of (conversation?.messages || [])){
       for(const group of (Array.isArray(message?.generation_results) ? message.generation_results : [])){
-        if(group?.kind === 'image_batch' && group.batch_id && !agentGenerationGroupIsTerminal(group)){
-          trackAgentImageBatch(message, group.batch_id, group.expected_count || 0);
-        }
+        if(agentGenerationGroupIsTerminal(group)) continue;
+        if(group?.kind === 'image_batch' && group.batch_id) trackAgentImageBatch(message, group.batch_id, group.expected_count || 0);
+        if(group?.kind === 'video_batch') trackAgentVideoBatch(message, (group.task_ids || []).map(id=>({id})), group.video_batch_id || '', group.expected_count || 0);
+        if(group?.kind === 'midjourney_task' && group.task_id) trackAgentMidjourneyTask(message, group.task_id, group.local_task_id || '');
       }
     }
   }
 }
-function attachAgentGenerationResult(message, tool, result){
-  if(tool !== 'create_image_batch') return;
-  const batchId = String(result?.id || result?.batch_id || result?.batch?.id || '').trim();
-  if(!batchId) return;
-  trackAgentImageBatch(message, batchId, result?.task_count || result?.taskCount || 0);
-  renderAgentMessages();
+function agentProgramApiPath(args = {}){
+  try{ return new URL(String(args.path || ''), location.href).pathname; }catch(e){ return ''; }
+}
+function attachAgentGenerationResult(message, tool, result, args = {}){
+  const path = tool === 'call_program_api' ? agentProgramApiPath(args) : '';
+  const method = String(args.method || 'POST').toUpperCase();
+  const isImage = tool === 'create_image_batch' || tool === 'start_current_image_batch' || tool === 'repeat_batch' || (tool === 'call_program_api' && method === 'POST' && ['/api/batches','/api/repeat_batch'].includes(path));
+  const isVideo = tool === 'create_video_batch' || tool === 'start_current_video_batch' || (tool === 'call_program_api' && method === 'POST' && ['/api/video_submit','/api/video_batch_submit'].includes(path));
+  const isMidjourney = tool === 'submit_midjourney' || (tool === 'call_program_api' && method === 'POST' && path === '/api/mj_submit');
+  if(isImage){
+    const batchId = String(result?.id || result?.batch_id || result?.batch?.id || '').trim();
+    if(batchId) trackAgentImageBatch(message, batchId, result?.task_count || result?.taskCount || 0);
+  }
+  if(isVideo){
+    const rows = Array.isArray(result?.rows) ? result.rows : (result?.task ? [result.task] : []);
+    const batchId = String(result?.video_batch_id || result?.batch_id || rows.find(row=>row?.video_batch_id)?.video_batch_id || '').trim();
+    if(rows.length || batchId) trackAgentVideoBatch(message, rows, batchId, result?.count || result?.task_count || rows.length);
+  }
+  if(isMidjourney){
+    const tasks = result?.multi && Array.isArray(result?.tasks) ? result.tasks : [result];
+    tasks.forEach(task=>trackAgentMidjourneyTask(message, task?.task_id || task?.remote_task_id || '', task?.local_task_id || ''));
+  }
+  if(isImage || isVideo || isMidjourney){
+    renderAgentMessages();
+    persistAgentHistory();
+  }
 }
 async function runAgentLoop(userText, assistantMessage, badge, started, attachments = []){
   const working = buildAgentMessages('', agentMessages.filter(message=>message !== assistantMessage));
@@ -2548,7 +2734,7 @@ async function runAgentLoop(userText, assistantMessage, badge, started, attachme
     working.push({role:'assistant',content:rawReply});
     try{
       const result = await runAgentTool(directive.tool, directive.args || {});
-      attachAgentGenerationResult(assistantMessage, directive.tool, result);
+      attachAgentGenerationResult(assistantMessage, directive.tool, result, directive.args || {});
       working.push({role:'user',content:JSON.stringify({type:'tool_result',tool:directive.tool,ok:true,result})});
     }catch(error){
       working.push({role:'user',content:JSON.stringify({type:'tool_result',tool:directive.tool,ok:false,error:String(error.message || error)})});
@@ -3610,30 +3796,41 @@ $('#newChatBtn')?.addEventListener('click', ()=>createNewChat(true));
 $('#clearChatImagesBtn')?.addEventListener('click', clearChatImages);
 $('#chatInput')?.addEventListener('keydown', e=>{ if(e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); sendChat(); } });
 
-$('#startBatchBtn').addEventListener('click', async()=>{
+async function submitCurrentImageBatch(opts = {}){
   const keyValidation = updateApiKeyWarning();
   if(!keyValidation.ok){
+    if(opts.fromAgent) throw new Error(keyValidation.message);
     toast(keyValidation.message);
-    return;
+    return null;
   }
   const body = {...collectConfig(), client_id:getClientId(), prompts: $('#prompts').value, prompt_multiline_tasks: isPromptMultilineTasksEnabled(), main_images: mainImages, reference_images: refImages};
-  $('#startBatchBtn').disabled = true; $('#startBatchBtn').textContent = '提交中...';
+  const button = $('#startBatchBtn');
+  if(!opts.fromAgent && button){ button.disabled = true; button.textContent = '提交中...'; }
   try{
     if(isPublicClient){
       const allCount = mainImages.length + refImages.length;
-      const progressText = (done,total)=>{ $('#startBatchBtn').textContent = total ? `上传素材 ${done}/${total}` : '创建批次...'; };
+      const progressText = (done,total)=>{ if(!opts.fromAgent && button) button.textContent = total ? `上传素材 ${done}/${total}` : '创建批次...'; };
       await ensurePublicBatchMediaUploaded([...mainImages, ...refImages], progressText);
       body.main_image_upload_ids = mainImages.map(item=>item.batch_upload_id).filter(Boolean);
       body.reference_image_upload_ids = refImages.map(item=>item.batch_upload_id).filter(Boolean);
       body.main_images = [];
       body.reference_images = [];
-      $('#startBatchBtn').textContent = '创建批次...';
+      if(!opts.fromAgent && button) button.textContent = '创建批次...';
     }
     const ret = await api('/api/batches',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     if(isPublicClient) refreshAll().catch(()=>{}); else await refreshAll();
-    toast(`批次已创建：${ret.task_count} 个任务，已在右侧实时面板运行`);
-  }catch(e){ toast('创建失败：' + (e.message || e)); }
-  finally{ $('#startBatchBtn').disabled = false; $('#startBatchBtn').textContent = '开始生成新批次'; }
+    if(!opts.fromAgent) toast(`批次已创建：${ret.task_count} 个任务，已在右侧实时面板运行`);
+    return ret;
+  }catch(e){
+    if(opts.fromAgent) throw e;
+    toast('创建失败：' + (e.message || e));
+    return null;
+  }finally{
+    if(!opts.fromAgent && button){ button.disabled = false; button.textContent = '开始生成新批次'; }
+  }
+}
+$('#startBatchBtn').addEventListener('click', async()=>{
+  await submitCurrentImageBatch();
 });
 
 async function refreshAll(){
@@ -6231,33 +6428,38 @@ async function handleVideoRefs(files){
   renderVideoInputs();
 }
 function clearVideoInputs(){ videoFilesData=[]; videoRefImages=[]; $('#videoPrompt').value=''; $('#videoUrlInput').value=''; if($('#videoSourceTaskId')) $('#videoSourceTaskId').value=''; renderVideoInputs(); }
-async function submitVideoTask(){
+async function submitVideoTask(opts = {}){
+  const reject = message=>{
+    if(opts.fromAgent) throw new Error(message);
+    toast(message);
+    return null;
+  };
   syncVideoApiKeyFromHome();
   const platform = currentVideoPlatform();
   const apiKey = ($('#videoApiKey')?.value || '').trim();
-  if(!apiKey) return toast(`请先填写${platform === 'flow2api' ? ' Flow2API' : '首页 APIMart'} API Key，填写后才能开始生成视频`);
+  if(!apiKey) return reject(`请先填写${platform === 'flow2api' ? ' Flow2API' : '首页 APIMart'} API Key，填写后才能开始生成视频`);
   const prompts = splitVideoPromptInput();
-  if(!prompts.length) return toast('请输入视频提示词');
+  if(!prompts.length) return reject('请输入视频提示词');
   // V14.5.5：取消前端提交前硬拦截，避免元数据误读导致 5 秒视频被拒。
   // 视频真实可用性由 APIMart 远端返回结果决定，本地只负责提交与显示真实错误。
   localStorage.setItem(`${CLIENT_CONFIG_KEY}_video_key_${platform}`, apiKey);
   const refVideoMode = hasReferenceVideo();
   const apimartRule = platform === 'apimart' ? currentApimartVideoRule() : null;
   if(apimartRule){
-    if(videoRefImages.length && !apimartRule.supportsImages) return toast(`${apimartRule.label} 不支持参考图输入`);
-    if(apimartRule.minImageCount > videoRefImages.length) return toast(`${apimartRule.label} 至少需要 ${apimartRule.minImageCount} 张参考图`);
-    if(apimartRule.maxImageCount > 0 && videoRefImages.length > apimartRule.maxImageCount) return toast(`${apimartRule.label} 最多支持 ${apimartRule.maxImageCount} 张参考图`);
-    if(refVideoMode && !apimartRule.supportsVideo) return toast(`${apimartRule.label} 不支持上传视频，请切换支持视频输入的模型`);
-    if(apimartRule.requiredVideo && !refVideoMode) return toast(`${apimartRule.label} 必须上传视频或填写公开视频 URL`);
+    if(videoRefImages.length && !apimartRule.supportsImages) return reject(`${apimartRule.label} 不支持参考图输入`);
+    if(apimartRule.minImageCount > videoRefImages.length) return reject(`${apimartRule.label} 至少需要 ${apimartRule.minImageCount} 张参考图`);
+    if(apimartRule.maxImageCount > 0 && videoRefImages.length > apimartRule.maxImageCount) return reject(`${apimartRule.label} 最多支持 ${apimartRule.maxImageCount} 张参考图`);
+    if(refVideoMode && !apimartRule.supportsVideo) return reject(`${apimartRule.label} 不支持上传视频，请切换支持视频输入的模型`);
+    if(apimartRule.requiredVideo && !refVideoMode) return reject(`${apimartRule.label} 必须上传视频或填写公开视频 URL`);
     if(currentVideoModeValue() === 'veo_remix'){
-      if(!isApimartTaskExtensionModel()) return toast('任务续写仅支持 VEO3.1 Fast / Quality、Pixverse v6 或 Gemini Omni Flash');
-      if(!String($('#videoSourceTaskId')?.value || '').trim()) return toast('请填写已完成的原任务 ID');
-      if(refVideoMode || videoRefImages.length) return toast('任务续写使用原任务 ID，不能同时上传参考图片或视频');
+      if(!isApimartTaskExtensionModel()) return reject('任务续写仅支持 VEO3.1 Fast / Quality、Pixverse v6 或 Gemini Omni Flash');
+      if(!String($('#videoSourceTaskId')?.value || '').trim()) return reject('请填写已完成的原任务 ID');
+      if(refVideoMode || videoRefImages.length) return reject('任务续写使用原任务 ID，不能同时上传参考图片或视频');
     }
   }
-  if(currentVideoModeValue() === 'video_edit' && !refVideoMode) return toast('已选择“上传视频编辑”，请先上传主任务视频或填写公开视频 URL');
+  if(currentVideoModeValue() === 'video_edit' && !refVideoMode) return reject('已选择“上传视频编辑”，请先上传主任务视频或填写公开视频 URL');
   if(platform === 'flow2api' && refVideoMode && !flow2VideoModelSupportsUploadedVideo()) {
-    return toast('本地 Flow2API 上传视频编辑仅支持 Omni Flash，请切换模型后重试');
+    return reject('本地 Flow2API 上传视频编辑仅支持 Omni Flash，请切换模型后重试');
   }
   const platformCfg = loadClientConfig(platform) || {};
   const body = { video_platform:platform, api_endpoint:platform === 'flow2api' ? (platformCfg.api_endpoint || 'http://127.0.0.1:38000') : 'https://api.apimart.ai', api_key:apiKey, video_model:$('#videoModel')?.value || '', video_mode:currentVideoModeValue(), seed:$('#videoSeed')?.value?.trim() || '', copies:Number($('#videoRepeatCount')?.value || 1), retry_times:Number($('#videoRetryTimes')?.value || 0), prompts:$('#videoPrompt').value, prompt_multiline_tasks: $('#videoPromptMultilineTasks') ? $('#videoPromptMultilineTasks').checked : false, resolution:$('#videoResolution').value, aspect_ratio:$('#videoAspect').value, video_url:$('#videoUrlInput').value.trim(), video_files:videoFilesData, ref_images:videoRefImages, character_orientation:$('#videoCharacterOrientation')?.value || 'image', source_task_id:$('#videoSourceTaskId')?.value?.trim() || '' };
@@ -6268,15 +6470,23 @@ async function submitVideoTask(){
     ? !veoTaskExtension && apimartRule?.supportsDuration !== false && (!refVideoMode || apimartDurationWithVideo)
     : !refVideoMode;
   if(shouldSendDuration && Number.isFinite(durationValue)) body.duration = durationValue;
-  $('#startVideoBtn').disabled = true; $('#startVideoBtn').textContent = '批量提交中...';
+  const button = $('#startVideoBtn');
+  if(!opts.fromAgent && button){ button.disabled = true; button.textContent = '批量提交中...'; }
   try{
     const r = await api('/api/video_batch_submit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    toast(`${platform === 'flow2api' ? 'Flow2API' : 'APIMart'} 视频任务已提交：成功 ${r.success || 0} / ${r.count || 0}`);
+    if(!opts.fromAgent) toast(`${platform === 'flow2api' ? 'Flow2API' : 'APIMart'} 视频任务已提交：成功 ${r.success || 0} / ${r.count || 0}`);
     await loadVideoTasks();
     setTimeout(loadVideoTasks, 800);
     setTimeout(loadVideoTasks, 2500);
-  }catch(e){ alert(e.message || '视频任务提交失败'); }
-  finally{ $('#startVideoBtn').disabled=false; $('#startVideoBtn').textContent='开始生成视频'; syncVideoApiKeyFromHome(); }
+    return r;
+  }catch(e){
+    if(opts.fromAgent) throw e;
+    alert(e.message || '视频任务提交失败');
+    return null;
+  }finally{
+    if(!opts.fromAgent && button){ button.disabled=false; button.textContent='开始生成视频'; }
+    syncVideoApiKeyFromHome();
+  }
 }
 async function resumePendingVideoTasks(rows = []){
   const hasResumable = rows.some(v => String(v.platform || '').toLowerCase() === 'apimart'
