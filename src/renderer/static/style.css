@@ -3651,3 +3651,9 @@ body.theme-dark .agent-pill{color:#99f6e4!important;border-color:rgba(45,212,191
   .agent-window-title span{display:none}
   .agent-toolbar label{min-width:180px}
 }
+.agent-floating-window.agent-resized{
+  width:var(--agent-window-width,720px)!important;
+  height:var(--agent-window-height,650px)!important;
+  min-width:min(540px,calc(100vw - 20px))!important;
+  min-height:min(480px,calc(100vh - 20px))!important;
+}

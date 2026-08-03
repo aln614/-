@@ -101,9 +101,11 @@ const CHAT_CONFIG_KEY = 'local_api_image_generator_chat_config_v1498';
 const CHAT_HISTORY_KEY = 'local_api_image_generator_chat_conversations_v1498';
 const AGENT_CONFIG_KEY = 'local_api_image_generator_agent_config_v1498';
 const AGENT_HISTORY_KEY = 'local_api_image_generator_agent_history_v1498';
+const AGENT_WINDOW_SIZE_KEY = 'local_api_image_generator_agent_window_size_v1498';
+const AGENT_DEFAULT_SYSTEM_PROMPT = '你是 TENYING AI 的程序 Agent。你拥有调用程序内工具完成任务的能力。先判断用户目标，再选择最少且正确的工具；工具返回成功后，明确告诉用户已完成的操作，工具返回权限错误时如实说明。不要编造工具结果，不要调用程序外的系统命令、外部网址或读取未授权数据。';
 let agentMessages = [];
 let agentSending = false;
-let agentConfig = { model:'', system_prompt:'你是 TENYING AI 的 Agent。请先理解用户目标，再给出清晰、可执行的步骤；如果用户要求生成图片、视频或管理素材，请结合 TENYING AI 当前可用的 APIMart 能力给出具体方案。不要声称已经执行了尚未执行的操作。' };
+let agentConfig = { model:'', system_prompt:AGENT_DEFAULT_SYSTEM_PROMPT };
 let agentOrbDragging = false;
 let agentOrbDrag = {sx:0, sy:0, sl:0, st:0};
 let runtimeConfigSnapshot = {};
@@ -1797,11 +1799,13 @@ async function sendChat(){
 function readAgentConfig(){
   try{
     const raw = JSON.parse(localStorage.getItem(AGENT_CONFIG_KEY) || '{}') || {};
+    const savedPrompt = String(raw.system_prompt || '').trim();
+    const legacyPrompt = /不要声称已经执行|目前无法直接替你|只能提供建议/i.test(savedPrompt);
     return {
       model: String(raw.model || '').trim(),
-      system_prompt: String(raw.system_prompt || agentConfig.system_prompt).trim() || agentConfig.system_prompt
+      system_prompt: legacyPrompt ? AGENT_DEFAULT_SYSTEM_PROMPT : (savedPrompt || AGENT_DEFAULT_SYSTEM_PROMPT)
     };
-  }catch(e){ return {...agentConfig}; }
+  }catch(e){ return {model:'',system_prompt:AGENT_DEFAULT_SYSTEM_PROMPT}; }
 }
 function saveAgentConfig(){
   agentConfig = {
@@ -1863,15 +1867,226 @@ function loadAgentHistory(){
   }catch(e){ agentMessages = []; }
   renderAgentMessages();
 }
-function buildAgentMessages(userText){
-  const messages = [];
-  if(agentConfig.system_prompt) messages.push({role:'system', content:agentConfig.system_prompt});
-  agentMessages.slice(-12).forEach(message=>{
+const AGENT_TOOL_CATALOG = [
+  {name:'get_app_status', description:'读取当前程序状态、运行任务统计和主机/访问端权限。'},
+  {name:'list_batches', description:'查看当前权限范围内的图片生成批次。'},
+  {name:'list_images', description:'查看当前权限范围内的生成图片记录。'},
+  {name:'list_video_tasks', description:'查看当前权限范围内的视频任务。'},
+  {name:'get_prompt_library', description:'读取提示词库分组和模板。'},
+  {name:'get_asset_library', description:'读取资产库分组和最近素材。'},
+  {name:'list_assets', description:'读取指定资产库分组中的素材。'},
+  {name:'navigate', description:'打开程序内页面，支持 home、midjourney、history、images、video、video-manage、chat、settings、api、lan、public、logs。'},
+  {name:'open_prompt_library', description:'打开提示词库悬浮窗口。'},
+  {name:'open_asset_library', description:'打开资产库悬浮窗口。'},
+  {name:'set_current_image_prompt', description:'填写首页当前图片生成提示词。'},
+  {name:'set_current_image_model', description:'设置首页当前图片模型。'},
+  {name:'create_image_batch', description:'按参数直接创建图片生成批次；需要提供 prompts、模型、图片或使用当前表单。'},
+  {name:'start_current_image_batch', description:'提交首页当前图片生成任务，使用当前页面已填写的图片、参数和 API Key。'},
+  {name:'set_current_video_prompt', description:'填写视频编辑页面当前提示词。'},
+  {name:'set_current_video_model', description:'设置视频编辑页面当前视频模型。'},
+  {name:'create_video_batch', description:'按参数直接创建视频生成批次；需要提供视频模型、提示词和当前页面上传的视频或公开参考 URL。'},
+  {name:'start_current_video_batch', description:'提交视频编辑页面当前任务，使用当前页面已上传的视频和参数。'},
+  {name:'submit_midjourney', description:'提交 Midjourney 操作，参数必须符合当前 Midjourney 表单和后端接口。'},
+  {name:'query_midjourney_task', description:'查询 Midjourney 任务状态和结果。'},
+  {name:'stop_batch', description:'停止当前权限范围内的图片批次。'},
+  {name:'delete_batch', description:'删除当前权限范围内的图片批次。'},
+  {name:'repeat_batch', description:'重复当前权限范围内的图片批次。'},
+  {name:'asset_group_create', description:'创建资产库分组，后端会校验拥有者权限。'},
+  {name:'asset_group_rename', description:'重命名资产库分组，后端会校验拥有者权限。'},
+  {name:'asset_group_delete', description:'删除资产库分组，后端会校验拥有者权限。'},
+  {name:'asset_share', description:'共享资产或分组，后端会校验权限。'},
+  {name:'asset_unshare', description:'取消共享资产或分组，后端会校验权限。'},
+  {name:'asset_delete', description:'删除资产，后端会校验权限。'},
+  {name:'prompt_template_create', description:'创建提示词模板，后端会校验权限。'},
+  {name:'prompt_template_update', description:'修改提示词模板，后端会校验权限。'},
+  {name:'prompt_template_delete', description:'删除提示词模板，后端会校验权限。'},
+  {name:'call_program_api', description:'调用已允许的程序内部 API；只能使用同源 /api 路径，不能访问外部网址或系统命令。'}
+];
+const AGENT_PROGRAM_API_ALLOWLIST = new Set([
+  '/api/health','/api/status','/api/config','/api/chat_models','/api/batches','/api/images','/api/history_batches',
+  '/api/video_tasks','/api/prompt_library','/api/assets/init','/api/assets/groups','/api/assets/list',
+  '/api/announcements','/api/mj_describe_recent','/api/mj_task','/api/shortcuts',
+  '/api/batches','/api/stop_batch','/api/delete_batch','/api/repeat_batch','/api/update_batch_note',
+  '/api/video_submit','/api/video_batch_submit','/api/video_delete_selected','/api/video_export_selected',
+  '/api/mj_submit','/api/prompt_library/group','/api/prompt_library/template',
+  '/api/assets/groups/create','/api/assets/groups/rename','/api/assets/groups/delete','/api/assets/upload',
+  '/api/assets/delete','/api/assets/rename','/api/assets/update','/api/assets/move','/api/assets/share',
+  '/api/assets/unshare','/api/assets/copy_source','/api/assets/export_zip','/api/config',
+  '/api/clear_all_cache'
+]);
+function buildAgentSystemPrompt(){
+  const role = isLocalClient ? 'host（主机端）' : (isPublicClient ? 'public_client（公网访问端）' : 'lan_client（局域网访问端）');
+  const permission = isLocalClient
+    ? '主机端拥有程序内全部管理权限，可以操作所有任务、资产、分组和设置。'
+    : '访问端只能操作当前访问端和后端授权范围内的数据；任何越权写操作必须接受后端拒绝，不能绕过权限。';
+  return [
+    agentConfig.system_prompt,
+    `当前访问角色：${role}。${permission}`,
+    '你可以真正调用 TENYING AI 程序工具，不要只给操作建议。',
+    '每次只能输出一个纯 JSON 对象，不要使用 Markdown 代码块。',
+    '需要操作时输出：{"type":"tool_call","tool":"工具名","args":{}}。',
+    '操作完成或无需操作时输出：{"type":"final","message":"给用户的最终答复"}。',
+    '工具失败时不要编造成功，读取 tool_result 后继续处理或说明失败原因。',
+    `可用工具：${JSON.stringify(AGENT_TOOL_CATALOG)}`
+  ].join('\n');
+}
+function buildAgentMessages(userText='', history=agentMessages){
+  const messages = [{role:'system', content:buildAgentSystemPrompt()}];
+  (history || []).slice(-14).forEach(message=>{
     const text = String(message.text || '').trim();
     if(text) messages.push({role:message.role === 'assistant' ? 'assistant' : 'user', content:text.slice(0,10000)});
   });
-  messages.push({role:'user', content:userText});
+  if(userText) messages.push({role:'user', content:userText});
   return messages;
+}
+function parseAgentDirective(raw=''){
+  const text = String(raw || '').trim();
+  if(!text) return {type:'final', message:'Agent 没有返回可用内容。'};
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const candidate = fenced ? fenced[1].trim() : text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1);
+  if(candidate && candidate.startsWith('{') && candidate.endsWith('}')){
+    try{
+      const parsed = JSON.parse(candidate);
+      if(parsed.type === 'tool_call' || parsed.tool || parsed.action === 'tool_call') return {type:'tool_call', tool:String(parsed.tool || '').trim(), args:parsed.args && typeof parsed.args === 'object' ? parsed.args : {}};
+      if(parsed.type === 'final') return {type:'final', message:String(parsed.message || parsed.content || '').trim() || 'Agent 已完成。'};
+    }catch(e){}
+  }
+  return {type:'final', message:text};
+}
+function agentApiLimit(value, fallback=30){
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.max(1, Math.min(200, Math.round(n))) : fallback;
+}
+async function agentCallProgramApi(args={}){
+  const rawPath = String(args.path || '').trim();
+  const parsed = new URL(rawPath, location.href);
+  if(parsed.origin !== location.origin || !AGENT_PROGRAM_API_ALLOWLIST.has(parsed.pathname)) throw new Error('Agent 不允许调用该程序接口');
+  const method = String(args.method || 'GET').toUpperCase();
+  if(!['GET','POST','PUT','PATCH','DELETE'].includes(method)) throw new Error('Agent 接口方法不受支持');
+  const opts = {method, headers:{'Content-Type':'application/json'}};
+  if(method !== 'GET' && method !== 'HEAD') opts.body = JSON.stringify(args.body && typeof args.body === 'object' ? args.body : {});
+  return api(parsed.pathname + parsed.search, opts);
+}
+async function runAgentTool(tool='', args={}){
+  const name = String(tool || '').trim();
+  if(name === 'get_app_status') return api('/api/status');
+  if(name === 'list_batches') return api(`/api/batches?limit=${agentApiLimit(args.limit,30)}`);
+  if(name === 'list_images') return api(`/api/images?limit=${agentApiLimit(args.limit,30)}&fast=1`);
+  if(name === 'list_video_tasks') return api(`/api/video_tasks?limit=${agentApiLimit(args.limit,30)}`);
+  if(name === 'get_prompt_library') return api('/api/prompt_library');
+  if(name === 'get_asset_library') return api('/api/assets/init');
+  if(name === 'list_assets') return api(`/api/assets/list?group_id=${encodeURIComponent(String(args.group_id || ''))}&search=${encodeURIComponent(String(args.search || ''))}`);
+  if(name === 'navigate'){
+    const page = String(args.page || 'home');
+    if(!['home','midjourney','history','images','video','video-manage','chat','settings','api','lan','public','logs'].includes(page)) throw new Error('不支持打开该页面');
+    setPage(page);
+    return {ok:true,page};
+  }
+  if(name === 'open_prompt_library'){ openPromptLibrary(); return {ok:true,window:'prompt_library'}; }
+  if(name === 'open_asset_library'){ openAssetLibrary(); return {ok:true,window:'asset_library'}; }
+  if(name === 'set_current_image_prompt'){
+    const value = String(args.prompt || '');
+    if(!$('#prompts')) throw new Error('首页提示词输入框不可用');
+    $('#prompts').value = value; calcEstimate();
+    return {ok:true,prompt:value};
+  }
+  if(name === 'set_current_image_model'){
+    const model = String(args.model || '').trim();
+    if(!model) throw new Error('缺少图片模型');
+    applyModelToUI(model);
+    return {ok:true,model};
+  }
+  if(name === 'create_image_batch'){
+    const body = {...(args || {})};
+    const useCurrentForm = body.use_current_form === true;
+    delete body.use_current_form;
+    if(useCurrentForm){
+      Object.assign(body, {...collectConfig(), prompts:String(body.prompts || $('#prompts')?.value || ''), main_images:mainImages, reference_images:refImages, client_id:getClientId()});
+    }
+    if(!body.api_key) body.api_key = agentApimartCredentials().api_key;
+    return api('/api/batches',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  }
+  if(name === 'start_current_image_batch'){
+    if(!$('#startBatchBtn')) throw new Error('首页生成按钮不可用');
+    $('#startBatchBtn').click();
+    return {ok:true,started:true};
+  }
+  if(name === 'set_current_video_prompt'){
+    const value = String(args.prompt || '');
+    if(!$('#videoPrompt')) throw new Error('视频提示词输入框不可用');
+    $('#videoPrompt').value = value; updateVideoTaskEstimate();
+    return {ok:true,prompt:value};
+  }
+  if(name === 'set_current_video_model'){
+    const model = String(args.model || '').trim();
+    if(!model || !$('#videoModel')) throw new Error('视频模型输入框不可用');
+    $('#videoModel').value = model; updateVideoResolutionOptions(); updateVideoDurationOptions(); updateVideoModeUI(); updateVideoTaskEstimate();
+    return {ok:true,model};
+  }
+  if(name === 'create_video_batch'){
+    const body = {...(args || {})};
+    delete body.use_current_form;
+    if(!body.api_key) body.api_key = String($('#videoApiKey')?.value || $('#apiKey')?.value || agentApimartCredentials().api_key || '').trim();
+    return api('/api/video_batch_submit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  }
+  if(name === 'start_current_video_batch'){
+    if(!$('#startVideoBtn')) throw new Error('视频生成按钮不可用');
+    $('#startVideoBtn').click();
+    return {ok:true,started:true};
+  }
+  if(name === 'submit_midjourney') return api('/api/mj_submit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(args || {})});
+  if(name === 'query_midjourney_task') return api('/api/mj_task',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(args || {})});
+  if(name === 'stop_batch') return api('/api/stop_batch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({batch_id:String(args.batch_id || '')})});
+  if(name === 'delete_batch') return api('/api/delete_batch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({batch_id:String(args.batch_id || '')})});
+  if(name === 'repeat_batch') return api('/api/repeat_batch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({batch_id:String(args.batch_id || ''),repeat_count:agentApiLimit(args.repeat_count,1)})});
+  if(name === 'asset_group_create') return api('/api/assets/groups/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({parent_id:args.parent_id || null,name:String(args.name || '新建分组')})});
+  if(name === 'asset_group_rename') return api('/api/assets/groups/rename',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({group_id:String(args.group_id || ''),name:String(args.name || '')})});
+  if(name === 'asset_group_delete') return api('/api/assets/groups/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({group_id:String(args.group_id || '')})});
+  if(name === 'asset_share' || name === 'asset_unshare') return api(`/api/assets/${name === 'asset_share' ? 'share' : 'unshare'}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(args || {})});
+  if(name === 'asset_delete') return api('/api/assets/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(args || {})});
+  if(name === 'prompt_template_create' || name === 'prompt_template_update' || name === 'prompt_template_delete'){
+    const body = {...(args || {})};
+    if(name === 'prompt_template_create') body.action = 'create';
+    if(name === 'prompt_template_update') body.action = 'update';
+    if(name === 'prompt_template_delete') body.action = 'delete';
+    return api('/api/prompt_library/template',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  }
+  if(name === 'call_program_api') return agentCallProgramApi(args);
+  throw new Error(`未知 Agent 工具：${name}`);
+}
+async function runAgentLoop(userText, assistantMessage, badge, started){
+  const working = buildAgentMessages('', agentMessages.filter(message=>message !== assistantMessage));
+  const maxSteps = 8;
+  for(let step=0; step<maxSteps; step++){
+    const credentials = agentApimartCredentials();
+    const model = String($('#agentModelPreset')?.value || agentConfig.model || $('#chatModel')?.value || 'gpt-5.5').trim();
+    const ret = await streamChatCompletionRequest({
+      api_endpoint:credentials.api_endpoint,
+      api_key:credentials.api_key,
+      model,
+      messages:working,
+      attachments:[],
+      stream:true,
+      options:{}
+    }, event=>{
+      if(badge) badge.textContent = `Agent 思考中 ${(Number(event.elapsed || ((performance.now()-started)/1000))).toFixed(1)}s`;
+    });
+    const rawReply = String(ret.content || ret?.response?.content || '').trim();
+    const directive = parseAgentDirective(rawReply);
+    if(directive.type !== 'tool_call' || !directive.tool){
+      assistantMessage.text = directive.message || rawReply || 'Agent 已完成。';
+      return;
+    }
+    if(badge) badge.textContent = `调用工具：${directive.tool} (${step + 1}/${maxSteps})`;
+    working.push({role:'assistant',content:rawReply});
+    try{
+      const result = await runAgentTool(directive.tool, directive.args || {});
+      working.push({role:'user',content:JSON.stringify({type:'tool_result',tool:directive.tool,ok:true,result})});
+    }catch(error){
+      working.push({role:'user',content:JSON.stringify({type:'tool_result',tool:directive.tool,ok:false,error:String(error.message || error)})});
+    }
+  }
+  assistantMessage.text = 'Agent 已达到本次最多 8 步操作，请查看已完成的操作后继续下达下一步任务。';
 }
 function updateAgentStreamingMessage(message){
   const box = $('#agentMessages');
@@ -1902,22 +2117,9 @@ async function sendAgentMessage(){
     const model = String($('#agentModelPreset')?.value || agentConfig.model || $('#chatModel')?.value || 'gpt-5.5').trim();
     agentConfig.model = model;
     saveAgentConfig();
-    const ret = await streamChatCompletionRequest({
-      api_endpoint:credentials.api_endpoint,
-      api_key:credentials.api_key,
-      model,
-      messages:buildAgentMessages(text),
-      attachments:[],
-      stream:true,
-      options:collectChatOptions()
-    }, event=>{
-      if(typeof event.content === 'string') assistantMessage.text = event.content;
-      if(event.delta && !event.content) assistantMessage.text += event.delta;
-      updateAgentStreamingMessage(assistantMessage);
-      if(badge) badge.textContent = `执行中 ${(Number(event.elapsed || ((performance.now()-started)/1000))).toFixed(1)}s`;
-    });
+    await runAgentLoop(text, assistantMessage, badge, started);
     assistantMessage.streaming = false;
-    assistantMessage.text = assistantMessage.text || ret.content || 'Agent 已完成请求，但没有返回文本结果。';
+    assistantMessage.text = assistantMessage.text || 'Agent 已完成请求，但没有返回文本结果。';
     persistAgentHistory();
     renderAgentMessages();
     if(badge) badge.textContent = `完成 ${(Number((performance.now()-started)/1000)).toFixed(1)}s`;
@@ -1937,6 +2139,7 @@ async function openAgentWindow(){
   const modal = $('#agentPopoutModal');
   const win = $('#agentFloatingWindow');
   if(!modal || !win) return;
+  restoreAgentWindowSize();
   await loadChatModels().catch(()=>{});
   agentConfig = readAgentConfig();
   renderAgentModelOptions();
@@ -1987,6 +2190,24 @@ function setupAgentFloatingWindow(){
     });
     document.addEventListener('mouseup', ()=>{ agentOrbDragging = false; });
   }
+}
+function applyAgentWindowSize(width, height, persist = false){
+  const win = $('#agentFloatingWindow');
+  if(!win) return;
+  const maxWidth = Math.max(540, window.innerWidth - 20);
+  const maxHeight = Math.max(480, window.innerHeight - 20);
+  const nextWidth = Math.max(540, Math.min(maxWidth, Math.round(Number(width) || 720)));
+  const nextHeight = Math.max(480, Math.min(maxHeight, Math.round(Number(height) || 650)));
+  win.classList.add('agent-resized');
+  win.style.setProperty('--agent-window-width', `${nextWidth}px`);
+  win.style.setProperty('--agent-window-height', `${nextHeight}px`);
+  if(persist) localStorage.setItem(AGENT_WINDOW_SIZE_KEY, JSON.stringify({width:nextWidth,height:nextHeight}));
+}
+function restoreAgentWindowSize(){
+  try{
+    const saved = JSON.parse(localStorage.getItem(AGENT_WINDOW_SIZE_KEY) || '{}');
+    if(Number(saved.width) > 0 && Number(saved.height) > 0) applyAgentWindowSize(saved.width, saved.height, false);
+  }catch(e){}
 }
 function setupAgent(){
   setupAgentFloatingWindow();
@@ -6845,7 +7066,30 @@ function makeFloatingBox(boxId, headId, resizeId){
   box.addEventListener('mousedown', bring, true);
   let dragging=false, sx=0, sy=0, sl=0, st=0; head.addEventListener('mousedown',e=>{ bring(); if(e.target.closest('button,input,select,textarea')) return; dragging=true; sx=e.clientX; sy=e.clientY; const r=box.getBoundingClientRect(); sl=r.left; st=r.top; e.preventDefault(); });
   document.addEventListener('mousemove',e=>{ if(!dragging) return; box.style.left=Math.max(0,sl+e.clientX-sx)+'px'; box.style.top=Math.max(0,st+e.clientY-sy)+'px'; }); document.addEventListener('mouseup',()=>dragging=false);
-  if(resize){ let rs=false,rw=0,rh=0; resize.addEventListener('mousedown',e=>{rs=true; sx=e.clientX; sy=e.clientY; const r=box.getBoundingClientRect(); rw=r.width; rh=r.height; e.preventDefault();}); document.addEventListener('mousemove',e=>{ if(!rs) return; box.style.width=Math.max(520,rw+e.clientX-sx)+'px'; box.style.height=Math.max(420,rh+e.clientY-sy)+'px';}); document.addEventListener('mouseup',()=>rs=false); }
+  if(resize){
+    const isAgentBox = boxId === 'agentFloatingWindow';
+    let rs=false,rw=0,rh=0,pendingW=0,pendingH=0;
+    resize.addEventListener('mousedown',e=>{
+      rs=true; sx=e.clientX; sy=e.clientY;
+      const r=box.getBoundingClientRect(); rw=r.width; rh=r.height;
+      pendingW=rw; pendingH=rh;
+      e.preventDefault(); e.stopPropagation();
+    });
+    document.addEventListener('mousemove',e=>{
+      if(!rs) return;
+      const maxW = Math.max(isAgentBox ? 540 : 520, window.innerWidth - Math.max(20, box.getBoundingClientRect().left));
+      const maxH = Math.max(isAgentBox ? 480 : 420, window.innerHeight - Math.max(20, box.getBoundingClientRect().top));
+      pendingW=Math.min(maxW,Math.max(isAgentBox ? 540 : 520,rw+e.clientX-sx));
+      pendingH=Math.min(maxH,Math.max(isAgentBox ? 480 : 420,rh+e.clientY-sy));
+      if(isAgentBox) applyAgentWindowSize(pendingW,pendingH,false);
+      else { box.style.width=pendingW+'px'; box.style.height=pendingH+'px'; }
+    });
+    document.addEventListener('mouseup',()=>{
+      if(!rs) return;
+      rs=false;
+      if(isAgentBox) applyAgentWindowSize(pendingW,pendingH,true);
+    });
+  }
 }
 
 // V14.10.33 Asset Library

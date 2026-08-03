@@ -29,6 +29,8 @@ assert(/setupShortcutSettings\(\)/.test(app), 'Renderer shortcut setup is missin
 assert(/toggleAssetLibraryShortcut\(\)/.test(app), 'Asset library shortcut handler is missing');
 assert(/togglePromptLibraryShortcut\(\)/.test(app), 'Prompt library shortcut handler is missing');
 assert(/toggleAgentShortcut\(\)/.test(app) && /setupAgent\(\)/.test(app), 'Agent shortcut handler is missing');
+assert(/AGENT_TOOL_CATALOG/.test(app) && /runAgentLoop\(/.test(app) && /call_program_api/.test(app), 'Agent program tool loop is missing');
+assert(/isLocalClient \? 'host/.test(app) && /AGENT_PROGRAM_API_ALLOWLIST/.test(app), 'Agent host/remote permission context is missing');
 assert(/SHORTCUT_BLOCKED/.test(app) && /Alt\+F4/.test(app), 'Blocked shortcut validation is missing');
 
 console.log('[verify-shortcuts] OK: global app visibility toggle, system tray, and two in-window library shortcuts are wired.');
