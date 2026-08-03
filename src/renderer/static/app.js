@@ -1905,6 +1905,15 @@ function agentImageThumbUrl(row = {}){
 function agentImageTaskIsTerminal(row = {}){
   return /(completed|succeeded|failed|cancelled|canceled|完成|失败|取消|停止|错误)/i.test(String(row.status || row.progress_text || ''));
 }
+function agentImageTaskFailed(row = {}){
+  return /(failed|fail|error|cancelled|canceled|失败|取消|停止|错误)/i.test(String(row.status || row.progress_text || row.error_message || ''));
+}
+function agentImageTaskSucceeded(row = {}){
+  return /(completed|succeeded|success|done|完成|成功)/i.test(String(row.status || row.progress_text || '')) && !agentImageTaskFailed(row);
+}
+function agentGenerationGroupIsTerminal(group = {}){
+  return /(已完成|生成失败|已取消|任务已完成|completed|failed|cancelled|[，,]\s*失败)/i.test(String(group.status || ''));
+}
 function agentMessageMediaHtml(message = {}){
   const groups = Array.isArray(message.generation_results) ? message.generation_results : [];
   if(!groups.length) return '';
@@ -1917,7 +1926,13 @@ function agentMessageMediaHtml(message = {}){
       return `<button type="button" class="agent-result-thumb" data-agent-preview="${escapeHtml(full)}" title="点击查看原图"><img loading="lazy" src="${escapeHtml(thumb)}" alt="生成结果预览" /></button>`;
     }).join('');
     const label = group.kind === 'image_batch' ? '图片生成' : '生成结果';
-    return `<div class="agent-result-group"><div class="agent-result-head"><span>${label}</span><small>${escapeHtml(group.status || (items.length ? `已返回 ${items.length} 张` : '等待结果'))}</small></div>${cards ? `<div class="agent-result-grid">${cards}</div>` : '<div class="agent-result-pending">生成任务已提交，结果会自动显示在这里。</div>'}</div>`;
+    const state = String(group.state || '').trim();
+    const status = String(group.status || (items.length ? `已返回 ${items.length} 张` : '等待结果')).trim();
+    const error = String(group.error_message || '').trim();
+    const pendingText = state === 'failed'
+      ? '此批次生成失败，失败原因已同步到这里。'
+      : (state === 'partial_failed' ? '部分任务失败，已返回的图片仍可继续查看。' : '生成任务已提交，结果会自动显示在这里。');
+    return `<div class="agent-result-group${state ? ` ${escapeHtml(state)}` : ''}"><div class="agent-result-head"><span>${label}</span><small title="${escapeHtml(status)}">${escapeHtml(status)}</small></div>${cards ? `<div class="agent-result-grid">${cards}</div>` : `<div class="agent-result-pending">${pendingText}</div>`}${error ? `<div class="agent-result-error" title="${escapeHtml(error)}">${escapeHtml(error)}</div>` : ''}</div>`;
   }).join('');
 }
 function renderAgentMessages(){
@@ -2064,6 +2079,7 @@ async function hydrateAgentHistoryFromOutput(){
     persistAgentHistory({immediate:true});
     renderAgentMessages();
     renderAgentHistory();
+    resumeAgentGenerationTracking();
     updateAgentHistoryStorageStatus();
     return ret;
   }).catch(error=>{
@@ -2104,6 +2120,7 @@ function loadAgentHistory(){
   agentMessages = (agentConversations.find(row => row.id === currentAgentConversationId)?.messages || []).slice(-80);
   renderAgentMessages();
   renderAgentHistory();
+  resumeAgentGenerationTracking();
   hydrateAgentHistoryFromOutput().catch(()=>{});
 }
 function createNewAgentConversation(){
@@ -2226,7 +2243,7 @@ const AGENT_TOOL_CATALOG = [
   {name:'call_program_api', description:'调用已允许的程序内部 API；只能使用同源 /api 路径，不能访问外部网址或系统命令。'}
 ];
 const AGENT_PROGRAM_API_ALLOWLIST = new Set([
-  '/api/health','/api/status','/api/config','/api/chat_models','/api/batches','/api/images','/api/history_batches',
+  '/api/health','/api/status','/api/config','/api/chat_models','/api/batches','/api/batch_status','/api/images','/api/history_batches',
   '/api/video_tasks','/api/prompt_library','/api/assets/init','/api/assets/groups','/api/assets/list',
   '/api/announcements','/api/mj_describe_recent','/api/mj_task','/api/shortcuts',
   '/api/batches','/api/stop_batch','/api/delete_batch','/api/repeat_batch','/api/update_batch_note',
@@ -2407,31 +2424,66 @@ async function runAgentTool(tool='', args={}){
   if(name === 'call_program_api') return agentCallProgramApi(args);
   throw new Error(`未知 Agent 工具：${name}`);
 }
-function trackAgentImageBatch(message, batchId){
+function trackAgentImageBatch(message, batchId, expectedCount = 0){
   const id = String(batchId || '').trim();
   if(!message || !id || agentResultTimers.has(id)) return;
   const groups = Array.isArray(message.generation_results) ? message.generation_results : (message.generation_results = []);
   let group = groups.find(item=>item.kind === 'image_batch' && item.batch_id === id);
   if(!group){
-    group = {kind:'image_batch', batch_id:id, status:'任务已提交，等待生成结果', items:[]};
+    group = {kind:'image_batch', batch_id:id, expected_count:Math.max(0, Number(expectedCount || 0)), state:'pending', status:'任务已提交，等待生成结果', items:[]};
     groups.push(group);
+  }else if(Number(expectedCount || 0) > Number(group.expected_count || 0)){
+    group.expected_count = Number(expectedCount || 0);
   }
   let attempts = 0;
   const poll = async()=>{
     try{
-      const ret = await api(`/api/images?batch_id=${encodeURIComponent(id)}&limit=80&fast=1`);
+      const [ret, taskStatus] = await Promise.all([
+        api(`/api/images?batch_id=${encodeURIComponent(id)}&limit=80&fast=1`),
+        api(`/api/batch_status?batch_id=${encodeURIComponent(id)}`)
+      ]);
       const rows = Array.isArray(ret) ? ret : (Array.isArray(ret?.rows) ? ret.rows : []);
+      const tasks = Array.isArray(taskStatus?.tasks) ? taskStatus.tasks : [];
+      const batch = taskStatus?.batch || {};
       const items = rows.map(row=>({
         id:String(row.id || row.task_id || row.full_url || row.url || ''),
         thumb_url:agentImageThumbUrl(row),
         full_url:agentImageMediaUrl(row),
         status:String(row.status || row.progress_text || '')
       })).filter(item=>item.full_url);
-      const pending = !rows.length || rows.some(row=>!agentImageTaskIsTerminal(row));
-      const status = items.length ? (pending ? `已返回 ${items.length} 张，继续生成中` : `已完成，返回 ${items.length} 张`) : (pending ? '生成中，结果会自动显示' : '任务已完成，但未返回可预览图片');
-      const changed = JSON.stringify(group.items) !== JSON.stringify(items) || group.status !== status;
+      const expected = Math.max(Number(group.expected_count || 0), Number(batch.task_count || 0), tasks.length);
+      const terminalTasks = tasks.length > 0 && tasks.every(agentImageTaskIsTerminal);
+      const batchTerminal = agentImageTaskIsTerminal(batch);
+      const terminal = terminalTasks || (batchTerminal && expected > 0);
+      const failures = tasks.filter(agentImageTaskFailed);
+      const successes = tasks.filter(agentImageTaskSucceeded);
+      const batchFailed = agentImageTaskFailed(batch);
+      const failureCount = Math.max(failures.length, batchFailed ? 1 : 0);
+      const errorMessage = String(failures.map(row=>row.error_message || row.progress_text || row.status).find(Boolean) || batch.error_message || batch.progress_text || '').trim();
+      const waitForSavedImage = terminal && successes.length > 0 && !items.length && attempts < 24;
+      const pending = !terminal || waitForSavedImage;
+      const state = pending ? 'pending' : (failureCount ? (items.length ? 'partial_failed' : 'failed') : 'completed');
+      let status = '';
+      if(pending){
+        status = items.length ? `已返回 ${items.length} 张，继续生成中` : '生成中，结果会自动显示';
+      }else if(failureCount){
+        const total = expected || failureCount;
+        status = items.length ? `已返回 ${items.length} 张，失败 ${failureCount}/${total}` : `生成失败：${failureCount}/${total}`;
+      }else if(items.length){
+        status = `已完成，返回 ${items.length} 张`;
+      }else{
+        status = '任务已完成，但未返回可预览图片';
+      }
+      const changed = JSON.stringify(group.items) !== JSON.stringify(items)
+        || group.status !== status
+        || group.state !== state
+        || group.error_message !== errorMessage
+        || Number(group.expected_count || 0) !== expected;
       group.items = items;
       group.status = status;
+      group.state = state;
+      group.error_message = errorMessage;
+      group.expected_count = expected;
       if(changed){
         renderAgentMessages();
         persistAgentHistory();
@@ -2451,11 +2503,22 @@ function trackAgentImageBatch(message, batchId){
   agentResultTimers.set(id, 0);
   poll();
 }
+function resumeAgentGenerationTracking(){
+  for(const conversation of agentConversations){
+    for(const message of (conversation?.messages || [])){
+      for(const group of (Array.isArray(message?.generation_results) ? message.generation_results : [])){
+        if(group?.kind === 'image_batch' && group.batch_id && !agentGenerationGroupIsTerminal(group)){
+          trackAgentImageBatch(message, group.batch_id, group.expected_count || 0);
+        }
+      }
+    }
+  }
+}
 function attachAgentGenerationResult(message, tool, result){
   if(tool !== 'create_image_batch') return;
   const batchId = String(result?.id || result?.batch_id || result?.batch?.id || '').trim();
   if(!batchId) return;
-  trackAgentImageBatch(message, batchId);
+  trackAgentImageBatch(message, batchId, result?.task_count || result?.taskCount || 0);
   renderAgentMessages();
 }
 async function runAgentLoop(userText, assistantMessage, badge, started, attachments = []){

@@ -7348,6 +7348,27 @@ async function apiHandler(req, res, parsed) {
       const pageSize = Math.max(1, Math.min(local ? 6000 : 1000, Number(parsed.query.limit || (local ? 6000 : 1000))));
       return send(res, listBatches({ownerId:dataOwner, page:1, pageSize}).rows.map(normalizeBatch));
     }
+    if (method === 'GET' && p === '/api/batch_status') {
+      const batchId = String(parsed.query.batch_id || '').trim();
+      if (!batchId) return send(res, {ok:false,error:'缺少批次 ID'}, 400);
+      const st = getDB()._store;
+      const batch = (st.batches || []).find(row => row.id === batchId && (!dataOwner || row.owner_id === dataOwner));
+      if (!batch) return send(res, {ok:false,error:'批次不存在或没有权限访问'}, 404);
+      const tasks = (st.tasks || [])
+        .filter(row => row.batch_id === batchId && (!dataOwner || row.owner_id === dataOwner))
+        .sort((a,b) => Number(a.task_index || 0) - Number(b.task_index || 0))
+        .map(row => ({
+          id:row.id,
+          task_index:Number(row.task_index || 0),
+          status:String(row.status || ''),
+          progress:Number(row.progress || 0),
+          progress_text:String(row.progress_text || ''),
+          error_message:String(row.error_message || ''),
+          updated_at:row.updated_at || '',
+          finished_at:row.finished_at || ''
+        }));
+      return send(res, {ok:true, batch:normalizeBatch(batch), tasks});
+    }
     if (method === 'GET' && p === '/api/history_batches') {
       const scopedOwner = local && parsed.query.all_owners === '1' ? '' : dataOwner;
       const imageRows = listBatches({ownerId: scopedOwner, page: 1, pageSize: local ? 6000 : 1000}).rows.map(b => ({ ...normalizeBatch(b), batch_type:'image' }));
