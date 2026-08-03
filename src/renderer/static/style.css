@@ -3597,3 +3597,57 @@ body.theme-dark .theme-mascot-toggle{background:rgba(255,255,255,.045);}.theme-m
 *::-webkit-scrollbar-thumb:hover{background:color-mix(in srgb,var(--skin-primary,#64748b) 54%,rgba(100,116,139,.48))!important;}
 body.theme-dark *::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--skin-secondary,#94a3b8) 34%,rgba(203,213,225,.24))!important;}
 body.theme-dark *::-webkit-scrollbar-thumb:hover{background:color-mix(in srgb,var(--skin-secondary,#cbd5e1) 58%,rgba(226,232,240,.40))!important;}
+
+/* V14.10.42: APIMart Agent floating assistant */
+.agent-pill{
+  color:#0f766e!important;
+  border-color:rgba(20,184,166,.34)!important;
+  background:linear-gradient(135deg,rgba(45,212,191,.20),rgba(56,189,248,.16))!important;
+  box-shadow:0 8px 22px rgba(20,184,166,.14),inset 0 1px 0 rgba(255,255,255,.55)!important;
+  font-weight:900!important;
+}
+.agent-pill:hover{transform:translateY(-1px)!important;box-shadow:0 12px 28px rgba(20,184,166,.24),inset 0 1px 0 rgba(255,255,255,.64)!important}
+body.theme-dark .agent-pill{color:#99f6e4!important;border-color:rgba(45,212,191,.34)!important;background:linear-gradient(135deg,rgba(20,184,166,.20),rgba(14,165,233,.16))!important}
+.agent-popout-modal{z-index:340!important}
+.agent-floating-window{width:720px!important;height:650px!important;min-width:540px!important;min-height:480px!important;max-width:94vw!important;max-height:92vh!important}
+.agent-floating-head{height:54px!important;padding:0 14px 0 18px!important}
+.agent-window-title{display:flex;align-items:baseline;gap:10px;min-width:0}
+.agent-window-title strong{font-size:17px;letter-spacing:.1px}
+.agent-window-title span{font-size:11px;color:var(--muted);font-weight:700;white-space:nowrap}
+.agent-window-body{height:calc(100% - 54px);min-height:0;display:flex;flex-direction:column;padding:12px;gap:10px}
+.agent-toolbar{display:flex;align-items:end;gap:8px;flex-wrap:wrap;padding:10px 12px;border:1px solid rgba(148,163,184,.20);border-radius:16px;background:rgba(255,255,255,.22);backdrop-filter:blur(16px) saturate(150%);-webkit-backdrop-filter:blur(16px) saturate(150%)}
+.agent-toolbar label{display:grid;gap:4px;min-width:220px;flex:1}
+.agent-toolbar label span{font-size:10px;color:var(--muted);font-weight:800}
+.agent-toolbar select{height:36px;min-width:0}
+.agent-toolbar button{height:36px;white-space:nowrap}
+.agent-api-status{font-size:11px;color:var(--muted);padding:0 4px 8px;white-space:nowrap}
+.agent-api-status.ready{color:#047857}
+.agent-api-status.missing{color:#b45309}
+.theme-dark .agent-toolbar{background:rgba(15,23,42,.34);border-color:rgba(255,255,255,.10)}
+.theme-dark .agent-api-status.ready{color:#6ee7b7}
+.theme-dark .agent-api-status.missing{color:#fbbf24}
+.agent-messages{flex:1;min-height:0;overflow:auto;padding:8px 4px 10px;scroll-behavior:smooth}
+.agent-empty{min-height:100%;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:7px;color:var(--muted);text-align:center}
+.agent-empty b{color:var(--text);font-size:17px}
+.agent-empty span{font-size:12px}
+.agent-message{display:flex;flex-direction:column;gap:4px;margin:0 0 12px;max-width:88%}
+.agent-message.user{margin-left:auto;align-items:flex-end}
+.agent-message-role{font-size:10px;color:var(--muted);font-weight:900;padding:0 4px}
+.agent-message-bubble{padding:10px 13px;border-radius:16px 16px 16px 5px;border:1px solid rgba(148,163,184,.20);background:rgba(255,255,255,.50);color:var(--text);font-size:13px;line-height:1.65;word-break:break-word;box-shadow:0 8px 24px rgba(15,23,42,.06)}
+.agent-message.user .agent-message-bubble{border-radius:16px 16px 5px 16px;background:linear-gradient(135deg,rgba(45,212,191,.78),rgba(56,189,248,.72));border-color:rgba(255,255,255,.34);color:#042f2e}
+.theme-dark .agent-message-bubble{background:rgba(15,23,42,.62);border-color:rgba(255,255,255,.10)}
+.theme-dark .agent-message.user .agent-message-bubble{background:linear-gradient(135deg,rgba(13,148,136,.86),rgba(2,132,199,.82));color:#ecfeff}
+.agent-cursor{color:#0ea5a4;animation:agentCursorPulse 1s steps(2,end) infinite}
+@keyframes agentCursorPulse{50%{opacity:.24}}
+.agent-composer{display:grid;gap:8px;padding:10px;border:1px solid rgba(148,163,184,.20);border-radius:17px;background:rgba(255,255,255,.28)}
+.agent-composer textarea{width:100%;min-height:82px;max-height:180px;resize:vertical;border-radius:13px;padding:11px 12px;line-height:1.5}
+.agent-composer-foot{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.agent-composer-foot span{font-size:11px;color:var(--muted);min-height:18px}
+.agent-composer-foot button{min-width:92px}
+.theme-dark .agent-composer{background:rgba(15,23,42,.34);border-color:rgba(255,255,255,.10)}
+.agent-orb{right:112px!important;bottom:86px!important;background:radial-gradient(circle at 30% 20%,#d9fffb 0,#5eead4 24%,#0891b2 52%,#2563eb 78%,#7c3aed 100%)!important;box-shadow:0 18px 60px rgba(14,165,233,.40),inset 0 1px 0 rgba(255,255,255,.8)!important;font-size:22px!important}
+@media(max-width:900px){
+  .agent-floating-window{left:10px!important;top:10px!important;width:calc(100vw - 20px)!important;height:calc(100vh - 20px)!important;min-width:0!important;min-height:0!important;border-radius:24px!important}
+  .agent-window-title span{display:none}
+  .agent-toolbar label{min-width:180px}
+}

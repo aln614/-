@@ -57,7 +57,8 @@ const DEFAULT_UPDATE_REPO = 'aln614/-';
 const DEFAULT_SHORTCUT_SETTINGS = Object.freeze({
   open_app: 'Ctrl+Alt+A',
   toggle_asset_library: 'Ctrl+Shift+A',
-  toggle_prompt_library: 'Ctrl+Shift+P'
+  toggle_prompt_library: 'Ctrl+Shift+P',
+  toggle_agent: 'Ctrl+Shift+G'
 });
 const BLOCKED_SHORTCUTS = new Set(['Ctrl+C','Ctrl+V','Ctrl+X','Ctrl+Z','Ctrl+S','Alt+F4','Ctrl+Alt+Delete']);
 try { app.setAppUserModelId('com.local.api.image.generator.webui.v14_9_8'); } catch {}
@@ -650,7 +651,7 @@ function validateShortcutConfiguration(input = {}, strict = false) {
       if (BLOCKED_SHORTCUTS.has(normalized)) throw new Error(`${normalized} 是系统常用或高风险快捷键，请更换。`);
       settings[key] = normalized;
     }
-    if (new Set(Object.values(settings)).size !== Object.keys(settings).length) throw new Error('三个快捷键不能重复，请重新设置。');
+    if (new Set(Object.values(settings)).size !== Object.keys(settings).length) throw new Error('快捷键不能重复，请重新设置。');
     return { shortcuts_enabled: enabled, shortcut_settings: settings, repaired: false };
   } catch (error) {
     if (strict) throw error;

@@ -99,6 +99,14 @@ let aiOrbDragging = false;
 let aiOrbDrag = {sx:0, sy:0, sl:0, st:0};
 const CHAT_CONFIG_KEY = 'local_api_image_generator_chat_config_v1498';
 const CHAT_HISTORY_KEY = 'local_api_image_generator_chat_conversations_v1498';
+const AGENT_CONFIG_KEY = 'local_api_image_generator_agent_config_v1498';
+const AGENT_HISTORY_KEY = 'local_api_image_generator_agent_history_v1498';
+let agentMessages = [];
+let agentSending = false;
+let agentConfig = { model:'', system_prompt:'你是 TENYING AI 的 Agent。请先理解用户目标，再给出清晰、可执行的步骤；如果用户要求生成图片、视频或管理素材，请结合 TENYING AI 当前可用的 APIMart 能力给出具体方案。不要声称已经执行了尚未执行的操作。' };
+let agentOrbDragging = false;
+let agentOrbDrag = {sx:0, sy:0, sl:0, st:0};
+let runtimeConfigSnapshot = {};
 let chatHistoryHydrated = false;
 let chatHistorySyncTimer = 0;
 let chatHistorySyncing = false;
@@ -1786,6 +1794,221 @@ async function sendChat(){
     if(sendBtn){ sendBtn.disabled = false; sendBtn.classList.remove('sending'); sendBtn.setAttribute('aria-label','发送'); }
   }
 }
+function readAgentConfig(){
+  try{
+    const raw = JSON.parse(localStorage.getItem(AGENT_CONFIG_KEY) || '{}') || {};
+    return {
+      model: String(raw.model || '').trim(),
+      system_prompt: String(raw.system_prompt || agentConfig.system_prompt).trim() || agentConfig.system_prompt
+    };
+  }catch(e){ return {...agentConfig}; }
+}
+function saveAgentConfig(){
+  agentConfig = {
+    model: String($('#agentModelPreset')?.value || agentConfig.model || $('#chatModel')?.value || 'gpt-5.5').trim(),
+    system_prompt: String(agentConfig.system_prompt || '').trim()
+  };
+  localStorage.setItem(AGENT_CONFIG_KEY, JSON.stringify(agentConfig));
+}
+function renderAgentModelOptions(){
+  const select = $('#agentModelPreset');
+  if(!select) return;
+  const models = Array.isArray(chatModelCatalog) ? chatModelCatalog : [];
+  const current = agentConfig.model || $('#chatModel')?.value || 'gpt-5.5';
+  const rows = models.length ? models : [{id:current,name:current}];
+  const options = rows.map(model=>`<option value="${escapeHtml(model.id || model.name || '')}">${escapeHtml(model.name || model.id || '')}</option>`);
+  if(!rows.some(model=>String(model.id || model.name || '') === current)) options.unshift(`<option value="${escapeHtml(current)}">${escapeHtml(current)}（当前）</option>`);
+  select.innerHTML = options.join('');
+  select.value = current;
+}
+function agentApimartCredentials(){
+  const saved = loadClientConfig('apimart');
+  const currentEndpoint = String($('#apiEndpoint')?.value || '').trim();
+  const runtimeKey = (typeof runtimeConfigSnapshot !== 'undefined' && runtimeConfigSnapshot) ? String(runtimeConfigSnapshot.api_key || '').trim() : '';
+  const currentKey = currentImagePlatform() === 'apimart' ? String($('#apiKey')?.value || '').trim() : '';
+  const apiKey = String(saved.api_key || currentKey || runtimeKey || '').trim();
+  const apiEndpoint = String(saved.api_endpoint || (isApimartEndpoint(currentEndpoint) ? currentEndpoint : '') || 'https://api.apimart.ai').trim();
+  return {api_endpoint:apiEndpoint, api_key:apiKey};
+}
+function updateAgentApiStatus(){
+  const status = $('#agentApiStatus');
+  if(!status) return;
+  const credentials = agentApimartCredentials();
+  const ready = !!credentials.api_key;
+  status.textContent = ready ? 'APIMart API Key：已配置' : 'APIMart API Key：未填写';
+  status.classList.toggle('ready', ready);
+  status.classList.toggle('missing', !ready);
+}
+function renderAgentMessages(){
+  const box = $('#agentMessages');
+  if(!box) return;
+  if(!agentMessages.length){
+    box.innerHTML = '<div class="agent-empty"><b>Agent 已就绪</b><span>选择一个 AI聊天模型，告诉我你要完成的任务。</span></div>';
+    return;
+  }
+  box.innerHTML = agentMessages.map(message=>{
+    const role = message.role === 'user' ? '你' : 'Agent';
+    const text = escapeHtml(message.text || '').replace(/\n/g,'<br>');
+    return `<div class="agent-message ${message.role === 'user' ? 'user' : 'assistant'}"><div class="agent-message-role">${role}</div><div class="agent-message-bubble">${text || '<span class="agent-cursor">▋</span>'}</div></div>`;
+  }).join('');
+  box.scrollTop = box.scrollHeight;
+}
+function persistAgentHistory(){
+  try{ localStorage.setItem(AGENT_HISTORY_KEY, JSON.stringify(agentMessages.slice(-80))); }catch(e){}
+}
+function loadAgentHistory(){
+  try{
+    const rows = JSON.parse(localStorage.getItem(AGENT_HISTORY_KEY) || '[]');
+    agentMessages = Array.isArray(rows) ? rows.filter(row=>row && (row.role === 'user' || row.role === 'assistant') && typeof row.text === 'string').slice(-80) : [];
+  }catch(e){ agentMessages = []; }
+  renderAgentMessages();
+}
+function buildAgentMessages(userText){
+  const messages = [];
+  if(agentConfig.system_prompt) messages.push({role:'system', content:agentConfig.system_prompt});
+  agentMessages.slice(-12).forEach(message=>{
+    const text = String(message.text || '').trim();
+    if(text) messages.push({role:message.role === 'assistant' ? 'assistant' : 'user', content:text.slice(0,10000)});
+  });
+  messages.push({role:'user', content:userText});
+  return messages;
+}
+function updateAgentStreamingMessage(message){
+  const box = $('#agentMessages');
+  const row = box?.querySelector('.agent-message.assistant:last-of-type .agent-message-bubble');
+  if(!row) return renderAgentMessages();
+  row.innerHTML = escapeHtml(message?.text || '').replace(/\n/g,'<br>') || '<span class="agent-cursor">▋</span>';
+  box.scrollTop = box.scrollHeight;
+}
+async function sendAgentMessage(){
+  if(agentSending) return;
+  const input = $('#agentInput');
+  const text = String(input?.value || '').trim();
+  if(!text) return toast('请输入 Agent 任务');
+  const credentials = agentApimartCredentials();
+  if(!credentials.api_key) return toast('请先在首页或设置中心填写 APIMart API Key');
+  agentSending = true;
+  const sendBtn = $('#sendAgentBtn');
+  if(sendBtn){ sendBtn.disabled = true; sendBtn.textContent = '执行中...'; }
+  const started = performance.now();
+  const userMessage = {role:'user', text, created_at:Date.now()};
+  const assistantMessage = {role:'assistant', text:'', streaming:true, created_at:Date.now()};
+  agentMessages.push(userMessage, assistantMessage);
+  input.value = '';
+  renderAgentMessages();
+  const badge = $('#agentThinkingBadge');
+  if(badge) badge.textContent = '思考中...';
+  try{
+    const model = String($('#agentModelPreset')?.value || agentConfig.model || $('#chatModel')?.value || 'gpt-5.5').trim();
+    agentConfig.model = model;
+    saveAgentConfig();
+    const ret = await streamChatCompletionRequest({
+      api_endpoint:credentials.api_endpoint,
+      api_key:credentials.api_key,
+      model,
+      messages:buildAgentMessages(text),
+      attachments:[],
+      stream:true,
+      options:collectChatOptions()
+    }, event=>{
+      if(typeof event.content === 'string') assistantMessage.text = event.content;
+      if(event.delta && !event.content) assistantMessage.text += event.delta;
+      updateAgentStreamingMessage(assistantMessage);
+      if(badge) badge.textContent = `执行中 ${(Number(event.elapsed || ((performance.now()-started)/1000))).toFixed(1)}s`;
+    });
+    assistantMessage.streaming = false;
+    assistantMessage.text = assistantMessage.text || ret.content || 'Agent 已完成请求，但没有返回文本结果。';
+    persistAgentHistory();
+    renderAgentMessages();
+    if(badge) badge.textContent = `完成 ${(Number((performance.now()-started)/1000)).toFixed(1)}s`;
+    setTimeout(()=>{ if($('#agentThinkingBadge')) $('#agentThinkingBadge').textContent = ''; }, 2600);
+  }catch(error){
+    assistantMessage.streaming = false;
+    assistantMessage.text = '请求失败：' + (error.message || error);
+    persistAgentHistory();
+    renderAgentMessages();
+    if(badge) badge.textContent = '请求失败';
+  }finally{
+    agentSending = false;
+    if(sendBtn){ sendBtn.disabled = false; sendBtn.textContent = '发送'; }
+  }
+}
+async function openAgentWindow(){
+  const modal = $('#agentPopoutModal');
+  const win = $('#agentFloatingWindow');
+  if(!modal || !win) return;
+  await loadChatModels().catch(()=>{});
+  agentConfig = readAgentConfig();
+  renderAgentModelOptions();
+  loadAgentHistory();
+  updateAgentApiStatus();
+  modal.classList.add('active');
+  $('#agentOrb')?.classList.remove('show');
+  bringFloatingLayer('#agentPopoutModal', '#agentFloatingWindow');
+  win.style.display = '';
+  win.style.left = win.style.left || 'calc(100vw - 760px)';
+  win.style.top = win.style.top || '92px';
+}
+function closeAgentWindow(){
+  $('#agentPopoutModal')?.classList.remove('active');
+  $('#agentOrb')?.classList.remove('show');
+}
+function minimizeAgentWindow(){
+  if(!$('#agentPopoutModal')?.classList.contains('active')) openAgentWindow();
+  $('#agentFloatingWindow')?.style.setProperty('display','none');
+  $('#agentOrb')?.classList.add('show');
+}
+function restoreAgentWindowFromOrb(){
+  if(!$('#agentPopoutModal')?.classList.contains('active')) openAgentWindow();
+  $('#agentFloatingWindow')?.style.setProperty('display','');
+  $('#agentOrb')?.classList.remove('show');
+  bringFloatingLayer('#agentPopoutModal', '#agentFloatingWindow');
+}
+function setupAgentFloatingWindow(){
+  makeFloatingBox('agentFloatingWindow','agentFloatingHead','agentFloatingResize');
+  const orb = $('#agentOrb');
+  if(orb && !orb.dataset.dragReady){
+    orb.dataset.dragReady = '1';
+    orb.addEventListener('mousedown', e=>{
+      agentOrbDragging = true;
+      const r = orb.getBoundingClientRect();
+      agentOrbDrag = {sx:e.clientX, sy:e.clientY, sl:r.left, st:r.top};
+      e.preventDefault();
+    });
+    orb.addEventListener('click', e=>{
+      if(Math.abs(e.clientX-agentOrbDrag.sx) < 4 && Math.abs(e.clientY-agentOrbDrag.sy) < 4) restoreAgentWindowFromOrb();
+    });
+    document.addEventListener('mousemove', e=>{
+      if(!agentOrbDragging) return;
+      const maxL = Math.max(0, window.innerWidth - 72), maxT = Math.max(0, window.innerHeight - 72);
+      orb.style.left = Math.min(maxL, Math.max(0, agentOrbDrag.sl + e.clientX - agentOrbDrag.sx)) + 'px';
+      orb.style.top = Math.min(maxT, Math.max(0, agentOrbDrag.st + e.clientY - agentOrbDrag.sy)) + 'px';
+      orb.style.right = 'auto'; orb.style.bottom = 'auto';
+    });
+    document.addEventListener('mouseup', ()=>{ agentOrbDragging = false; });
+  }
+}
+function setupAgent(){
+  setupAgentFloatingWindow();
+  loadAgentHistory();
+  $('#agentBtn')?.addEventListener('click', openAgentWindow);
+  $('#closeAgentWindow')?.addEventListener('click', closeAgentWindow);
+  $('#minimizeAgentWindow')?.addEventListener('click', minimizeAgentWindow);
+  $('#agentOrb')?.addEventListener('dblclick', restoreAgentWindowFromOrb);
+  $('#sendAgentBtn')?.addEventListener('click', sendAgentMessage);
+  $('#agentInput')?.addEventListener('keydown', e=>{
+    if(e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); sendAgentMessage(); }
+  });
+  $('#agentModelPreset')?.addEventListener('change', ()=>{ agentConfig.model = $('#agentModelPreset').value; saveAgentConfig(); });
+  $('#agentSyncChatModelBtn')?.addEventListener('click', ()=>{
+    const model = $('#chatModel')?.value || 'gpt-5.5';
+    agentConfig.model = model;
+    renderAgentModelOptions();
+    saveAgentConfig();
+    toast('Agent 已同步 AI聊天模型');
+  });
+  $('#agentPopoutModal')?.addEventListener('pointerdown', ()=>bringFloatingLayer('#agentPopoutModal','#agentFloatingWindow'), true);
+}
 function clearChat(){
   const c = getCurrentChat();
   if(!confirm('确定清空当前聊天？')) return;
@@ -1913,6 +2136,7 @@ async function loadConfig(){
   isLocalClient = c.is_local_client !== false;
   isPublicClient = c.is_public_client === true;
   c = mergeClientSettings(c);
+  runtimeConfigSnapshot = {...c};
   // The Midjourney entry page is always Imagine, regardless of the tab used last time.
   mjState.tab = 'imagine';
   // 局域网访问端使用自己的本地 API Key 配置，不覆盖服务端全局设置。
@@ -6204,12 +6428,14 @@ setupSmartTooltips();
 const SHORTCUT_DEFAULTS = Object.freeze({
   open_app:'Ctrl+Alt+A',
   toggle_asset_library:'Ctrl+Shift+A',
-  toggle_prompt_library:'Ctrl+Shift+P'
+  toggle_prompt_library:'Ctrl+Shift+P',
+  toggle_agent:'Ctrl+Shift+G'
 });
 const SHORTCUT_LABELS = Object.freeze({
   open_app:'打开 / 关闭程序',
   toggle_asset_library:'打开 / 关闭资产库',
-  toggle_prompt_library:'打开 / 关闭提示词库'
+  toggle_prompt_library:'打开 / 关闭提示词库',
+  toggle_agent:'打开 / 关闭 Agent'
 });
 const SHORTCUT_BLOCKED = new Set(['Ctrl+C','Ctrl+V','Ctrl+X','Ctrl+Z','Ctrl+S','Alt+F4','Ctrl+Alt+Delete']);
 const shortcutState = {
@@ -6323,7 +6549,7 @@ function floatingLayerIsFrontmost(selector){
   const layer = $(selector);
   if(!layer?.classList.contains('active')) return false;
   const targetZ = Number(layer.style.zIndex || getComputedStyle(layer).zIndex || 0);
-  return ['#assetLibraryLayer','#promptLibraryLayer'].every(other=>{
+  return ['#assetLibraryLayer','#promptLibraryLayer','#agentPopoutModal'].every(other=>{
     const el = $(other);
     return other === selector || !el?.classList.contains('active') || Number(el.style.zIndex || getComputedStyle(el).zIndex || 0) <= targetZ;
   });
@@ -6339,6 +6565,12 @@ function togglePromptLibraryShortcut(){
     if(!floatingLayerIsFrontmost('#promptLibraryLayer')) bringFloatingLayer('#promptLibraryLayer','#promptLibraryWindow');
     else closePromptLibrary();
   }else openPromptLibrary();
+}
+function toggleAgentShortcut(){
+  if($('#agentPopoutModal')?.classList.contains('active')){
+    if(!floatingLayerIsFrontmost('#agentPopoutModal')) bringFloatingLayer('#agentPopoutModal','#agentFloatingWindow');
+    else closeAgentWindow();
+  }else openAgentWindow();
 }
 async function saveShortcutSettings(){
   const error = shortcutValidationError(shortcutState.draft.settings);
@@ -6400,6 +6632,8 @@ function setupShortcutSettings(){
       event.preventDefault(); event.stopPropagation(); toggleAssetLibraryShortcut();
     }else if(value === normalizeShortcutText(shortcutState.persisted.settings.toggle_prompt_library)){
       event.preventDefault(); event.stopPropagation(); togglePromptLibraryShortcut();
+    }else if(value === normalizeShortcutText(shortcutState.persisted.settings.toggle_agent)){
+      event.preventDefault(); event.stopPropagation(); toggleAgentShortcut();
     }
   },true);
   loadShortcutSettings().catch(()=>{});
@@ -7953,6 +8187,7 @@ async function startup(){
     setupShortcutSettings();
     setupPromptLibrary();
     setupAssetLibrary();
+    setupAgent();
     setupAnnouncements();
     initMidjourneyPage();
     initMjRegionModal();
