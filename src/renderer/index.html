@@ -739,7 +739,9 @@
           <textarea id="agentInput" placeholder="告诉 Agent 你想完成什么，例如：帮我规划一组电商主图提示词"></textarea>
           <div class="agent-composer-foot">
             <span id="agentThinkingBadge"></span>
-            <label class="agent-composer-model" title="选择 Agent 模型"><span>模型</span><select id="agentModelPreset" aria-label="Agent 模型"></select></label>
+            <label class="agent-composer-model agent-image-model" title="选择 Agent 生成图片时使用的 APIMart 模型"><span>图片</span><select id="agentImageModelPreset" aria-label="图片生成模型"></select></label>
+            <label class="agent-composer-model agent-video-model" title="选择 Agent 生成视频时使用的 APIMart 模型"><span>视频</span><select id="agentVideoModelPreset" aria-label="视频生成模型"></select></label>
+            <label class="agent-composer-model agent-chat-model" title="选择 Agent 对话使用的 APIMart 模型"><span>对话</span><select id="agentModelPreset" aria-label="Agent 对话模型"></select></label>
             <button class="primary" id="sendAgentBtn" type="button">发送</button>
           </div>
         </div>

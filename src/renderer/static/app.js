@@ -109,7 +109,8 @@ let agentConversations = [];
 let currentAgentConversationId = '';
 let agentSending = false;
 let agentAttachments = [];
-let agentConfig = { model:'', system_prompt:AGENT_DEFAULT_SYSTEM_PROMPT };
+let agentConfig = { model:'', image_model:'', video_model:'', system_prompt:AGENT_DEFAULT_SYSTEM_PROMPT };
+const agentResultTimers = new Map();
 let agentOrbDragging = false;
 let agentOrbDrag = {sx:0, sy:0, sl:0, st:0};
 let runtimeConfigSnapshot = {};
@@ -1807,13 +1808,17 @@ function readAgentConfig(){
     const legacyPrompt = /不要声称已经执行|目前无法直接替你|只能提供建议/i.test(savedPrompt);
     return {
       model: String(raw.model || '').trim(),
+      image_model: String(raw.image_model || '').trim(),
+      video_model: String(raw.video_model || '').trim(),
       system_prompt: legacyPrompt ? AGENT_DEFAULT_SYSTEM_PROMPT : (savedPrompt || AGENT_DEFAULT_SYSTEM_PROMPT)
     };
-  }catch(e){ return {model:'',system_prompt:AGENT_DEFAULT_SYSTEM_PROMPT}; }
+  }catch(e){ return {model:'',image_model:'',video_model:'',system_prompt:AGENT_DEFAULT_SYSTEM_PROMPT}; }
 }
 function saveAgentConfig(){
   agentConfig = {
     model: String($('#agentModelPreset')?.value || agentConfig.model || $('#chatModel')?.value || 'gpt-5.5').trim(),
+    image_model: String($('#agentImageModelPreset')?.value || agentConfig.image_model || '').trim(),
+    video_model: String($('#agentVideoModelPreset')?.value || agentConfig.video_model || '').trim(),
     system_prompt: String(agentConfig.system_prompt || '').trim()
   };
   localStorage.setItem(AGENT_CONFIG_KEY, JSON.stringify(agentConfig));
@@ -1828,6 +1833,42 @@ function renderAgentModelOptions(){
   if(!rows.some(model=>String(model.id || model.name || '') === current)) options.unshift(`<option value="${escapeHtml(current)}">${escapeHtml(current)}（当前）</option>`);
   select.innerHTML = options.join('');
   select.value = current;
+}
+function agentSelectedImageModel(){ return String($('#agentImageModelPreset')?.value || agentConfig.image_model || '').trim(); }
+function agentSelectedVideoModel(){ return String($('#agentVideoModelPreset')?.value || agentConfig.video_model || '').trim(); }
+function setAgentSelectValue(select, value){
+  if(!select) return;
+  const next = String(value || '').trim();
+  select.value = [...select.options].some(option => option.value === next) ? next : '';
+}
+function agentVideoModelOptionsHtml(){
+  const grouped = new Set();
+  const groups = APIMART_VIDEO_MODEL_GROUPS_UI.map(([label, models])=>{
+    const options = models.map(model=>{
+      const rule = APIMART_VIDEO_MODEL_RULES_UI[String(model).toLowerCase()];
+      if(!rule) return '';
+      grouped.add(String(model).toLowerCase());
+      return `<option value="${escapeHtml(model)}">${escapeHtml(rule.label || model)}</option>`;
+    }).join('');
+    return options ? `<optgroup label="${escapeHtml(label)}">${options}</optgroup>` : '';
+  }).join('');
+  const remaining = Object.entries(APIMART_VIDEO_MODEL_RULES_UI)
+    .filter(([model])=>!grouped.has(String(model).toLowerCase()))
+    .map(([model, rule])=>`<option value="${escapeHtml(model)}">${escapeHtml(rule.label || model)}</option>`)
+    .join('');
+  return groups + (remaining ? `<optgroup label="其他 APIMart 视频模型">${remaining}</optgroup>` : '');
+}
+function renderAgentGenerationModelOptions(){
+  const imageSelect = $('#agentImageModelPreset');
+  const videoSelect = $('#agentVideoModelPreset');
+  if(imageSelect){
+    imageSelect.innerHTML = '<option value="">Agent 自由选择</option>' + APIMART_MODEL_OPTIONS.map(([model, label])=>`<option value="${escapeHtml(model)}">${escapeHtml(label)}</option>`).join('');
+    setAgentSelectValue(imageSelect, agentConfig.image_model);
+  }
+  if(videoSelect){
+    videoSelect.innerHTML = '<option value="">Agent 自由选择</option>' + agentVideoModelOptionsHtml();
+    setAgentSelectValue(videoSelect, agentConfig.video_model);
+  }
 }
 function agentApimartCredentials(){
   const saved = loadClientConfig('apimart');
@@ -1847,6 +1888,32 @@ function updateAgentApiStatus(){
   status.classList.toggle('ready', ready);
   status.classList.toggle('missing', !ready);
 }
+function agentImageMediaUrl(row = {}){
+  const raw = String(row.full_url || row.original_url || row.url || row.local_url || row.remote_url || '').trim();
+  return raw ? withPublicAccess(raw) : '';
+}
+function agentImageThumbUrl(row = {}){
+  const raw = String(row.thumb_url || row.url || row.full_url || row.local_url || row.remote_url || '').trim();
+  return raw ? withPublicAccess(raw) : '';
+}
+function agentImageTaskIsTerminal(row = {}){
+  return /(completed|succeeded|failed|cancelled|canceled|完成|失败|取消|停止|错误)/i.test(String(row.status || row.progress_text || ''));
+}
+function agentMessageMediaHtml(message = {}){
+  const groups = Array.isArray(message.generation_results) ? message.generation_results : [];
+  if(!groups.length) return '';
+  return groups.map(group=>{
+    const items = Array.isArray(group.items) ? group.items : [];
+    const cards = items.map(item=>{
+      const full = String(item.full_url || item.url || '').trim();
+      const thumb = String(item.thumb_url || full).trim();
+      if(!full || !thumb) return '';
+      return `<button type="button" class="agent-result-thumb" data-agent-preview="${escapeHtml(full)}" title="点击查看原图"><img loading="lazy" src="${escapeHtml(thumb)}" alt="生成结果预览" /></button>`;
+    }).join('');
+    const label = group.kind === 'image_batch' ? '图片生成' : '生成结果';
+    return `<div class="agent-result-group"><div class="agent-result-head"><span>${label}</span><small>${escapeHtml(group.status || (items.length ? `已返回 ${items.length} 张` : '等待结果'))}</small></div>${cards ? `<div class="agent-result-grid">${cards}</div>` : '<div class="agent-result-pending">生成任务已提交，结果会自动显示在这里。</div>'}</div>`;
+  }).join('');
+}
 function renderAgentMessages(){
   const box = $('#agentMessages');
   if(!box) return;
@@ -1857,8 +1924,9 @@ function renderAgentMessages(){
   box.innerHTML = agentMessages.map(message=>{
     const role = message.role === 'user' ? '你' : 'Agent';
     const text = escapeHtml(message.text || '').replace(/\n/g,'<br>');
-    return `<div class="agent-message ${message.role === 'user' ? 'user' : 'assistant'}"><div class="agent-message-role">${role}</div><div class="agent-message-bubble">${text || '<span class="agent-cursor">▋</span>'}</div></div>`;
+    return `<div class="agent-message ${message.role === 'user' ? 'user' : 'assistant'}"><div class="agent-message-role">${role}</div><div class="agent-message-bubble">${text || '<span class="agent-cursor">▋</span>'}${agentMessageMediaHtml(message)}</div></div>`;
   }).join('');
+  $$('#agentMessages [data-agent-preview]').forEach(button=>button.addEventListener('click',()=>showPreview(button.dataset.agentPreview)));
   box.scrollTop = box.scrollHeight;
 }
 function legacyPersistAgentHistory(){
@@ -2083,9 +2151,12 @@ function buildAgentSystemPrompt(){
   const permission = isLocalClient
     ? '主机端拥有程序内全部管理权限，可以操作所有任务、资产、分组和设置。'
     : '访问端只能操作当前访问端和后端授权范围内的数据；任何越权写操作必须接受后端拒绝，不能绕过权限。';
+  const imageModel = agentSelectedImageModel() || '自由选择';
+  const videoModel = agentSelectedVideoModel() || '自由选择';
   return [
     agentConfig.system_prompt,
     `当前访问角色：${role}。${permission}`,
+    `生成模型偏好：图片=${imageModel}；视频=${videoModel}。当用户在 Agent 窗口指定图片或视频模型时，调用 set_current_*_model、create_*_batch 时必须使用该模型，不得自行替换。显示“自由选择”时才可依据任务自由选择兼容模型。`,
     '你可以真正调用 TENYING AI 程序工具，不要只给操作建议。',
     '每次只能输出一个纯 JSON 对象，不要使用 Markdown 代码块。',
     '需要操作时输出：{"type":"tool_call","tool":"工具名","args":{}}。',
@@ -2170,7 +2241,7 @@ async function runAgentTool(tool='', args={}){
     return {ok:true,prompt:value};
   }
   if(name === 'set_current_image_model'){
-    const model = String(args.model || '').trim();
+    const model = agentSelectedImageModel() || String(args.model || '').trim();
     if(!model) throw new Error('缺少图片模型');
     applyModelToUI(model);
     return {ok:true,model};
@@ -2181,6 +2252,12 @@ async function runAgentTool(tool='', args={}){
     delete body.use_current_form;
     if(useCurrentForm){
       Object.assign(body, {...collectConfig(), prompts:String(body.prompts || $('#prompts')?.value || ''), main_images:mainImages, reference_images:refImages, client_id:getClientId()});
+    }
+    const imageModel = agentSelectedImageModel();
+    if(imageModel){
+      body.image_api_platform = 'apimart';
+      body.model = imageModel;
+      body.api_endpoint = agentApimartCredentials().api_endpoint;
     }
     if(!body.api_key) body.api_key = agentApimartCredentials().api_key;
     return api('/api/batches',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
@@ -2197,7 +2274,7 @@ async function runAgentTool(tool='', args={}){
     return {ok:true,prompt:value};
   }
   if(name === 'set_current_video_model'){
-    const model = String(args.model || '').trim();
+    const model = agentSelectedVideoModel() || String(args.model || '').trim();
     if(!model || !$('#videoModel')) throw new Error('视频模型输入框不可用');
     $('#videoModel').value = model; updateVideoResolutionOptions(); updateVideoDurationOptions(); updateVideoModeUI(); updateVideoTaskEstimate();
     return {ok:true,model};
@@ -2205,6 +2282,12 @@ async function runAgentTool(tool='', args={}){
   if(name === 'create_video_batch'){
     const body = {...(args || {})};
     delete body.use_current_form;
+    const videoModel = agentSelectedVideoModel();
+    if(videoModel){
+      body.video_platform = 'apimart';
+      body.video_model = videoModel;
+      body.api_endpoint = agentApimartCredentials().api_endpoint;
+    }
     if(!body.api_key) body.api_key = String($('#videoApiKey')?.value || $('#apiKey')?.value || agentApimartCredentials().api_key || '').trim();
     return api('/api/video_batch_submit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   }
@@ -2233,6 +2316,57 @@ async function runAgentTool(tool='', args={}){
   if(name === 'call_program_api') return agentCallProgramApi(args);
   throw new Error(`未知 Agent 工具：${name}`);
 }
+function trackAgentImageBatch(message, batchId){
+  const id = String(batchId || '').trim();
+  if(!message || !id || agentResultTimers.has(id)) return;
+  const groups = Array.isArray(message.generation_results) ? message.generation_results : (message.generation_results = []);
+  let group = groups.find(item=>item.kind === 'image_batch' && item.batch_id === id);
+  if(!group){
+    group = {kind:'image_batch', batch_id:id, status:'任务已提交，等待生成结果', items:[]};
+    groups.push(group);
+  }
+  let attempts = 0;
+  const poll = async()=>{
+    try{
+      const ret = await api(`/api/images?batch_id=${encodeURIComponent(id)}&limit=80&fast=1`);
+      const rows = Array.isArray(ret) ? ret : (Array.isArray(ret?.rows) ? ret.rows : []);
+      const items = rows.map(row=>({
+        id:String(row.id || row.task_id || row.full_url || row.url || ''),
+        thumb_url:agentImageThumbUrl(row),
+        full_url:agentImageMediaUrl(row),
+        status:String(row.status || row.progress_text || '')
+      })).filter(item=>item.full_url);
+      const pending = !rows.length || rows.some(row=>!agentImageTaskIsTerminal(row));
+      const status = items.length ? (pending ? `已返回 ${items.length} 张，继续生成中` : `已完成，返回 ${items.length} 张`) : (pending ? '生成中，结果会自动显示' : '任务已完成，但未返回可预览图片');
+      const changed = JSON.stringify(group.items) !== JSON.stringify(items) || group.status !== status;
+      group.items = items;
+      group.status = status;
+      if(changed){
+        renderAgentMessages();
+        persistAgentHistory();
+      }
+      attempts += 1;
+      if(pending && attempts < 360){
+        agentResultTimers.set(id, setTimeout(poll, 2500));
+      }else{
+        agentResultTimers.delete(id);
+      }
+    }catch(e){
+      attempts += 1;
+      if(attempts < 24) agentResultTimers.set(id, setTimeout(poll, 3500));
+      else agentResultTimers.delete(id);
+    }
+  };
+  agentResultTimers.set(id, 0);
+  poll();
+}
+function attachAgentGenerationResult(message, tool, result){
+  if(tool !== 'create_image_batch') return;
+  const batchId = String(result?.id || result?.batch_id || result?.batch?.id || '').trim();
+  if(!batchId) return;
+  trackAgentImageBatch(message, batchId);
+  renderAgentMessages();
+}
 async function runAgentLoop(userText, assistantMessage, badge, started, attachments = []){
   const working = buildAgentMessages('', agentMessages.filter(message=>message !== assistantMessage));
   const maxSteps = 8;
@@ -2260,6 +2394,7 @@ async function runAgentLoop(userText, assistantMessage, badge, started, attachme
     working.push({role:'assistant',content:rawReply});
     try{
       const result = await runAgentTool(directive.tool, directive.args || {});
+      attachAgentGenerationResult(assistantMessage, directive.tool, result);
       working.push({role:'user',content:JSON.stringify({type:'tool_result',tool:directive.tool,ok:true,result})});
     }catch(error){
       working.push({role:'user',content:JSON.stringify({type:'tool_result',tool:directive.tool,ok:false,error:String(error.message || error)})});
@@ -2366,6 +2501,7 @@ async function openAgentWindow(){
   await loadChatModels().catch(()=>{});
   agentConfig = readAgentConfig();
   renderAgentModelOptions();
+  renderAgentGenerationModelOptions();
   loadAgentHistory();
   updateAgentApiStatus();
   modal.classList.add('active');
@@ -2513,6 +2649,7 @@ function setupAgent(){
   }
   setupAgentFloatingWindow();
   loadAgentHistory();
+  renderAgentGenerationModelOptions();
   $('#agentBtn')?.addEventListener('click', openAgentWindow);
   $('#newAgentConversationBtn')?.addEventListener('click', createNewAgentConversation);
   $('#agentHistoryBtn')?.addEventListener('click', toggleAgentHistory);
@@ -2564,6 +2701,8 @@ function setupAgent(){
   });
   renderAgentAttachments();
   $('#agentModelPreset')?.addEventListener('change', ()=>{ agentConfig.model = $('#agentModelPreset').value; saveAgentConfig(); });
+  $('#agentImageModelPreset')?.addEventListener('change', ()=>{ agentConfig.image_model = $('#agentImageModelPreset').value; saveAgentConfig(); });
+  $('#agentVideoModelPreset')?.addEventListener('change', ()=>{ agentConfig.video_model = $('#agentVideoModelPreset').value; saveAgentConfig(); });
   $('#agentPopoutModal')?.addEventListener('pointerdown', ()=>bringFloatingLayer('#agentPopoutModal','#agentFloatingWindow'), true);
 }
 function clearChat(){
