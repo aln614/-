@@ -6,6 +6,10 @@ const { app, BrowserWindow, Menu, Tray, clipboard, globalShortcut, ipcMain, nati
 
 const DEFAULT_HOST_URL = 'http://192.168.110.30:7868';
 const CONFIG_FILE = 'connection.json';
+const DEFAULT_ZOOM_FACTOR = 1;
+const MIN_ZOOM_FACTOR = 0.75;
+const MAX_ZOOM_FACTOR = 1.5;
+const ZOOM_STEP = 0.1;
 const DEFAULT_SHORTCUT_SETTINGS = Object.freeze({
   open_app: 'Ctrl+Alt+A',
   toggle_asset_library: 'Ctrl+Shift+A',
@@ -31,6 +35,12 @@ function normalizeHostUrl(value = '') {
   if (parsed.username || parsed.password) throw new Error('主机地址不能包含用户名或密码');
   if (!parsed.hostname) throw new Error('请输入主机地址');
   return `${parsed.protocol}//${parsed.host}`;
+}
+
+function normalizeZoomFactor(value = DEFAULT_ZOOM_FACTOR) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return DEFAULT_ZOOM_FACTOR;
+  return Math.round(Math.min(MAX_ZOOM_FACTOR, Math.max(MIN_ZOOM_FACTOR, parsed)) * 100) / 100;
 }
 
 function normalizeShortcutAccelerator(value = '') {
@@ -79,16 +89,21 @@ function readConnectionConfig() {
   try {
     const stored = JSON.parse(fs.readFileSync(configPath(), 'utf8'));
     const shortcuts = validateShortcutConfiguration(stored);
-    return { host_url: normalizeHostUrl(stored.host_url || DEFAULT_HOST_URL), ...shortcuts };
+    return { host_url: normalizeHostUrl(stored.host_url || DEFAULT_HOST_URL), zoom_factor: normalizeZoomFactor(stored.zoom_factor), ...shortcuts };
   } catch {
-    return { host_url: DEFAULT_HOST_URL, shortcuts_enabled: true, shortcut_settings: { ...DEFAULT_SHORTCUT_SETTINGS } };
+    return { host_url: DEFAULT_HOST_URL, zoom_factor: DEFAULT_ZOOM_FACTOR, shortcuts_enabled: true, shortcut_settings: { ...DEFAULT_SHORTCUT_SETTINGS } };
   }
 }
 
-function writeConnectionConfig(hostUrl, shortcutInput = null) {
+function writeConnectionConfig(hostUrl, shortcutInput = null, zoomFactor = null) {
   const current = readConnectionConfig();
   const shortcuts = shortcutInput ? validateShortcutConfiguration(shortcutInput, true) : validateShortcutConfiguration(current);
-  const next = { host_url: normalizeHostUrl(hostUrl || current.host_url), ...shortcuts, updated_at: new Date().toISOString() };
+  const next = {
+    host_url: normalizeHostUrl(hostUrl || current.host_url),
+    zoom_factor: normalizeZoomFactor(zoomFactor === null ? current.zoom_factor : zoomFactor),
+    ...shortcuts,
+    updated_at: new Date().toISOString()
+  };
   fs.mkdirSync(path.dirname(configPath()), { recursive: true });
   fs.writeFileSync(configPath(), JSON.stringify(next, null, 2), 'utf8');
   return next;
@@ -142,7 +157,11 @@ function createMenu() {
       label: '查看',
       submenu: [
         { role: 'togglefullscreen', label: '切换全屏' },
-        { role: 'reload', label: '刷新当前页面' }
+        { role: 'reload', label: '刷新当前页面' },
+        { type: 'separator' },
+        { label: '放大页面', accelerator: 'Ctrl+=', click: () => changePageZoom(ZOOM_STEP) },
+        { label: '缩小页面', accelerator: 'Ctrl+-', click: () => changePageZoom(-ZOOM_STEP) },
+        { label: '恢复 100%', accelerator: 'Ctrl+0', click: resetPageZoom }
       ]
     }
   ]));
@@ -222,6 +241,26 @@ function registerConfiguredOpenAppShortcut() {
   return replaceOpenAppShortcut(accelerator);
 }
 
+function applyPageZoom(factor = readConnectionConfig().zoom_factor) {
+  if (!mainWindow || mainWindow.isDestroyed()) return normalizeZoomFactor(factor);
+  const normalized = normalizeZoomFactor(factor);
+  try { mainWindow.webContents.setZoomFactor(normalized); } catch {}
+  return normalized;
+}
+
+function changePageZoom(delta = 0) {
+  const config = readConnectionConfig();
+  const next = normalizeZoomFactor(Number(config.zoom_factor || DEFAULT_ZOOM_FACTOR) + Number(delta || 0));
+  const saved = writeConnectionConfig(config.host_url, null, next);
+  return applyPageZoom(saved.zoom_factor);
+}
+
+function resetPageZoom() {
+  const config = readConnectionConfig();
+  const saved = writeConnectionConfig(config.host_url, null, DEFAULT_ZOOM_FACTOR);
+  return applyPageZoom(saved.zoom_factor);
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1440,
@@ -240,6 +279,22 @@ function createWindow() {
     }
   });
   mainWindow.once('ready-to-show', bringMainWindowToFront);
+  mainWindow.webContents.on('did-finish-load', () => applyPageZoom());
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (!(input.control || input.meta) || input.type !== 'keyDown') return;
+    const key = String(input.key || '').toLowerCase();
+    const code = String(input.code || '').toLowerCase();
+    if (key === '+' || key === '=' || code === 'equal' || code === 'numpadadd') {
+      event.preventDefault();
+      changePageZoom(ZOOM_STEP);
+    } else if (key === '-' || code === 'minus' || code === 'numpadsubtract') {
+      event.preventDefault();
+      changePageZoom(-ZOOM_STEP);
+    } else if (key === '0' || code === 'digit0' || code === 'numpad0') {
+      event.preventDefault();
+      resetPageZoom();
+    }
+  });
   mainWindow.webContents.on('did-fail-load', (_event, _code, description, validatedUrl, isMainFrame) => {
     if (isMainFrame && !showingLocalPage && isActiveHost(validatedUrl)) showConnectionError(description || '无法连接到主机端').catch(() => {});
   });
@@ -267,6 +322,7 @@ ipcMain.handle('lan-client:retry', async () => { await loadHostApp(); return { o
 ipcMain.handle('lan-client:settings', async () => { await showConnectionSettings(); return { ok: true }; });
 ipcMain.handle('lan-client:open-host', () => shell.openExternal(activeHostUrl()));
 ipcMain.handle('lan-client:copy-host', () => { clipboard.writeText(activeHostUrl()); return { ok: true }; });
+ipcMain.on('lan-client:change-page-zoom', (_event, delta) => { changePageZoom(Number(delta) || 0); });
 ipcMain.handle('lan-client:get-shortcuts', () => {
   const config = readConnectionConfig();
   const accelerator = config.shortcut_settings.open_app;

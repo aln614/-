@@ -26,5 +26,9 @@ assert(/mainWindow\.on\('close',[\s\S]*?hideMainWindowToTray\(\)/.test(main), 'L
 assert(main.includes("lan-client:get-shortcuts") && main.includes("lan-client:save-shortcuts"), 'LAN client shortcut IPC is missing');
 assert(preload.includes('getShortcuts') && preload.includes('saveShortcuts'), 'LAN client shortcut preload API is missing');
 assert(packageJson.includes('"extraResources"'), 'LAN client tray icon must be packaged as an extra resource');
+assert(main.includes('function changePageZoom') && main.includes('webContents.setZoomFactor'), 'LAN client page zoom control is missing');
+assert(main.includes("before-input-event") && main.includes("changePageZoom(ZOOM_STEP)"), 'LAN client Ctrl +/- page zoom handling is missing');
+assert(main.includes('zoom_factor') && main.includes('writeConnectionConfig(config.host_url, null, next)'), 'LAN client page zoom must persist locally');
+assert(preload.includes("addEventListener('wheel'") && preload.includes('lan-client:change-page-zoom'), 'LAN client Ctrl + mouse wheel zoom handling is missing');
 
-console.log('[lan-client:check] OK: dedicated LAN client defaults to http://192.168.110.30:7868 and supports background shortcut toggling.');
+console.log('[lan-client:check] OK: dedicated LAN client defaults to http://192.168.110.30:7868 with background shortcuts and persistent page zoom.');
