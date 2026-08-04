@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>局域网连接失败</title><link rel="stylesheet" href="client.css"></head>
+<body>
+  <main>
+    <h1>无法连接主机端</h1>
+    <p>请确认主机端 TENYING AI 已启动，并且局域网共享已开启。</p>
+    <div class="host" id="hostUrl">http://192.168.110.30:7868</div>
+    <p class="muted" id="errorText"></p>
+    <div class="actions">
+      <button class="primary" id="retryBtn">重新连接</button>
+      <button id="settingsBtn">修改主机地址</button>
+      <button id="copyBtn">复制地址</button>
+    </div>
+  </main>
+  <script>
+    const message = new URLSearchParams(location.search).get('message') || '';
+    document.querySelector('#errorText').textContent = message;
+    window.lanClient.getConfig().then(config => { document.querySelector('#hostUrl').textContent = config.host_url; });
+    document.querySelector('#retryBtn').addEventListener('click', () => window.lanClient.retry());
+    document.querySelector('#settingsBtn').addEventListener('click', () => window.lanClient.openSettings());
+    document.querySelector('#copyBtn').addEventListener('click', async () => { await window.lanClient.copyHost(); document.querySelector('#copyBtn').textContent = '已复制'; });
+  </script>
+</body>
+</html>

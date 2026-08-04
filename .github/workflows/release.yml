@@ -34,6 +34,11 @@ jobs:
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
+      - name: Build LAN client EXE
+        run: npm run lan-client:dist
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
       - name: Verify release EXE
         shell: pwsh
         run: |
@@ -41,16 +46,24 @@ jobs:
           if (-not $exe) { throw "Build finished but dist/*.exe was not created." }
           if ($exe.Length -lt 1000000) { throw "Release EXE is unexpectedly small: $($exe.Length) bytes." }
           Write-Host "Release EXE: $($exe.FullName) ($($exe.Length) bytes)"
+          $lanClientExe = Get-ChildItem -Path lan-client/dist -Filter *.exe -File | Select-Object -First 1
+          if (-not $lanClientExe) { throw "Build finished but lan-client/dist/*.exe was not created." }
+          if ($lanClientExe.Length -lt 1000000) { throw "LAN client EXE is unexpectedly small: $($lanClientExe.Length) bytes." }
+          Write-Host "LAN client EXE: $($lanClientExe.FullName) ($($lanClientExe.Length) bytes)"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: LocalApiImageGenerator-windows
-          path: dist/*.exe
+          path: |
+            dist/*.exe
+            lan-client/dist/*.exe
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.exe
+          files: |
+            dist/*.exe
+            lan-client/dist/*.exe
           generate_release_notes: true

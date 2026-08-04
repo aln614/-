@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>连接设置</title><link rel="stylesheet" href="client.css"></head>
+<body>
+  <main>
+    <h1>主机连接设置</h1>
+    <p>此客户端仅连接主机端，API Key 和主机管理配置不会复制到访问端。</p>
+    <label>主机地址<input id="hostInput" autocomplete="url" spellcheck="false"></label>
+    <p class="muted">默认地址：<span id="defaultHost"></span></p>
+    <div class="error" id="errorText"></div>
+    <div class="actions">
+      <button class="primary" id="saveBtn">保存并连接</button>
+      <button id="backBtn">返回连接页</button>
+    </div>
+  </main>
+  <script>
+    const hostInput = document.querySelector('#hostInput');
+    const errorText = document.querySelector('#errorText');
+    window.lanClient.getConfig().then(config => {
+      hostInput.value = config.host_url;
+      document.querySelector('#defaultHost').textContent = config.default_host_url;
+    });
+    async function save(){
+      errorText.textContent = '';
+      try { await window.lanClient.saveHost(hostInput.value); }
+      catch (error) { errorText.textContent = error.message || '保存失败'; }
+    }
+    document.querySelector('#saveBtn').addEventListener('click', save);
+    hostInput.addEventListener('keydown', event => { if(event.key === 'Enter') save(); });
+    document.querySelector('#backBtn').addEventListener('click', () => window.lanClient.retry());
+  </script>
+</body>
+</html>
