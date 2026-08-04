@@ -2,12 +2,22 @@
 
 const fs = require('fs');
 const path = require('path');
-const { app, BrowserWindow, Menu, clipboard, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, Menu, Tray, clipboard, globalShortcut, ipcMain, nativeImage, shell } = require('electron');
 
 const DEFAULT_HOST_URL = 'http://192.168.110.30:7868';
 const CONFIG_FILE = 'connection.json';
+const DEFAULT_SHORTCUT_SETTINGS = Object.freeze({
+  open_app: 'Ctrl+Alt+A',
+  toggle_asset_library: 'Ctrl+Shift+A',
+  toggle_prompt_library: 'Ctrl+Shift+P',
+  toggle_agent: 'Ctrl+Shift+G'
+});
+const BLOCKED_SHORTCUTS = new Set(['Ctrl+C', 'Ctrl+V', 'Ctrl+X', 'Ctrl+Z', 'Ctrl+S', 'Alt+F4', 'Ctrl+Alt+Delete']);
 let mainWindow = null;
 let showingLocalPage = false;
+let activeOpenAppShortcut = '';
+let isAppQuitting = false;
+let tray = null;
 
 function configPath() {
   return path.join(app.getPath('userData'), CONFIG_FILE);
@@ -23,17 +33,62 @@ function normalizeHostUrl(value = '') {
   return `${parsed.protocol}//${parsed.host}`;
 }
 
-function readConnectionConfig() {
+function normalizeShortcutAccelerator(value = '') {
+  const parts = String(value || '').replace(/\s+/g, '').split('+').filter(Boolean);
+  const modifiers = new Set();
+  let key = '';
+  for (const rawPart of parts) {
+    const lower = rawPart.toLowerCase();
+    if (lower === 'ctrl' || lower === 'control' || lower === 'controlorcommand' || lower === 'commandorcontrol') modifiers.add('Ctrl');
+    else if (lower === 'alt' || lower === 'option') modifiers.add('Alt');
+    else if (lower === 'shift') modifiers.add('Shift');
+    else if (lower === 'cmd' || lower === 'command' || lower === 'meta' || lower === 'super') modifiers.add('Cmd');
+    else {
+      if (key) return '';
+      if (/^[a-z]$/i.test(rawPart)) key = rawPart.toUpperCase();
+      else if (/^[0-9]$/.test(rawPart)) key = rawPart;
+      else if (/^f(?:[1-9]|1[0-2])$/i.test(rawPart)) key = rawPart.toUpperCase();
+      else if (lower === 'delete' || lower === 'del') key = 'Delete';
+      else return '';
+    }
+  }
+  if (!key || !modifiers.size) return '';
+  return ['Ctrl', 'Alt', 'Shift', 'Cmd'].filter(item => modifiers.has(item)).concat(key).join('+');
+}
+
+function validateShortcutConfiguration(input = {}, strict = false) {
+  const source = input.shortcut_settings && typeof input.shortcut_settings === 'object' ? input.shortcut_settings : {};
+  const settings = {};
   try {
-    const stored = JSON.parse(fs.readFileSync(configPath(), 'utf8'));
-    return { host_url: normalizeHostUrl(stored.host_url || DEFAULT_HOST_URL) };
-  } catch {
-    return { host_url: DEFAULT_HOST_URL };
+    for (const key of Object.keys(DEFAULT_SHORTCUT_SETTINGS)) {
+      const raw = Object.prototype.hasOwnProperty.call(source, key) ? source[key] : (strict ? '' : DEFAULT_SHORTCUT_SETTINGS[key]);
+      const normalized = normalizeShortcutAccelerator(raw);
+      if (!normalized) throw new Error('快捷键必须包含修饰键，并使用字母、数字或 F1-F12。');
+      if (BLOCKED_SHORTCUTS.has(normalized)) throw new Error(`${normalized} 是系统常用或高风险快捷键，请更换。`);
+      settings[key] = normalized;
+    }
+    if (new Set(Object.values(settings)).size !== Object.keys(settings).length) throw new Error('快捷键不能重复，请重新设置。');
+    return { shortcuts_enabled: input.shortcuts_enabled !== false, shortcut_settings: settings };
+  } catch (error) {
+    if (strict) throw error;
+    return { shortcuts_enabled: true, shortcut_settings: { ...DEFAULT_SHORTCUT_SETTINGS } };
   }
 }
 
-function writeConnectionConfig(hostUrl) {
-  const next = { host_url: normalizeHostUrl(hostUrl), updated_at: new Date().toISOString() };
+function readConnectionConfig() {
+  try {
+    const stored = JSON.parse(fs.readFileSync(configPath(), 'utf8'));
+    const shortcuts = validateShortcutConfiguration(stored);
+    return { host_url: normalizeHostUrl(stored.host_url || DEFAULT_HOST_URL), ...shortcuts };
+  } catch {
+    return { host_url: DEFAULT_HOST_URL, shortcuts_enabled: true, shortcut_settings: { ...DEFAULT_SHORTCUT_SETTINGS } };
+  }
+}
+
+function writeConnectionConfig(hostUrl, shortcutInput = null) {
+  const current = readConnectionConfig();
+  const shortcuts = shortcutInput ? validateShortcutConfiguration(shortcutInput, true) : validateShortcutConfiguration(current);
+  const next = { host_url: normalizeHostUrl(hostUrl || current.host_url), ...shortcuts, updated_at: new Date().toISOString() };
   fs.mkdirSync(path.dirname(configPath()), { recursive: true });
   fs.writeFileSync(configPath(), JSON.stringify(next, null, 2), 'utf8');
   return next;
@@ -93,6 +148,80 @@ function createMenu() {
   ]));
 }
 
+function bringMainWindowToFront() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  try { mainWindow.setSkipTaskbar(false); } catch {}
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  if (typeof mainWindow.moveTop === 'function') mainWindow.moveTop();
+  mainWindow.focus();
+  try {
+    mainWindow.setAlwaysOnTop(true, 'floating');
+    const timer = setTimeout(() => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setAlwaysOnTop(false);
+    }, 180);
+    if (typeof timer.unref === 'function') timer.unref();
+  } catch {}
+}
+
+function hideMainWindowToTray() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  try { mainWindow.setSkipTaskbar(true); } catch {}
+  mainWindow.hide();
+}
+
+function toggleMainWindowFromShortcut() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isVisible() && !mainWindow.isMinimized()) hideMainWindowToTray();
+  else bringMainWindowToFront();
+}
+
+function trayIcon() {
+  const candidates = [
+    path.join(process.resourcesPath || '', 'assets', 'rocket.ico'),
+    path.join(__dirname, '..', 'assets', 'rocket.ico'),
+    path.join(__dirname, 'assets', 'rocket.ico')
+  ];
+  const iconPath = candidates.find(candidate => candidate && fs.existsSync(candidate));
+  return iconPath ? nativeImage.createFromPath(iconPath) : nativeImage.createEmpty();
+}
+
+function createTray() {
+  if (tray) return;
+  tray = new Tray(trayIcon());
+  tray.setToolTip('TENYING AI 局域网访问端');
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: '打开 / 关闭程序', click: toggleMainWindowFromShortcut },
+    { label: '打开程序', click: bringMainWindowToFront },
+    { label: '最小化到后台', click: hideMainWindowToTray },
+    { type: 'separator' },
+    { label: '退出程序', click: () => { isAppQuitting = true; app.quit(); } }
+  ]));
+  tray.on('click', bringMainWindowToFront);
+  tray.on('double-click', bringMainWindowToFront);
+}
+
+function replaceOpenAppShortcut(accelerator = '') {
+  if (!app.isReady()) return true;
+  const next = String(accelerator || '').trim();
+  if (next && next === activeOpenAppShortcut && globalShortcut.isRegistered(next)) return true;
+  if (next) {
+    try { if (!globalShortcut.register(next, toggleMainWindowFromShortcut)) return false; }
+    catch { return false; }
+  }
+  if (activeOpenAppShortcut && activeOpenAppShortcut !== next) {
+    try { globalShortcut.unregister(activeOpenAppShortcut); } catch {}
+  }
+  activeOpenAppShortcut = next;
+  return true;
+}
+
+function registerConfiguredOpenAppShortcut() {
+  const config = readConnectionConfig();
+  const accelerator = config.shortcuts_enabled ? config.shortcut_settings.open_app : '';
+  return replaceOpenAppShortcut(accelerator);
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1440,
@@ -110,7 +239,7 @@ function createWindow() {
       sandbox: true
     }
   });
-  mainWindow.once('ready-to-show', () => mainWindow.show());
+  mainWindow.once('ready-to-show', bringMainWindowToFront);
   mainWindow.webContents.on('did-fail-load', (_event, _code, description, validatedUrl, isMainFrame) => {
     if (isMainFrame && !showingLocalPage && isActiveHost(validatedUrl)) showConnectionError(description || '无法连接到主机端').catch(() => {});
   });
@@ -118,6 +247,11 @@ function createWindow() {
     if (isActiveHost(targetUrl)) return { action: 'allow' };
     shell.openExternal(targetUrl).catch(() => {});
     return { action: 'deny' };
+  });
+  mainWindow.on('close', event => {
+    if (isAppQuitting) return;
+    event.preventDefault();
+    hideMainWindowToTray();
   });
   mainWindow.on('closed', () => { mainWindow = null; });
   loadHostApp();
@@ -133,11 +267,41 @@ ipcMain.handle('lan-client:retry', async () => { await loadHostApp(); return { o
 ipcMain.handle('lan-client:settings', async () => { await showConnectionSettings(); return { ok: true }; });
 ipcMain.handle('lan-client:open-host', () => shell.openExternal(activeHostUrl()));
 ipcMain.handle('lan-client:copy-host', () => { clipboard.writeText(activeHostUrl()); return { ok: true }; });
+ipcMain.handle('lan-client:get-shortcuts', () => {
+  const config = readConnectionConfig();
+  const accelerator = config.shortcut_settings.open_app;
+  return { ...config, defaults: { ...DEFAULT_SHORTCUT_SETTINGS }, global_registered: config.shortcuts_enabled && activeOpenAppShortcut === accelerator && globalShortcut.isRegistered(accelerator) };
+});
+ipcMain.handle('lan-client:save-shortcuts', (_event, body = {}) => {
+  const shortcutConfig = validateShortcutConfiguration(body, true);
+  const previousShortcut = activeOpenAppShortcut;
+  const nextShortcut = shortcutConfig.shortcuts_enabled ? shortcutConfig.shortcut_settings.open_app : '';
+  if (!replaceOpenAppShortcut(nextShortcut)) throw new Error('当前快捷键被系统或其他软件占用，请更换。');
+  try {
+    const config = writeConnectionConfig(activeHostUrl(), shortcutConfig);
+    return { ...config, defaults: { ...DEFAULT_SHORTCUT_SETTINGS }, global_registered: shortcutConfig.shortcuts_enabled ? globalShortcut.isRegistered(nextShortcut) : false };
+  } catch (error) {
+    replaceOpenAppShortcut(previousShortcut);
+    throw error;
+  }
+});
 
 app.whenReady().then(() => {
   createMenu();
   createWindow();
-  app.on('activate', () => { if (!BrowserWindow.getAllWindows().length) createWindow(); });
+  createTray();
+  registerConfiguredOpenAppShortcut();
+  app.on('activate', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) createWindow();
+    bringMainWindowToFront();
+  });
 });
 
-app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
+app.on('window-all-closed', () => { if (isAppQuitting) app.quit(); });
+app.on('before-quit', () => { isAppQuitting = true; });
+app.on('will-quit', () => {
+  try { globalShortcut.unregisterAll(); } catch {}
+  activeOpenAppShortcut = '';
+  try { if (tray && !tray.isDestroyed()) tray.destroy(); } catch {}
+  tray = null;
+});

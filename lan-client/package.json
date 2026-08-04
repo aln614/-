@@ -1,6 +1,6 @@
 {
   "name": "tenying-ai-lan-client",
-  "version": "1.0.52",
+  "version": "1.0.53",
   "description": "TENYING AI LAN access client",
   "main": "main.js",
   "private": true,
@@ -14,6 +14,12 @@
     "files": [
       "**/*",
       "!dist/**"
+    ],
+    "extraResources": [
+      {
+        "from": "../assets/rocket.ico",
+        "to": "assets/rocket.ico"
+      }
     ],
     "win": {
       "icon": "../assets/rocket.ico",

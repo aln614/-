@@ -17,6 +17,7 @@ assert(/toggle_prompt_library:\s*'Ctrl\+Shift\+P'/.test(main), 'Default prompt s
 assert(/toggle_agent:\s*'Ctrl\+Shift\+G'/.test(main), 'Default Agent shortcut is missing');
 assert(/p === '\/api\/shortcuts'/.test(main), 'Shortcut configuration API is missing');
 assert(/globalShortcut\.register\(next, toggleMainWindowFromShortcut\)/.test(main), 'Open-app global shortcut toggle registration is missing');
+assert(/method === 'GET' && p === '\/api\/shortcuts'[\s\S]*?const globalRegistered = local && shortcutConfig\.shortcuts_enabled/.test(main), 'LAN/public clients must be able to read shortcut bindings without claiming the host global shortcut');
 assert(/globalShortcut\.unregisterAll\(\)/.test(main), 'Global shortcut cleanup is missing');
 assert(/\bTray\b/.test(main) && /new Tray\(iconPath\)/.test(main), 'Windows system tray is missing');
 assert(/function toggleMainWindowFromShortcut\(\)[\s\S]*?hideMainWindowToTray\(\)[\s\S]*?bringMainWindowToFront\(\)/.test(main), 'Open-app shortcut must toggle tray visibility');
@@ -32,5 +33,6 @@ assert(/toggleAgentShortcut\(\)/.test(app) && /setupAgent\(\)/.test(app), 'Agent
 assert(/AGENT_TOOL_CATALOG/.test(app) && /runAgentLoop\(/.test(app) && /call_program_api/.test(app), 'Agent program tool loop is missing');
 assert(/isLocalClient \? 'host/.test(app) && /AGENT_PROGRAM_API_ALLOWLIST/.test(app), 'Agent host/remote permission context is missing');
 assert(/SHORTCUT_BLOCKED/.test(app) && /Alt\+F4/.test(app), 'Blocked shortcut validation is missing');
+assert(/if\(!shortcutState\.loaded \|\| !shortcutState\.persisted\.enabled\) return;/.test(app), 'In-window shortcuts must also work for LAN/public access clients');
 
 console.log('[verify-shortcuts] OK: global app visibility toggle, system tray, and two in-window library shortcuts are wired.');

@@ -354,7 +354,7 @@
             <div class="thumbs" id="videoFilePreview"></div>
             <div class="dropzone small" id="videoRefDrop"><strong>上传参考图</strong><span>可上传多张参考图，不再限制数量；点击缩略图可像图片一样预览；也支持 Ctrl+V 粘贴图片</span><input id="videoRefFiles" type="file" multiple accept="image/*" /></div>
             <div class="thumbs" id="videoRefThumbs"></div>
-            <div class="prompt-mode-row"><label>视频提示词</label><label class="switch-line prompt-switch"><input id="videoPromptMultilineTasks" type="checkbox" /> 提示词多行多任务</label><label class="switch-line prompt-switch" id="videoMultiReferenceLabel" title="仅支持多参考视频的 APIMart 模型可用"><input id="videoMultiReference" type="checkbox" /> 多视频参考</label></div>
+            <div class="prompt-mode-row"><label>视频提示词</label><div class="video-prompt-mode-actions"><label class="switch-line prompt-switch"><input id="videoPromptMultilineTasks" type="checkbox" /> 提示词多行多任务</label><label class="switch-line prompt-switch" id="videoMultiReferenceLabel" title="仅支持多参考视频的 APIMart 模型可用"><input id="videoMultiReference" type="checkbox" /> 多视频参考</label></div></div>
             <textarea id="videoPrompt" placeholder="开启：一行/一段提示词 = 一个视频任务；关闭：整个输入框作为一个完整提示词。"></textarea>
             <div class="row">
               <div><label>重复任务次数</label><input id="videoRepeatCount" type="number" value="1" min="1" max="50" /></div>

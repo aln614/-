@@ -7368,10 +7368,9 @@ async function apiHandler(req, res, parsed) {
   try {
     if (method === 'GET' && p === '/api/health') return send(res, {ok:true, time: nowISO(), app: cfg.app_name, ...urls(cfg)});
     if (method === 'GET' && p === '/api/shortcuts') {
-      if (!local) return send(res, {ok:false,error:'快捷键只能在主机程序中配置'}, 403);
       const shortcutConfig = validateShortcutConfiguration(cfg);
       const accelerator = shortcutConfig.shortcut_settings.open_app;
-      const globalRegistered = shortcutConfig.shortcuts_enabled && !SERVER_ONLY
+      const globalRegistered = local && shortcutConfig.shortcuts_enabled && !SERVER_ONLY
         ? activeOpenAppShortcut === accelerator && globalShortcut.isRegistered(accelerator)
         : false;
       return send(res, {ok:true, shortcuts_enabled:shortcutConfig.shortcuts_enabled, shortcut_settings:shortcutConfig.shortcut_settings, defaults:{...DEFAULT_SHORTCUT_SETTINGS}, global_registered:globalRegistered});

@@ -33,6 +33,8 @@ let previewStart = {x:0,y:0,px:0,py:0};
 let previewTransformRaf = 0;
 let isLocalClient = true;
 let isPublicClient = false;
+function isLanDesktopClient(){ return !!(window.lanClient && typeof window.lanClient.getShortcuts === 'function' && typeof window.lanClient.saveShortcuts === 'function'); }
+function canEditShortcutSettings(){ return isLocalClient || isLanDesktopClient(); }
 const publicBatchUploadPromises = new WeakMap();
 const PUBLIC_BATCH_UPLOAD_CONCURRENCY = 4;
 const publicBatchUploadQueue = [];
@@ -3428,7 +3430,7 @@ function calcEstimate(){
   $('#taskEstimate').textContent = `当前模式：${promptInfo.mode}｜预计任务：${mainCount} × ${promptInfo.count} × ${repeatCount} = ${mainCount * promptInfo.count * repeatCount}`;
   const warning = $('#mainImageTaskWarning');
   if(warning){
-    const multipleMainTasks = mainImages.length > 2;
+    const multipleMainTasks = mainImages.length >= 2;
     warning.classList.toggle('hidden', !multipleMainTasks);
     warning.textContent = multipleMainTasks ? `已上传 ${mainImages.length} 张主图，将创建 ${mainImages.length} 个独立主任务` : '';
   }
@@ -6378,16 +6380,50 @@ function syncVideoApiKeyToHome(value=''){
 }
 function hasReferenceVideo(){ return !!(videoFilesData.length || ($('#videoUrlInput')?.value || '').trim()); }
 function videoMultiReferenceEnabled(){ return currentVideoPlatform() === 'apimart' && $('#videoMultiReference')?.checked === true; }
+function selectCompatibleMultiVideoReferenceModel(videoCount = videoFilesData.length){
+  const requiredCount = Math.max(2, Number(videoCount || 0));
+  const preferredModels = ['MiniMax-H3','doubao-seedance-2.0','doubao-seedance-2.0-fast','doubao-seedance-2.0-mini','wan2.7-r2v'];
+  return preferredModels.find(model=>{
+    const rule = APIMART_VIDEO_MODEL_RULES_UI[String(model).toLowerCase()];
+    return rule?.supportsVideo && Number(rule.maxVideoCount || 1) >= requiredCount;
+  }) || '';
+}
 function updateVideoMultiReferenceControl(){
   const input = $('#videoMultiReference');
   const label = $('#videoMultiReferenceLabel');
   if(!input || !label) return;
   const rule = currentApimartVideoRule();
   const supported = currentVideoPlatform() === 'apimart' && rule.supportsVideo && Number(rule.maxVideoCount || 1) > 1;
+  const compatibleModel = !supported ? selectCompatibleMultiVideoReferenceModel() : '';
   input.disabled = !supported;
   if(!supported) input.checked = false;
   label.classList.toggle('is-disabled', !supported);
-  label.title = supported ? `${rule.label} 最多支持 ${rule.maxVideoCount} 个参考视频` : '当前模型不支持多视频参考';
+  label.classList.toggle('can-switch-model', !!compatibleModel);
+  label.title = supported
+    ? `${rule.label} 最多支持 ${rule.maxVideoCount} 个参考视频`
+    : (compatibleModel ? `当前 ${rule.label} 仅支持 1 个参考视频；点击可切换到 ${APIMART_VIDEO_MODEL_RULES_UI[compatibleModel.toLowerCase()].label} 并启用多视频参考` : `当前 ${rule.label} 不支持多视频参考`);
+}
+function enableMultiVideoReferenceWithCompatibleModel(){
+  const input = $('#videoMultiReference');
+  if(!input || currentVideoPlatform() !== 'apimart') return false;
+  if(input.disabled){
+    const replacementModel = selectCompatibleMultiVideoReferenceModel();
+    const model = $('#videoModel');
+    if(!replacementModel || !model || ![...model.options].some(option=>option.value === replacementModel)){
+      toast('当前已上传的视频数量没有可用的多视频参考模型。');
+      return false;
+    }
+    model.value = replacementModel;
+    if($('#videoDuration')) $('#videoDuration').dataset.durationValue = '';
+    updateVideoResolutionOptions();
+    updateVideoDurationOptions();
+    updateVideoDurationVisibility();
+    updateVideoModeUI();
+    toast(`已切换到 ${currentApimartVideoRule().label}，可合并 ${videoFilesData.length} 个参考视频。`);
+  }
+  input.checked = true;
+  updateVideoTaskEstimate();
+  return true;
 }
 function isSkyReelsVideoModel(model = $('#videoModel')?.value){ return /^skyreels-v4-(fast|std)$/i.test(String(model || '')); }
 function currentVideoReferenceType(){ return $('#videoReferenceType')?.value === 'extend' ? 'extend' : 'reference'; }
@@ -7346,6 +7382,14 @@ function setupVideoPage(){
     updateVideoMultiReferenceControl();
     updateVideoTaskEstimate();
   });
+  $('#videoMultiReferenceLabel')?.addEventListener('click', event=>{
+    const input = $('#videoMultiReference');
+    if(input?.disabled && videoFilesData.length > 1){
+      event.preventDefault();
+      event.stopPropagation();
+      enableMultiVideoReferenceWithCompatibleModel();
+    }
+  });
   $('#videoUrlInput')?.addEventListener('input', ()=>{
     updateVideoDurationVisibility();
   });
@@ -7652,8 +7696,7 @@ function renderShortcutSettings(){
   if($('#shortcutsEnabled')) $('#shortcutsEnabled').checked = shortcutState.draft.enabled !== false;
 }
 async function loadShortcutSettings(){
-  if(!isLocalClient){ $('#shortcutSettingsBtn')?.classList.add('hidden'); return; }
-  const ret = await api('/api/shortcuts');
+  const ret = isLanDesktopClient() ? await window.lanClient.getShortcuts() : await api('/api/shortcuts');
   shortcutState.persisted = {
     enabled:ret.shortcuts_enabled !== false,
     settings:{...SHORTCUT_DEFAULTS,...(ret.shortcut_settings || {})}
@@ -7662,10 +7705,10 @@ async function loadShortcutSettings(){
   shortcutState.globalRegistered = ret.global_registered === true;
   shortcutState.loaded = true;
   renderShortcutSettings();
-  if(shortcutState.persisted.enabled && !shortcutState.globalRegistered) setShortcutMessage('打开 / 关闭程序快捷键未注册：当前组合可能被系统或其他软件占用。','error');
+  if(canEditShortcutSettings() && shortcutState.persisted.enabled && !shortcutState.globalRegistered) setShortcutMessage('打开 / 关闭程序快捷键未注册：当前组合可能被系统或其他软件占用。','error');
 }
 async function openShortcutSettings(){
-  if(!isLocalClient) return;
+  if(!canEditShortcutSettings()) return;
   shortcutState.recording = '';
   setShortcutMessage('');
   try{ await loadShortcutSettings(); }
@@ -7716,7 +7759,10 @@ async function saveShortcutSettings(){
   if(saveBtn) saveBtn.disabled = true;
   setShortcutMessage('正在保存并应用快捷键...');
   try{
-    const ret = await api('/api/shortcuts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({shortcuts_enabled:shortcutState.draft.enabled,shortcut_settings:normalized})});
+    const payload = {shortcuts_enabled:shortcutState.draft.enabled,shortcut_settings:normalized};
+    const ret = isLanDesktopClient()
+      ? await window.lanClient.saveShortcuts(payload)
+      : await api('/api/shortcuts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     shortcutState.persisted = {enabled:ret.shortcuts_enabled !== false,settings:{...SHORTCUT_DEFAULTS,...ret.shortcut_settings}};
     shortcutState.draft = cloneShortcutConfig(shortcutState.persisted);
     shortcutState.globalRegistered = ret.global_registered === true;
@@ -7727,19 +7773,20 @@ async function saveShortcutSettings(){
   finally{ if(saveBtn) saveBtn.disabled = false; }
 }
 function setupShortcutSettings(){
-  if(!isLocalClient){ $('#shortcutSettingsBtn')?.classList.add('hidden'); return; }
-  $('#shortcutSettingsBtn')?.addEventListener('click',openShortcutSettings);
-  $('#shortcutSettingsCloseBtn')?.addEventListener('click',closeShortcutSettings);
-  $('#shortcutSettingsSaveBtn')?.addEventListener('click',saveShortcutSettings);
-  $('#shortcutRestoreAllBtn')?.addEventListener('click',()=>{ shortcutState.recording=''; shortcutState.draft.settings={...SHORTCUT_DEFAULTS}; setShortcutMessage('已恢复默认组合，点击“保存设置”后生效。'); renderShortcutSettings(); });
-  $('#shortcutsEnabled')?.addEventListener('change',event=>{ shortcutState.draft.enabled=event.target.checked; setShortcutMessage(event.target.checked?'点击“保存设置”后启用快捷键。':'点击“保存设置”后关闭全部快捷键。'); });
-  $('#shortcutSettingsList')?.addEventListener('click',event=>{
-    const edit = event.target.closest('[data-shortcut-edit]')?.dataset.shortcutEdit;
-    const reset = event.target.closest('[data-shortcut-reset]')?.dataset.shortcutReset;
-    if(edit){ shortcutState.recording=edit; setShortcutMessage('请按下新的快捷键组合，按 Esc 取消录制。'); renderShortcutSettings(); }
-    if(reset){ shortcutState.recording=''; shortcutState.draft.settings[reset]=SHORTCUT_DEFAULTS[reset]; setShortcutMessage(`${SHORTCUT_LABELS[reset]}已恢复默认，保存后生效。`); renderShortcutSettings(); }
-  });
-  $('#shortcutSettingsLayer')?.addEventListener('click',event=>{ if(event.target.id==='shortcutSettingsLayer') closeShortcutSettings(); });
+  if(canEditShortcutSettings()){
+    $('#shortcutSettingsBtn')?.addEventListener('click',openShortcutSettings);
+    $('#shortcutSettingsCloseBtn')?.addEventListener('click',closeShortcutSettings);
+    $('#shortcutSettingsSaveBtn')?.addEventListener('click',saveShortcutSettings);
+    $('#shortcutRestoreAllBtn')?.addEventListener('click',()=>{ shortcutState.recording=''; shortcutState.draft.settings={...SHORTCUT_DEFAULTS}; setShortcutMessage('已恢复默认组合，点击“保存设置”后生效。'); renderShortcutSettings(); });
+    $('#shortcutsEnabled')?.addEventListener('change',event=>{ shortcutState.draft.enabled=event.target.checked; setShortcutMessage(event.target.checked?'点击“保存设置”后启用快捷键。':'点击“保存设置”后关闭全部快捷键。'); });
+    $('#shortcutSettingsList')?.addEventListener('click',event=>{
+      const edit = event.target.closest('[data-shortcut-edit]')?.dataset.shortcutEdit;
+      const reset = event.target.closest('[data-shortcut-reset]')?.dataset.shortcutReset;
+      if(edit){ shortcutState.recording=edit; setShortcutMessage('请按下新的快捷键组合，按 Esc 取消录制。'); renderShortcutSettings(); }
+      if(reset){ shortcutState.recording=''; shortcutState.draft.settings[reset]=SHORTCUT_DEFAULTS[reset]; setShortcutMessage(`${SHORTCUT_LABELS[reset]}已恢复默认，保存后生效。`); renderShortcutSettings(); }
+    });
+    $('#shortcutSettingsLayer')?.addEventListener('click',event=>{ if(event.target.id==='shortcutSettingsLayer') closeShortcutSettings(); });
+  }else $('#shortcutSettingsBtn')?.classList.add('hidden');
   document.addEventListener('keydown',event=>{
     if(shortcutState.recording){
       event.preventDefault(); event.stopPropagation();
@@ -7761,7 +7808,7 @@ function setupShortcutSettings(){
       renderShortcutSettings();
       return;
     }
-    if(!isLocalClient || !shortcutState.persisted.enabled) return;
+    if(!shortcutState.loaded || !shortcutState.persisted.enabled) return;
     const value = shortcutFromKeyboardEvent(event);
     if(!value) return;
     if(value === normalizeShortcutText(shortcutState.persisted.settings.toggle_asset_library)){
