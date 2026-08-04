@@ -1245,6 +1245,12 @@ body.mobile-ui .video-manage-grid{grid-template-columns:1fr;}
   cursor:zoom-in!important;
 }
 .video-file-thumb video{background:#000!important;object-fit:contain!important;}
+.upload-audio-thumb{display:flex!important;flex-direction:column!important;align-items:center!important;justify-content:center!important;gap:3px!important;padding:7px 5px!important;background:linear-gradient(145deg,rgba(14,165,164,.14),rgba(10,132,255,.12))!important;border-color:rgba(14,165,164,.35)!important;}
+.upload-audio-mark{width:31px;height:31px;border-radius:10px;display:flex;align-items:center;justify-content:center;background:rgba(14,165,164,.18);color:#0b7778;}
+.theme-dark .upload-audio-mark{background:rgba(94,234,212,.16);color:#99f6e4;}
+.upload-audio-mark svg{width:19px;height:19px;fill:currentColor;}
+.upload-audio-thumb small{max-width:58px!important;margin:0!important;text-align:center!important;color:var(--text)!important;}
+.upload-audio-thumb em{max-width:60px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center;color:var(--muted)!important;font-size:9px!important;}
 .video-ref-thumb button,
 .video-file-thumb button{
   position:absolute!important;

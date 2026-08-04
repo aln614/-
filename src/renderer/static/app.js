@@ -3514,29 +3514,33 @@ document.addEventListener('paste', async e => {
   }
   const imageFiles = [];
   const videoFiles = [];
+  const audioFiles = [];
   for(const it of items){
     const type = String(it.type || '').toLowerCase();
     const file = typeof it.getAsFile === 'function' ? it.getAsFile() : null;
     if(!file) continue;
     if(type.startsWith('image/')) imageFiles.push(file);
     else if(type.startsWith('video/')) videoFiles.push(file);
+    else if(type.startsWith('audio/')) audioFiles.push(file);
   }
-  if(!imageFiles.length && !videoFiles.length) return;
+  if(!imageFiles.length && !videoFiles.length && !audioFiles.length) return;
 
   if($('#page-video')?.classList.contains('active')){
     e.preventDefault();
-    let addedVideo = 0, addedImage = 0;
-    if(videoFiles.length){
-      await handleVideoFile(videoFiles);
+    let addedVideo = 0, addedAudio = 0, addedImage = 0;
+    if(videoFiles.length || audioFiles.length){
+      await handleVideoFile([...videoFiles, ...audioFiles]);
       addedVideo = videoFiles.length;
+      addedAudio = audioFiles.length;
     }
     if(imageFiles.length){
       await handleVideoRefs(imageFiles);
       addedImage = imageFiles.length;
     }
-    if(addedVideo || addedImage){
+    if(addedVideo || addedAudio || addedImage){
       const msg = [];
       if(addedVideo) msg.push(`主任务视频 ${addedVideo} 个`);
+      if(addedAudio) msg.push(`参考音频 ${addedAudio} 段`);
       if(addedImage) msg.push(`参考图 ${addedImage} 张`);
       toast(`已通过粘贴加入：${msg.join('，')}`);
     }
@@ -5903,6 +5907,7 @@ $('#previewStage')?.addEventListener('touchend', e=>{ if(e.touches.length===0) p
 // V10.1 Video Editing / Omni-Flash-Ext
 let videoRefImages = [];
 let videoFilesData = [];
+let videoAudioFilesData = [];
 let videoTasksCache = [];
 let videoSelectedIds = new Set();
 let lastBatchesSignature = '';
@@ -5997,7 +6002,17 @@ function registerApimartVideoUiRules(items = []){
       minImageCount:Number(item.minImageCount || 0),
       maxImageCount:Number(item.maxImageCount || 0),
       requiredVideo:item.requiredVideo === true,
-      characterOrientation:item.characterOrientation === true
+      characterOrientation:item.characterOrientation === true,
+      supportsAudioReference:item.supportsAudioReference === true,
+      maxAudioCount:Number(item.maxAudioCount || 0),
+      audioReferenceParam:item.audioReferenceParam || '',
+      audioRequiresReference:item.audioRequiresReference === true,
+      audioRequiresImage:item.audioRequiresImage === true,
+      audioMinDuration:Number(item.audioMinDuration || 0),
+      audioMaxDuration:Number(item.audioMaxDuration || 0),
+      audioTotalDuration:Number(item.audioTotalDuration || 0),
+      audioDurationAtMostVideo:item.audioDurationAtMostVideo === true,
+      audioDisallowsVideo:item.audioDisallowsVideo === true
     };
   });
 }
@@ -6052,9 +6067,9 @@ registerApimartVideoUiRules([
   { model:'doubao-seedance-1-0-pro-fast', label:'Doubao Seedance 1.0 Pro Fast', resolutions:['480p','720p','1080p'], defaultResolution:'1080p', aspects:['16:9','9:16','1:1','4:3','3:4','21:9'], defaultAspect:'16:9', durationMin:2, durationMax:12, defaultDuration:5, maxImageCount:1 },
   { model:'doubao-seedance-1-0-pro-quality', label:'Doubao Seedance 1.0 Pro Quality', resolutions:['480p','720p','1080p'], defaultResolution:'1080p', aspects:['16:9','9:16','1:1','4:3','3:4','21:9'], defaultAspect:'16:9', durationMin:2, durationMax:12, defaultDuration:5, maxImageCount:2 },
   { model:'doubao-seedance-1-5-pro', label:'Doubao Seedance 1.5 Pro', resolutions:['480p','720p','1080p'], defaultResolution:'720p', aspects:['16:9','9:16','1:1','4:3','3:4','21:9'], durationMin:4, durationMax:12, defaultDuration:5, maxImageCount:2 },
-  { model:'doubao-seedance-2.0', label:'Doubao Seedance 2.0', resolutions:['480p','720p','1080p','4k'], aspects:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'], durationMin:4, durationMax:15, defaultDuration:5, supportsVideo:true, durationWithVideo:true, maxImageCount:9, maxVideoCount:3 },
-  { model:'doubao-seedance-2.0-fast', label:'Doubao Seedance 2.0 Fast', resolutions:['480p','720p'], aspects:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'], durationMin:4, durationMax:15, defaultDuration:5, supportsVideo:true, durationWithVideo:true, maxImageCount:9, maxVideoCount:3 },
-  { model:'doubao-seedance-2.0-mini', label:'Doubao Seedance 2.0 Mini', resolutions:['480p','720p'], aspects:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'], durationMin:4, durationMax:15, defaultDuration:5, supportsVideo:true, durationWithVideo:true, maxImageCount:9, maxVideoCount:3 },
+  { model:'doubao-seedance-2.0', label:'Doubao Seedance 2.0', resolutions:['480p','720p','1080p','4k'], aspects:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'], durationMin:4, durationMax:15, defaultDuration:5, supportsVideo:true, durationWithVideo:true, maxImageCount:9, maxVideoCount:3, supportsAudioReference:true, maxAudioCount:3, audioReferenceParam:'audio_urls', audioRequiresReference:true, audioMaxDuration:15, audioTotalDuration:15 },
+  { model:'doubao-seedance-2.0-fast', label:'Doubao Seedance 2.0 Fast', resolutions:['480p','720p'], aspects:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'], durationMin:4, durationMax:15, defaultDuration:5, supportsVideo:true, durationWithVideo:true, maxImageCount:9, maxVideoCount:3, supportsAudioReference:true, maxAudioCount:3, audioReferenceParam:'audio_urls', audioRequiresReference:true, audioMaxDuration:15, audioTotalDuration:15 },
+  { model:'doubao-seedance-2.0-mini', label:'Doubao Seedance 2.0 Mini', resolutions:['480p','720p'], aspects:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'], durationMin:4, durationMax:15, defaultDuration:5, supportsVideo:true, durationWithVideo:true, maxImageCount:9, maxVideoCount:3, supportsAudioReference:true, maxAudioCount:3, audioReferenceParam:'audio_urls', audioRequiresReference:true, audioMaxDuration:15, audioTotalDuration:15 },
   { model:'sora-2', label:'Sora 2', resolutions:['720p'], aspects:['16:9','9:16'], durations:[4,8,12,16,20], defaultDuration:4, maxImageCount:1 },
   { model:'sora-2-pro', label:'Sora 2 Pro', resolutions:['720p','1024p','1080p'], aspects:['16:9','9:16'], durations:[4,8,12,16,20], defaultDuration:4, maxImageCount:1 },
   { model:'veo3.1-fast', label:'VEO3.1 Fast', resolutions:['720p','1080p','4k'], aspects:['16:9','9:16'], durations:[8], defaultDuration:8, maxImageCount:3 },
@@ -6063,15 +6078,15 @@ registerApimartVideoUiRules([
   { model:'MiniMax-Hailuo-02', label:'MiniMax Hailuo 02', resolutions:['512p','768p','1080p'], defaultResolution:'768p', supportsAspect:false, durations:[5,10], defaultDuration:5, maxImageCount:2, resolutionDurationRules:{'1080p':[5]} },
   { model:'MiniMax-Hailuo-2.3', label:'MiniMax Hailuo 2.3', resolutions:['768p','1080p'], defaultResolution:'768p', supportsAspect:false, durations:[6,10], defaultDuration:6, maxImageCount:1, resolutionDurationRules:{'1080p':[6]} },
   { model:'MiniMax-Hailuo-2.3-Fast', label:'MiniMax Hailuo 2.3 Fast', resolutions:['768p','1080p'], defaultResolution:'768p', supportsAspect:false, durations:[6,10], defaultDuration:6, resolutionDurationRules:{'1080p':[6]}, minImageCount:1, maxImageCount:1 },
-  { model:'MiniMax-H3', label:'MiniMax H3', resolutions:['2K','768P'], defaultResolution:'2K', aspects:['21:9','16:9','4:3','1:1','3:4','9:16'], defaultAspect:'16:9', durationMin:4, durationMax:15, defaultDuration:5, supportsVideo:true, durationWithVideo:true, maxImageCount:9, maxVideoCount:3, note:'支持首帧 / 首尾帧，或最多 9 张参考图与 3 个参考视频；帧控制和参考素材不能混用。' },
-  { model:'skyreels-v4-fast', label:'SkyReels V4 Fast', resolutions:['480p','720p','1080p'], defaultResolution:'1080p', aspects:['16:9','4:3','1:1','9:16','3:4'], durationMin:3, durationMax:15, defaultDuration:5, supportsVideo:true, durationWithVideo:true, maxImageCount:15, note:'动作参考跟随源视频时长；视频扩展使用当前时长，且不能同时使用参考图。' },
-  { model:'skyreels-v4-std', label:'SkyReels V4 Std', resolutions:['480p','720p','1080p'], defaultResolution:'1080p', aspects:['16:9','4:3','1:1','9:16','3:4'], durationMin:3, durationMax:15, defaultDuration:5, supportsVideo:true, durationWithVideo:true, maxImageCount:15, note:'动作参考跟随源视频时长；视频扩展使用当前时长，且不能同时使用参考图。' },
+  { model:'MiniMax-H3', label:'MiniMax H3', resolutions:['2K','768P'], defaultResolution:'2K', aspects:['21:9','16:9','4:3','1:1','3:4','9:16'], defaultAspect:'16:9', durationMin:4, durationMax:15, defaultDuration:5, supportsVideo:true, durationWithVideo:true, maxImageCount:9, maxVideoCount:3, supportsAudioReference:true, maxAudioCount:3, audioReferenceParam:'audio_urls', audioRequiresReference:true, audioMaxDuration:15, audioTotalDuration:15, note:'支持首帧 / 首尾帧，或最多 9 张参考图、3 个参考视频与 3 段参考音频；帧控制和多模态参考不能混用。' },
+  { model:'skyreels-v4-fast', label:'SkyReels V4 Fast', resolutions:['480p','720p','1080p'], defaultResolution:'1080p', aspects:['16:9','4:3','1:1','9:16','3:4'], durationMin:3, durationMax:15, defaultDuration:5, supportsVideo:true, durationWithVideo:true, maxImageCount:15, supportsAudioReference:true, maxAudioCount:1, audioReferenceParam:'ref_image_audio_url', audioRequiresImage:true, audioMaxDuration:15, note:'动作参考跟随源视频时长；视频扩展使用当前时长，且不能同时使用参考图。' },
+  { model:'skyreels-v4-std', label:'SkyReels V4 Std', resolutions:['480p','720p','1080p'], defaultResolution:'1080p', aspects:['16:9','4:3','1:1','9:16','3:4'], durationMin:3, durationMax:15, defaultDuration:5, supportsVideo:true, durationWithVideo:true, maxImageCount:15, supportsAudioReference:true, maxAudioCount:1, audioReferenceParam:'ref_image_audio_url', audioRequiresImage:true, audioMaxDuration:15, note:'动作参考跟随源视频时长；视频扩展使用当前时长，且不能同时使用参考图。' },
   { model:'happyhorse-1.0', label:'HappyHorse 1.0', resolutions:['720P','1080P'], defaultResolution:'1080P', aspects:['16:9','9:16','1:1','4:3','3:4'], durationMin:3, durationMax:15, defaultDuration:5, supportsVideo:true, maxImageCount:9 },
   { model:'happyhorse-1.1', label:'HappyHorse 1.1', resolutions:['720P','1080P'], defaultResolution:'1080P', aspects:['16:9','9:16','1:1','4:3','3:4'], durationMin:3, durationMax:15, defaultDuration:5, maxImageCount:9 },
-  { model:'wan2.5-preview', label:'Wan2.5 Preview', resolutions:['480p','720p','1080p'], defaultResolution:'720p', aspects:['16:9','9:16','1:1','4:3','3:4'], durations:[5,10], defaultDuration:5, maxImageCount:1 },
-  { model:'wan2.6', label:'Wan2.6', resolutions:['720p','1080p'], aspects:['16:9','9:16','1:1','4:3','3:4'], durations:[5,10,15], defaultDuration:5, maxImageCount:1 },
-  { model:'wan2.7', label:'Wan2.7', resolutions:['720P','1080P'], defaultResolution:'1080P', aspects:['16:9','9:16','1:1','4:3','3:4'], durationMin:2, durationMax:15, defaultDuration:5, supportsVideo:true, durationWithVideo:true },
-  { model:'wan2.7-r2v', label:'Wan2.7 R2V', resolutions:['720P','1080P'], defaultResolution:'1080P', aspects:['16:9','9:16','1:1','4:3','3:4'], durationMin:2, durationMax:15, videoDurationRange:[2,10], defaultDuration:5, supportsVideo:true, durationWithVideo:true, maxImageCount:5, maxVideoCount:5 },
+  { model:'wan2.5-preview', label:'Wan2.5 Preview', resolutions:['480p','720p','1080p'], defaultResolution:'720p', aspects:['16:9','9:16','1:1','4:3','3:4'], durations:[5,10], defaultDuration:5, maxImageCount:1, supportsAudioReference:true, maxAudioCount:1, audioReferenceParam:'audio_url', audioMaxDuration:30 },
+  { model:'wan2.6', label:'Wan2.6', resolutions:['720p','1080p'], aspects:['16:9','9:16','1:1','4:3','3:4'], durations:[5,10,15], defaultDuration:5, maxImageCount:1, supportsAudioReference:true, maxAudioCount:1, audioReferenceParam:'audio_url', audioDurationAtMostVideo:true, note:'支持一段自定义音频；音频时长不能超过生成视频时长。' },
+  { model:'wan2.7', label:'Wan2.7', resolutions:['720P','1080P'], defaultResolution:'1080P', aspects:['16:9','9:16','1:1','4:3','3:4'], durationMin:2, durationMax:15, defaultDuration:5, supportsVideo:true, durationWithVideo:true, supportsAudioReference:true, maxAudioCount:1, audioReferenceParam:'audio_url', audioMinDuration:2, audioMaxDuration:30, audioDisallowsVideo:true, note:'支持一段 2-30 秒自定义音频；不能与参考视频同时使用。' },
+  { model:'wan2.7-r2v', label:'Wan2.7 R2V', resolutions:['720P','1080P'], defaultResolution:'1080P', aspects:['16:9','9:16','1:1','4:3','3:4'], durationMin:2, durationMax:15, videoDurationRange:[2,10], defaultDuration:5, supportsVideo:true, durationWithVideo:true, maxImageCount:5, maxVideoCount:5, supportsAudioReference:true, maxAudioCount:1, audioReferenceParam:'reference_voice', audioRequiresImage:true },
   { model:'wan2.7-videoedit', label:'Wan2.7 VideoEdit', resolutions:['720P','1080P'], defaultResolution:'1080P', aspects:['16:9','9:16','1:1','4:3','3:4'], durations:[0,2,3,4,5,6,7,8,9,10], defaultDuration:0, supportsVideo:true, durationWithVideo:true, requiredVideo:true, maxImageCount:4 },
   { model:'kling-v2-6', label:'Kling 2.6', resolutions:['720p','1080p'], aspects:['16:9','9:16','1:1'], durations:[5,10], defaultDuration:5, maxImageCount:2 },
   { model:'kling-v2-6-motion-control', label:'Kling 2.6 Motion Control', resolutions:['720p','1080p'], supportsAspect:false, supportsDuration:false, supportsVideo:true, requiredVideo:true, minImageCount:1, maxImageCount:1, characterOrientation:true, note:'Duration follows the source video; image orientation supports 3-10s, video orientation supports 3-30s.' },
@@ -6115,6 +6130,7 @@ function isApimartOmniVideoModel(){
 function videoModeAutoLabel(){
   const hasVideo = hasReferenceVideo();
   const images = videoRefImages.length;
+  if(videoAudioFilesData.length) return '多模态参考';
   if(hasVideo) return '上传视频编辑';
   if(images > 2) return '多素材生成';
   if(images === 2) return '首尾帧生成';
@@ -6315,7 +6331,10 @@ function updateVideoModeUI(){
     const durationSpec = currentVideoDurationSpec();
     const durationText = durationSpec.mode === 'auto' ? '时长由模型/源视频决定' : (durationSpec.mode === 'range' ? `时长 ${durationSpec.values[0]}-${durationSpec.values[durationSpec.values.length - 1]} 秒` : `时长 ${durationSpec.values.join('/')} 秒`);
     const aspectText = apimartRule.supportsAspect === false ? '比例跟随输入素材' : `比例 ${apimartRule.aspects.join('/')}`;
-    modelRuleNote.textContent = `${apimartRule.label}：${durationText}；分辨率 ${apimartRule.resolutions.join('/')}；${aspectText}。`;
+    const audioText = apimartRule.supportsAudioReference
+      ? `支持 ${apimartRule.maxAudioCount || 1} 段参考音频${apimartRule.audioMinDuration || apimartRule.audioMaxDuration ? `（${apimartRule.audioMinDuration || 0}-${apimartRule.audioMaxDuration || '不限'} 秒）` : ''}`
+      : '不支持上传参考音频';
+    modelRuleNote.textContent = `${apimartRule.label}：${durationText}；分辨率 ${apimartRule.resolutions.join('/')}；${aspectText}；${audioText}。${apimartRule.note ? ` ${apimartRule.note}` : ''}`;
   }
   if($('#videoPlatformState')) $('#videoPlatformState').textContent = platform === 'flow2api'
     ? `本地 Flow2API · ${mode} · 流式进度反馈`
@@ -6401,7 +6420,7 @@ function updateVideoMultiReferenceControl(){
   label.classList.toggle('can-switch-model', !!compatibleModel);
   label.title = supported
     ? `${rule.label} 最多支持 ${rule.maxVideoCount} 个参考视频`
-    : (compatibleModel ? `当前 ${rule.label} 仅支持 1 个参考视频；点击可切换到 ${APIMART_VIDEO_MODEL_RULES_UI[compatibleModel.toLowerCase()].label} 并启用多视频参考` : `当前 ${rule.label} 不支持多视频参考`);
+    : (compatibleModel ? `当前 ${rule.label} 仅支持 1 个参考视频；点击可切换到 ${APIMART_VIDEO_MODEL_RULES_UI[compatibleModel.toLowerCase()].label} 并启用多模态参考` : `当前 ${rule.label} 不支持多模态参考`);
 }
 function enableMultiVideoReferenceWithCompatibleModel(){
   const input = $('#videoMultiReference');
@@ -6410,7 +6429,7 @@ function enableMultiVideoReferenceWithCompatibleModel(){
     const replacementModel = selectCompatibleMultiVideoReferenceModel();
     const model = $('#videoModel');
     if(!replacementModel || !model || ![...model.options].some(option=>option.value === replacementModel)){
-      toast('当前已上传的视频数量没有可用的多视频参考模型。');
+      toast('当前已上传的视频数量没有可用的多模态参考模型。');
       return false;
     }
     model.value = replacementModel;
@@ -6466,14 +6485,17 @@ function updateVideoTaskEstimate(){
   const repeats = Math.max(1, Number($('#videoRepeatCount')?.value || 1));
   const retries = Math.max(0, Number($('#videoRetryTimes')?.value || 0));
   const total = Math.max(1, prompts.length || 1) * Math.max(1, sourceTaskCount) * repeats;
-  const videoFactor = multiVideoReference ? `多视频参考 ${videoFilesData.length} 合并为 1` : `主任务视频 ${Math.max(1,videoCount)}`;
+  const audioSuffix = videoAudioFilesData.length ? ` + 参考音频 ${videoAudioFilesData.length}` : '';
+  const videoFactor = multiVideoReference ? `多模态参考 ${videoFilesData.length} 个视频合并为 1${audioSuffix}` : `主任务视频 ${Math.max(1,videoCount)}${audioSuffix}`;
   const el = $('#videoTaskEstimate'); if(el) el.textContent = `预计任务：提示词 ${Math.max(1,prompts.length||1)} × ${videoFactor} × 重复 ${repeats} × 失败重试 ${retries} = ${total}`;
-  const rule = $('#videoTaskRule'); if(rule) rule.textContent = multiVideoReference ? `已启用多视频参考：${videoFilesData.length} 个主任务视频 = 1 个独立任务` : '一个主任务视频 = 一个独立任务';
+  const rule = $('#videoTaskRule'); if(rule) rule.textContent = multiVideoReference ? `已启用多模态参考：${videoFilesData.length} 个主任务视频 = 1 个独立任务` : '一个主任务视频 = 一个独立任务';
 }
 function renderVideoInputs(){
   const vf = $('#videoFilePreview');
   if(vf){
-    vf.innerHTML = videoFilesData.map((f,i)=>`<div class="video-file-thumb upload-video-thumb" data-upload-index="${i}" title="主任务视频：${escapeHtml(f.name||'')}，时长 ${escapeHtml(videoDurationText(f.duration_seconds)||'-')}"><div class="video-click-zone upload-video-click-zone" data-upload-index="${i}" title="左键点击画中画预览；左右键同时点击显示视频信息"><div class="video-first-frame" data-upload-index="${i}" data-src="${escapeHtml(f.data||'')}"><div class="video-lazy-icon">▶</div><small>懒加载第一帧</small></div></div><small title="${escapeHtml(f.name||'')}">${escapeHtml(f.name||'')}</small><em>${escapeHtml(videoDurationText(f.duration_seconds)||'')}</em><button type="button" onclick="videoFilesData.splice(${i},1);renderVideoInputs()">×</button></div>`).join('');
+    const videoCards = videoFilesData.map((f,i)=>`<div class="video-file-thumb upload-video-thumb" data-upload-index="${i}" title="主任务视频：${escapeHtml(f.name||'')}，时长 ${escapeHtml(videoDurationText(f.duration_seconds)||'-')}"><div class="video-click-zone upload-video-click-zone" data-upload-index="${i}" title="左键点击画中画预览；左右键同时点击显示视频信息"><div class="video-first-frame" data-upload-index="${i}" data-src="${escapeHtml(f.data||'')}"><div class="video-lazy-icon">▶</div><small>懒加载第一帧</small></div></div><small title="${escapeHtml(f.name||'')}">${escapeHtml(f.name||'')}</small><em>${escapeHtml(videoDurationText(f.duration_seconds)||'')}</em><button type="button" onclick="videoFilesData.splice(${i},1);renderVideoInputs()">×</button></div>`).join('');
+    const audioCards = videoAudioFilesData.map((f,i)=>`<div class="video-file-thumb upload-audio-thumb" title="参考音频：${escapeHtml(f.name||'')}，时长 ${escapeHtml(videoDurationText(f.duration_seconds)||'-')}"><div class="upload-audio-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 10v4h4l5 4V6l-5 4H4zm12.2-2.4a1 1 0 0 1 1.4.1 6.3 6.3 0 0 1 0 8.6 1 1 0 1 1-1.5-1.3 4.3 4.3 0 0 0 0-6 1 1 0 0 1 .1-1.4zm2.7-2.5a1 1 0 0 1 1.4.1 10 10 0 0 1 0 13.4 1 1 0 1 1-1.5-1.3 8 8 0 0 0 0-10.8 1 1 0 0 1 .1-1.4z"/></svg></div><small title="${escapeHtml(f.name||'')}">${escapeHtml(f.name||'')}</small><em>参考音频 ${escapeHtml(videoDurationText(f.duration_seconds)||'')}</em><button type="button" onclick="videoAudioFilesData.splice(${i},1);renderVideoInputs()">×</button></div>`).join('');
+    vf.innerHTML = videoCards + audioCards;
     initLazyVideoFirstFrames(vf);
   }
   const box = $('#videoRefThumbs');
@@ -6488,12 +6510,22 @@ function renderVideoInputs(){
 async function handleVideoFile(files){
   const list = [...(files || [])];
   if(!list.length) return;
-  if(currentVideoPlatform() === 'flow2api' && !flow2VideoModelSupportsUploadedVideo()){
+  const hasUploadedVideo = list.some(file=>/\.(mp4|mov)$/i.test(file.name || '') || /^video\//i.test(file.type || ''));
+  if(hasUploadedVideo && currentVideoPlatform() === 'flow2api' && !flow2VideoModelSupportsUploadedVideo()){
     if($('#videoModel')) $('#videoModel').value = 'omni';
     toast('本地 Flow2API 上传视频编辑仅支持 Omni Flash，已切换模型');
   }
   for(const f of list){
     const name = (f.name || '').toLowerCase();
+    if(/\.(mp3|wav)$/.test(name) || /^(audio\/mpeg|audio\/wav|audio\/x-wav)$/i.test(f.type || '')) {
+      if(f.size > 15 * 1024 * 1024) { toast('已跳过超过 15MB 的参考音频：' + (f.name||'')); continue; }
+      const duration = await getAudioDurationSeconds(f);
+      if(!Number.isFinite(duration) || duration <= 0) toast(`提示：${f.name||''} 本地未能准确读取音频时长，仍会交由当前模型校验。`);
+      const item = await fileToData(f);
+      item.duration_seconds = (Number.isFinite(duration) && duration > 0) ? Number(duration.toFixed(3)) : '';
+      videoAudioFilesData.push(item);
+      continue;
+    }
     if(!(/\.mp4$|\.mov$/.test(name))) { toast('已跳过非 mp4/mov 视频：' + (f.name||'')); continue; }
     if(f.size > 100 * 1024 * 1024) { toast('已跳过超过 100MB 的视频：' + (f.name||'')); continue; }
     const duration = await getVideoDurationSeconds(f);
@@ -6506,13 +6538,25 @@ async function handleVideoFile(files){
   }
   renderVideoInputs();
 }
+function getAudioDurationSeconds(file){
+  return new Promise(resolve=>{
+    const audio = document.createElement('audio');
+    const url = URL.createObjectURL(file);
+    const done = value=>{ try{ URL.revokeObjectURL(url); }catch{}; resolve(value); };
+    const timer = setTimeout(()=>done(NaN), 7000);
+    audio.preload = 'metadata';
+    audio.onloadedmetadata = ()=>{ clearTimeout(timer); done(Number(audio.duration)); };
+    audio.onerror = ()=>{ clearTimeout(timer); done(NaN); };
+    audio.src = url;
+  });
+}
 async function handleVideoRefs(files){
   const arr = await Promise.all([...files].map(fileToData));
   videoRefImages.push(...arr);
   toast(`已加入 ${arr.length} 张视频参考图，当前共 ${videoRefImages.length} 张`);
   renderVideoInputs();
 }
-function clearVideoInputs(){ videoFilesData=[]; videoRefImages=[]; $('#videoPrompt').value=''; $('#videoUrlInput').value=''; if($('#videoSourceTaskId')) $('#videoSourceTaskId').value=''; renderVideoInputs(); }
+function clearVideoInputs(){ videoFilesData=[]; videoAudioFilesData=[]; videoRefImages=[]; $('#videoPrompt').value=''; $('#videoUrlInput').value=''; if($('#videoSourceTaskId')) $('#videoSourceTaskId').value=''; renderVideoInputs(); }
 async function submitVideoTask(opts = {}){
   const reject = message=>{
     if(opts.fromAgent) throw new Error(message);
@@ -6536,20 +6580,36 @@ async function submitVideoTask(opts = {}){
     if(apimartRule.maxImageCount > 0 && videoRefImages.length > apimartRule.maxImageCount) return reject(`${apimartRule.label} 最多支持 ${apimartRule.maxImageCount} 张参考图`);
     if(refVideoMode && !apimartRule.supportsVideo) return reject(`${apimartRule.label} 不支持上传视频，请切换支持视频输入的模型`);
     if(apimartRule.requiredVideo && !refVideoMode) return reject(`${apimartRule.label} 必须上传视频或填写公开视频 URL`);
+    if(videoAudioFilesData.length){
+      if(!apimartRule.supportsAudioReference) return reject(`${apimartRule.label} 不支持上传参考音频。请使用支持多模态参考的模型，例如 MiniMax H3、Seedance 2.0、SkyReels V4、Wan2.5、Wan2.6、Wan2.7 或 Wan2.7 R2V。`);
+      if(apimartRule.maxAudioCount > 0 && videoAudioFilesData.length > apimartRule.maxAudioCount) return reject(`${apimartRule.label} 最多支持 ${apimartRule.maxAudioCount} 段参考音频`);
+      const audioDurations = videoAudioFilesData.map(item=>Number(item.duration_seconds)).filter(Number.isFinite);
+      if(apimartRule.audioMinDuration > 0 && audioDurations.some(value=>value < apimartRule.audioMinDuration)) return reject(`${apimartRule.label} 的单段参考音频不能短于 ${apimartRule.audioMinDuration} 秒`);
+      if(apimartRule.audioMaxDuration > 0 && audioDurations.some(value=>value > apimartRule.audioMaxDuration)) return reject(`${apimartRule.label} 的单段参考音频不能超过 ${apimartRule.audioMaxDuration} 秒`);
+      if(apimartRule.audioTotalDuration > 0 && audioDurations.reduce((sum,value)=>sum + value, 0) > apimartRule.audioTotalDuration) return reject(`${apimartRule.label} 的参考音频总时长不能超过 ${apimartRule.audioTotalDuration} 秒`);
+      if(apimartRule.audioDurationAtMostVideo && audioDurations.some(value=>value > selectedVideoDuration())) return reject(`${apimartRule.label} 的参考音频不能长于生成视频时长（${selectedVideoDuration()} 秒）`);
+      if(apimartRule.audioDisallowsVideo && refVideoMode) return reject(`${apimartRule.label} 的自定义音频不能与参考视频同时使用`);
+      if(apimartRule.audioRequiresReference && !(refVideoMode || videoRefImages.length)) return reject(`${apimartRule.label} 的参考音频不能单独使用，请同时上传参考图或主任务视频`);
+      if(apimartRule.audioRequiresImage && !videoRefImages.length) return reject(`${apimartRule.label} 的参考音频需要同时上传至少一张参考图`);
+      if(['first_frame','first_last_frame'].includes(currentVideoModeValue()) && (apimartRule.audioRequiresReference || apimartRule.audioRequiresImage)) return reject(`${apimartRule.label} 的首帧 / 首尾帧模式不能与参考音频混用，请改为“自动识别”或“多素材生成”`);
+    }
     if(currentVideoModeValue() === 'veo_remix'){
       if(!isApimartTaskExtensionModel()) return reject('任务续写仅支持 VEO3.1 Fast / Quality、Pixverse v6 或 Gemini Omni Flash');
       if(!String($('#videoSourceTaskId')?.value || '').trim()) return reject('请填写已完成的原任务 ID');
-      if(refVideoMode || videoRefImages.length) return reject('任务续写使用原任务 ID，不能同时上传参考图片或视频');
+      if(refVideoMode || videoRefImages.length || videoAudioFilesData.length) return reject('任务续写使用原任务 ID，不能同时上传参考图片、视频或音频');
     }
   }
   if(currentVideoModeValue() === 'video_edit' && !refVideoMode) return reject('已选择“上传视频编辑”，请先上传主任务视频或填写公开视频 URL');
   if(platform === 'flow2api' && refVideoMode && !flow2VideoModelSupportsUploadedVideo()) {
     return reject('本地 Flow2API 上传视频编辑仅支持 Omni Flash，请切换模型后重试');
   }
+  if(platform === 'flow2api' && videoAudioFilesData.length) return reject('本地 Flow2API 当前不支持参考音频上传，请切换到 APIMart 的多模态视频模型');
   const multiVideoReference = videoMultiReferenceEnabled() && videoFilesData.length > 1;
   if(multiVideoReference && videoFilesData.length > Number(apimartRule?.maxVideoCount || 1)) return reject(`${apimartRule?.label || '当前模型'} 最多支持 ${apimartRule?.maxVideoCount || 1} 个参考视频，当前为 ${videoFilesData.length} 个。`);
   const platformCfg = loadClientConfig(platform) || {};
-  const body = { video_platform:platform, api_endpoint:platform === 'flow2api' ? (platformCfg.api_endpoint || 'http://127.0.0.1:38000') : 'https://api.apimart.ai', api_key:apiKey, video_model:$('#videoModel')?.value || '', video_mode:currentVideoModeValue(), video_reference_type:currentVideoReferenceType(), multi_video_reference:multiVideoReference, seed:$('#videoSeed')?.value?.trim() || '', copies:Number($('#videoRepeatCount')?.value || 1), retry_times:Number($('#videoRetryTimes')?.value || 0), prompts:$('#videoPrompt').value, prompt_multiline_tasks: $('#videoPromptMultilineTasks') ? $('#videoPromptMultilineTasks').checked : false, resolution:$('#videoResolution').value, aspect_ratio:$('#videoAspect').value, video_url:$('#videoUrlInput').value.trim(), video_files:videoFilesData, ref_images:videoRefImages, character_orientation:$('#videoCharacterOrientation')?.value || 'image', source_task_id:$('#videoSourceTaskId')?.value?.trim() || '' };
+  const selectedVideoMode = currentVideoModeValue();
+  const effectiveVideoMode = videoAudioFilesData.length && selectedVideoMode === 'auto' && (apimartRule?.audioRequiresReference || apimartRule?.audioRequiresImage) ? 'multi_reference' : selectedVideoMode;
+  const body = { video_platform:platform, api_endpoint:platform === 'flow2api' ? (platformCfg.api_endpoint || 'http://127.0.0.1:38000') : 'https://api.apimart.ai', api_key:apiKey, video_model:$('#videoModel')?.value || '', video_mode:effectiveVideoMode, video_reference_type:currentVideoReferenceType(), multi_video_reference:multiVideoReference, seed:$('#videoSeed')?.value?.trim() || '', copies:Number($('#videoRepeatCount')?.value || 1), retry_times:Number($('#videoRetryTimes')?.value || 0), prompts:$('#videoPrompt').value, prompt_multiline_tasks: $('#videoPromptMultilineTasks') ? $('#videoPromptMultilineTasks').checked : false, resolution:$('#videoResolution').value, aspect_ratio:$('#videoAspect').value, video_url:$('#videoUrlInput').value.trim(), video_files:videoFilesData, audio_files:videoAudioFilesData, ref_images:videoRefImages, character_orientation:$('#videoCharacterOrientation')?.value || 'image', source_task_id:$('#videoSourceTaskId')?.value?.trim() || '' };
   if(platform === 'apimart' && isSkyReelsVideoModel() && refVideoMode && currentVideoReferenceType() === 'extend' && videoRefImages.length) return reject('SkyReels 视频扩展不能与参考图同时使用。');
   if(platform === 'apimart' && isSkyReelsVideoModel() && refVideoMode && ['first_frame','first_last_frame'].includes(currentVideoModeValue())) return reject('SkyReels 首帧 / 首尾帧生成不能与参考视频同时使用。');
   const apimartDurationWithVideo = apimartVideoUsesRequestedDurationWithReference(apimartRule);

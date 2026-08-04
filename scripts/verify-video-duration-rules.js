@@ -108,5 +108,19 @@ assert(/enableMultiVideoReferenceWithCompatibleModel/.test(app) && /selectCompat
 assert(/const taskSources = multiVideoReference \? \[\{/.test(main), 'Multi-video reference mode must merge uploads into one task source');
 assert(/payload\.video_urls = videoUrls/.test(main), 'Multi-video models must submit all reference video URLs');
 assert(/model:'MiniMax-H3'[^\n]*maxVideoCount:3/.test(main), 'MiniMax H3 must allow up to three reference videos');
+assert(/model:'MiniMax-H3'[^\n]*audioReferenceParam:'audio_urls'[^\n]*maxAudioCount:3/.test(main), 'MiniMax H3 must submit up to three reference audio URLs');
+assert(/model:'doubao-seedance-2\.0'[^\n]*audioReferenceParam:'audio_urls'[^\n]*maxAudioCount:3/.test(main), 'Seedance 2.0 must submit reference audio URLs');
+assert(/model:'wan2\.5-preview'[^\n]*audioReferenceParam:'audio_url'/.test(main), 'Wan2.5 must submit its documented custom audio_url field');
+assert(/model:'wan2\.6'[^\n]*audioReferenceParam:'audio_url'[^\n]*audioDurationAtMostVideo:true/.test(main), 'Wan2.6 must submit custom audio_url no longer than the generated video');
+assert(/model:'wan2\.7'[^\n]*audioReferenceParam:'audio_url'[^\n]*audioDisallowsVideo:true/.test(main), 'Wan2.7 must submit custom audio_url without a reference video');
+assert(/model:'wan2\.7-r2v'[^\n]*audioReferenceParam:'reference_voice'/.test(main), 'Wan2.7 R2V must bind reference audio as reference_voice');
+assert(/model:'skyreels-v4-fast'[^\n]*audioReferenceParam:'ref_image_audio_url'/.test(main), 'SkyReels must bind audio to an image reference');
+assert(/payload\.audio_urls = audioUrls/.test(main), 'Array-based audio reference models must submit audio_urls');
+assert(/targetImage\.reference_voice = audioUrls\[0\]/.test(main), 'Wan2.7 reference voice must attach to the reference image');
+assert(/local_audio_paths:localAudioPaths/.test(main), 'Video batches must reuse the same audio reference paths');
+assert(/videoAudioFilesData/.test(app) && /audio_files:videoAudioFilesData/.test(app), 'The main video upload flow must keep audio separate from video tasks');
+assert(/getAudioDurationSeconds/.test(app), 'Reference audio must read local metadata when available');
+assert(/id="videoFile"[^>]*audio\/mpeg[^>]*\.mp3[^>]*\.wav/.test(html), 'The main video upload input must accept MP3 and WAV audio');
+assert(/多模态参考/.test(html) && !/多视频参考/.test(html), 'The multi-video control must be renamed to 多模态参考');
 
 console.log(`Video duration validation passed (${backend.size} backend models, ${frontend.size} frontend models).`);

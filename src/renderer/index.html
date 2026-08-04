@@ -349,12 +349,12 @@
             <div id="videoReferenceTypeWrap" class="hidden"><label>SkyReels 视频参考方式</label><select id="videoReferenceType"><option value="reference">动作 / 主体参考</option><option value="extend">视频扩展</option></select><div class="field-help">动作参考跟随源视频时长；视频扩展使用当前时长，且不能同时使用参考图。</div></div>
           </div>
           <div class="card">
-            <h2>视频与参考图</h2>
-            <div class="dropzone" id="videoDrop"><strong>主任务视频上传</strong><span>可上传多个主任务视频；建议 3-10 秒，每个视频会按提示词创建独立任务，参考图会附加到每个视频任务；也支持 Ctrl+V 粘贴视频</span><input id="videoFile" type="file" multiple accept="video/mp4,video/quicktime,.mp4,.mov" /></div>
+            <h2>视频、音频与参考图</h2>
+            <div class="dropzone" id="videoDrop"><strong>主任务视频与参考音频上传</strong><span>可上传多个主任务视频；每个视频会按提示词创建独立任务。也可在此添加 MP3/WAV 参考音频，音频不会额外创建任务；支持拖入或 Ctrl+V 粘贴视频、音频</span><input id="videoFile" type="file" multiple accept="video/mp4,video/quicktime,.mp4,.mov,audio/mpeg,audio/wav,audio/x-wav,.mp3,.wav" /></div>
             <div class="thumbs" id="videoFilePreview"></div>
             <div class="dropzone small" id="videoRefDrop"><strong>上传参考图</strong><span>可上传多张参考图，不再限制数量；点击缩略图可像图片一样预览；也支持 Ctrl+V 粘贴图片</span><input id="videoRefFiles" type="file" multiple accept="image/*" /></div>
             <div class="thumbs" id="videoRefThumbs"></div>
-            <div class="prompt-mode-row"><label>视频提示词</label><div class="video-prompt-mode-actions"><label class="switch-line prompt-switch"><input id="videoPromptMultilineTasks" type="checkbox" /> 提示词多行多任务</label><label class="switch-line prompt-switch" id="videoMultiReferenceLabel" title="仅支持多参考视频的 APIMart 模型可用"><input id="videoMultiReference" type="checkbox" /> 多视频参考</label></div></div>
+            <div class="prompt-mode-row"><label>视频提示词</label><div class="video-prompt-mode-actions"><label class="switch-line prompt-switch"><input id="videoPromptMultilineTasks" type="checkbox" /> 提示词多行多任务</label><label class="switch-line prompt-switch" id="videoMultiReferenceLabel" title="仅支持多模态参考的 APIMart 模型可用"><input id="videoMultiReference" type="checkbox" /> 多模态参考</label></div></div>
             <textarea id="videoPrompt" placeholder="开启：一行/一段提示词 = 一个视频任务；关闭：整个输入框作为一个完整提示词。"></textarea>
             <div class="row">
               <div><label>重复任务次数</label><input id="videoRepeatCount" type="number" value="1" min="1" max="50" /></div>
