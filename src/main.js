@@ -12,7 +12,7 @@ const { app, BrowserWindow, Tray, shell, Menu, clipboard, nativeImage, ipcMain, 
 const { spawn } = require('child_process');
 const { initDB, getDB, addLog, listBatches, listImages, listLogs, nowISO, uuid, setNetworkTimeOffset, getNetworkTimeInfo } = require('./services/db');
 const { TaskQueue } = require('./services/taskQueue');
-const { grsaiTool, chatCompletion, getApimartChatModels, refreshApimartChatModels } = require('./services/apiClient');
+const { grsaiTool, chatCompletion, getApimartChatModels, refreshApimartChatModels, APIMART_IMAGE_MODELS } = require('./services/apiClient');
 const { safeName, ensureDir, makeDirs, createThumb, downloadToFile } = require('./services/cache');
 
 let mainWindow = null;
@@ -5316,6 +5316,23 @@ function validateBatchApiKey(body = {}, cfg = {}, local = false) {
   return key;
 }
 
+const AGENT_IMAGE_MODEL_PLACEHOLDER_VALUES = new Set([
+  '', '自由选择', 'agent 自由选择', 'agent自由选择', 'auto', 'automatic', 'default'
+]);
+function isAgentImageModelPlaceholder(value = '') {
+  return AGENT_IMAGE_MODEL_PLACEHOLDER_VALUES.has(String(value || '').trim().toLowerCase());
+}
+function resolveBatchImageModel(value = '', configuredModel = '', platform = 'apimart') {
+  const requested = String(value || '').trim();
+  if (!isAgentImageModelPlaceholder(requested)) return requested;
+
+  const configured = String(configuredModel || '').trim();
+  if (!isAgentImageModelPlaceholder(configured)) {
+    if (platform !== 'apimart' || APIMART_IMAGE_MODELS.includes(configured.toLowerCase())) return configured;
+  }
+  return platform === 'apimart' ? 'gpt-image-2' : 'gemini-3.1-flash-image';
+}
+
 function mapPayloadToQueue(body, owner) {
   const mainImages = [
     ...resolveBatchMediaUploadIds(body.main_image_upload_ids, owner),
@@ -5326,18 +5343,19 @@ function mapPayloadToQueue(body, owner) {
     ...(body.reference_images || []).map(x => dataUrlToFile(x, owner)).filter(Boolean)
   ];
   const cfg = toCamelConfig(readConfig());
+  const imageApiPlatform = (['legacy','grsai','flow2api'].includes(String(body.image_api_platform || cfg.imageApiPlatform || '').toLowerCase()) || /(?:127\.0\.0\.1|localhost):38000|grsaiapi\.com|grsai\.dakka\.com\.cn/i.test(body.api_endpoint || cfg.apiBaseUrl || '') ? 'flow2api' : 'apimart');
   const payload = {
     ownerId: owner,
     prompts: body.prompts || '',
     promptMultilineTasks: parseBoolValue(body.prompt_multiline_tasks, true),
     mainImages,
     refImages,
-    imageApiPlatform: (['legacy','grsai','flow2api'].includes(String(body.image_api_platform || cfg.imageApiPlatform || '').toLowerCase()) || /(?:127\.0\.0\.1|localhost):38000|grsaiapi\.com|grsai\.dakka\.com\.cn/i.test(body.api_endpoint || cfg.apiBaseUrl || '') ? 'flow2api' : 'apimart'),
+    imageApiPlatform,
     apiBaseUrl: normalizeImageApiEndpoint(['legacy','grsai','flow2api'].includes(String(body.image_api_platform || cfg.imageApiPlatform || '').toLowerCase()) ? (body.api_endpoint || body.legacy_api_endpoint || cfg.legacyApiEndpoint || 'http://127.0.0.1:38000') : (body.api_endpoint || cfg.apiBaseUrl)),
     legacyApiEndpoint: body.legacy_api_endpoint || cfg.legacyApiEndpoint || 'http://127.0.0.1:38000',
     apiKey: body.api_key || cfg.apiKey,
     apimartProxyUrl: body.apimart_proxy_url || cfg.apimartProxyUrl || '',
-    model: body.model || cfg.model,
+    model: resolveBatchImageModel(body.model, cfg.model, imageApiPlatform),
     size: body.size || cfg.size,
     imageSize: body.clarity || cfg.imageSize || '1K',
     quality: body.quality || cfg.quality || 'auto',

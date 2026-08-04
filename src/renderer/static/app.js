@@ -1840,7 +1840,28 @@ function renderAgentModelOptions(){
   select.innerHTML = options.join('');
   select.value = current;
 }
-function agentSelectedImageModel(){ return String($('#agentImageModelPreset')?.value || agentConfig.image_model || '').trim(); }
+const AGENT_IMAGE_MODEL_PLACEHOLDERS = new Set([
+  '', '自由选择', 'agent 自由选择', 'agent自由选择', 'auto', 'automatic', 'default'
+]);
+function isAgentImageModelPlaceholder(value=''){
+  return AGENT_IMAGE_MODEL_PLACEHOLDERS.has(String(value || '').trim().toLowerCase());
+}
+function isApimartImageModel(value=''){
+  const model = String(value || '').trim().toLowerCase();
+  return !!model && APIMART_MODEL_OPTIONS.some(([id]) => String(id).toLowerCase() === model);
+}
+function agentSelectedImageModel(){
+  const model = String($('#agentImageModelPreset')?.value || agentConfig.image_model || '').trim();
+  return isAgentImageModelPlaceholder(model) ? '' : model;
+}
+function resolveAgentImageModel(requestedModel=''){
+  const selected = agentSelectedImageModel();
+  const requested = String(requestedModel || '').trim();
+  if(selected && !isAgentImageModelPlaceholder(selected)) return selected;
+  if(requested && !isAgentImageModelPlaceholder(requested)) return requested;
+  const homepageModel = String($('#model')?.value || $('#modelPreset')?.value || '').trim();
+  return isApimartImageModel(homepageModel) ? homepageModel : 'gpt-image-2';
+}
 function agentSelectedVideoModel(){ return String($('#agentVideoModelPreset')?.value || agentConfig.video_model || '').trim(); }
 function setAgentSelectValue(select, value){
   if(!select) return;
@@ -2288,7 +2309,7 @@ function buildAgentSystemPrompt(){
   return [
     agentConfig.system_prompt,
     `当前访问角色：${role}。${permission}`,
-    `生成模型偏好：图片=${imageModel}；视频=${videoModel}。当用户在 Agent 窗口指定图片或视频模型时，调用 set_current_*_model、create_*_batch 时必须使用该模型，不得自行替换。显示“自由选择”时才可依据任务自由选择兼容模型。`,
+    `生成模型偏好：图片=${imageModel}；视频=${videoModel}。当用户在 Agent 窗口指定图片或视频模型时，调用 set_current_*_model、create_*_batch 时必须使用该模型，不得自行替换。图片“自由选择”仅是界面状态，绝不是 APIMart 模型 ID；禁止把“自由选择”、“Agent 自由选择”或“auto”写入 model 参数。未指定图片模型时请省略 model，让程序回退到首页当前有效 APIMart 模型或 GPT-Image-2。`,
     '你可以真正调用 TENYING AI 程序工具，不要只给操作建议。',
     '每次只能输出一个纯 JSON 对象，不要使用 Markdown 代码块。',
     '需要操作时输出：{"type":"tool_call","tool":"工具名","args":{}}。',
@@ -2373,7 +2394,7 @@ async function runAgentTool(tool='', args={}){
     return {ok:true,prompt:value};
   }
   if(name === 'set_current_image_model'){
-    const model = agentSelectedImageModel() || String(args.model || '').trim();
+    const model = resolveAgentImageModel(args.model);
     if(!model) throw new Error('缺少图片模型');
     applyModelToUI(model);
     return {ok:true,model};
@@ -2385,12 +2406,9 @@ async function runAgentTool(tool='', args={}){
     if(useCurrentForm){
       Object.assign(body, {...collectConfig(), prompts:String(body.prompts || $('#prompts')?.value || ''), main_images:mainImages, reference_images:refImages, client_id:getClientId()});
     }
-    const imageModel = agentSelectedImageModel();
-    if(imageModel){
-      body.image_api_platform = 'apimart';
-      body.model = imageModel;
-      body.api_endpoint = agentApimartCredentials().api_endpoint;
-    }
+    body.image_api_platform = 'apimart';
+    body.model = resolveAgentImageModel(body.model);
+    body.api_endpoint = agentApimartCredentials().api_endpoint;
     if(!body.api_key) body.api_key = agentApimartCredentials().api_key;
     return api('/api/batches',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   }
