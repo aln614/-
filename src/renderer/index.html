@@ -236,7 +236,7 @@
 
           <div class="card">
             <h2>任务输入</h2>
-            <div class="actions no-margin image-clear-actions"><button class="secondary" id="clearMainImagesBtn">清空主图</button><button class="secondary" id="clearRefImagesBtn">清空参考图</button><button class="danger" id="clearAllInputImagesBtn">清空全部图片</button></div>
+            <div class="actions no-margin image-clear-actions"><button class="secondary" id="clearMainImagesBtn">清空主图</button><button class="secondary" id="clearRefImagesBtn">清空参考图</button><button class="danger" id="clearAllInputImagesBtn">清空全部图片</button><span id="mainImageTaskWarning" class="main-image-task-warning hidden"></span></div>
             <div class="dropzone" id="mainDrop">
               <strong>主任务图片上传</strong>
               <span>拖拽图片 / 点击选择 / Ctrl+V 粘贴，支持多张</span>
@@ -342,7 +342,7 @@
               </div>
               <div><label>比例</label><select id="videoAspect"><option value="16:9">16:9 横屏</option><option value="9:16" selected>9:16 竖屏</option><option value="1:1">1:1 方形</option></select></div>
             </div>
-            <div class="row"><div><label>主任务执行规则</label><div class="estimate">一个主任务视频 = 一个独立任务</div></div><div><label>当前模式</label><select id="videoModeSelect"><option value="auto">自动识别</option><option value="text_to_video">文生视频</option><option value="first_frame">首帧生成</option><option value="first_last_frame">首尾帧生成</option><option value="multi_reference">多素材生成</option><option value="video_edit">上传视频编辑</option></select><div class="field-help" id="videoModeHint">文生视频</div></div></div>
+            <div class="row"><div><label>主任务执行规则</label><div class="estimate" id="videoTaskRule">一个主任务视频 = 一个独立任务</div></div><div><label>当前模式</label><select id="videoModeSelect"><option value="auto">自动识别</option><option value="text_to_video">文生视频</option><option value="first_frame">首帧生成</option><option value="first_last_frame">首尾帧生成</option><option value="multi_reference">多素材生成</option><option value="video_edit">上传视频编辑</option></select><div class="field-help" id="videoModeHint">文生视频</div></div></div>
             <div class="row" id="videoAdvancedRuleRow"><div><label>Seed（可选）</label><input id="videoSeed" type="number" min="-1" step="1" placeholder="-1 或留空为随机" /></div><div class="setting-note-box">Doubao Seedance 支持 2-12 秒、480p/720p/1080p、16:9/9:16/1:1/4:3/3:4/21:9；首尾帧需要 quality 模型。</div></div>
             <div class="warning" id="videoPlatformWarning">上传视频时使用 Omni Flash 编辑；公网视频 URL 必须是 APIMart 云端可访问的 HTTP/HTTPS 直链。</div>
             <div id="videoUrlWrap"><label>已有公开视频 URL（可选）</label><input id="videoUrlInput" placeholder="https://.../reference.mp4，可不填" /></div>
@@ -354,7 +354,7 @@
             <div class="thumbs" id="videoFilePreview"></div>
             <div class="dropzone small" id="videoRefDrop"><strong>上传参考图</strong><span>可上传多张参考图，不再限制数量；点击缩略图可像图片一样预览；也支持 Ctrl+V 粘贴图片</span><input id="videoRefFiles" type="file" multiple accept="image/*" /></div>
             <div class="thumbs" id="videoRefThumbs"></div>
-            <div class="prompt-mode-row"><label>视频提示词</label><label class="switch-line prompt-switch"><input id="videoPromptMultilineTasks" type="checkbox" /> 提示词多行多任务</label></div>
+            <div class="prompt-mode-row"><label>视频提示词</label><label class="switch-line prompt-switch"><input id="videoPromptMultilineTasks" type="checkbox" /> 提示词多行多任务</label><label class="switch-line prompt-switch" id="videoMultiReferenceLabel" title="仅支持多参考视频的 APIMart 模型可用"><input id="videoMultiReference" type="checkbox" /> 多视频参考</label></div>
             <textarea id="videoPrompt" placeholder="开启：一行/一段提示词 = 一个视频任务；关闭：整个输入框作为一个完整提示词。"></textarea>
             <div class="row">
               <div><label>重复任务次数</label><input id="videoRepeatCount" type="number" value="1" min="1" max="50" /></div>

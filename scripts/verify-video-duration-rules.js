@@ -100,5 +100,11 @@ assert(/body\.duration = durationValue/.test(app), 'Video submit must use the tr
 assert(/durationRule\.defaultDuration \?\? 6/.test(main), 'Backend must preserve zero-valued model defaults');
 assert(/\/videos\/\$\{encodeURIComponent\(sourceTaskId\)\}\/remix/.test(main), 'VEO task remix endpoint must be available');
 assert(/extend_from_task_id/.test(main), 'Pixverse/Gemini task extension must send extend_from_task_id');
+assert(/id="videoMultiReference"/.test(html), 'Video editor must expose the multi-video reference switch');
+assert(/multi_video_reference:multiVideoReference/.test(app), 'Video submit must send the multi-video reference flag');
+assert(/videoMultiReference.*addEventListener\('change'/.test(app), 'Multi-video reference switch must refresh task estimates');
+assert(/const taskSources = multiVideoReference \? \[\{/.test(main), 'Multi-video reference mode must merge uploads into one task source');
+assert(/payload\.video_urls = videoUrls/.test(main), 'Multi-video models must submit all reference video URLs');
+assert(/model:'MiniMax-H3'[^\n]*maxVideoCount:3/.test(main), 'MiniMax H3 must allow up to three reference videos');
 
 console.log(`Video duration validation passed (${backend.size} backend models, ${frontend.size} frontend models).`);

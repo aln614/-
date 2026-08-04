@@ -3398,6 +3398,9 @@ async function createFlow2VideoBatch(body, ownerId) {
   const apiKey = String(body.api_key || '').trim();
   if (!apiKey) throw new Error('请填写本地 Flow2API API Key');
   const hasVideo = Boolean((Array.isArray(body.video_files) && body.video_files.length) || String(body.video_url || '').trim());
+  if (body.multi_video_reference === true && Array.isArray(body.video_files) && body.video_files.length > 1) {
+    throw new Error('本地 Flow2API 不支持多视频合并参考，请使用 APIMart 的 MiniMax H3、Seedance 2.0 或 Wan2.7 R2V。');
+  }
   const originalPrompts = splitVideoPrompts(body.prompts || body.prompt || '', body.prompt_multiline_tasks === true);
   if (!originalPrompts.length) throw new Error('请输入视频提示词');
   const refs = Array.isArray(body.ref_images) ? body.ref_images.filter(item => item && (typeof item === 'string' || item.data)) : [];
@@ -3532,6 +3535,8 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
   const videoItem = body.video_file || null;
   const videoUrlInput = String(body.video_url || '').trim();
   const prebuiltLocalVideoPath = String(body.local_video_path || '').trim();
+  const prebuiltLocalVideoPaths = Array.isArray(body.local_video_paths) ? body.local_video_paths.map(item=>String(item || '').trim()).filter(Boolean) : [];
+  const directVideoUrls = Array.isArray(body.video_urls) ? body.video_urls.map(item=>String(item || '').trim()).filter(Boolean) : [];
   const sourceVideoName = String(body.source_video_name || '').trim();
   const st = ensureVideoStore();
   const videoModel = canonicalApimartVideoModel(body.video_model || 'omni-flash-ext');
@@ -3540,7 +3545,7 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
   const fallbackVideoBatchId = body.video_batch_id || uuid('video_batch_');
   const fallbackVideoBatchName = body.video_batch_name || `Video_${beijingDateKey().replace(/-/g,'')}_${new Date().toISOString().slice(11,19).replace(/:/g,'')}`;
   const initialImageCount = refImages.length + (Array.isArray(body.ref_image_urls) ? body.ref_image_urls.filter(Boolean).length : 0);
-  const requestedMode = resolveApimartVideoMode(body.video_mode, { imageCount: initialImageCount, hasVideo: !!(videoItem || videoUrlInput || prebuiltLocalVideoPath) });
+  const requestedMode = resolveApimartVideoMode(body.video_mode, { imageCount: initialImageCount, hasVideo: !!(videoItem || videoUrlInput || prebuiltLocalVideoPath || prebuiltLocalVideoPaths.length || directVideoUrls.length) });
   // V12.2：任务一创建就进入视频生成库，数量立即与“视频数 × 提示词数”匹配；随后每个任务独立提交并轮询 task_id。
   const row = existingRow || {
     id:localId, owner_id:ownerId, task_id:'', status:'等待提交', progress:0, progress_text:'等待提交到 APIMart', platform:'apimart',
@@ -3571,8 +3576,14 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
   getDB()._save();
   try {
     row.status = '提交中'; row.progress = 2; row.progress_text = '正在提交到 APIMart'; row.updated_at = nowISO(); getDB()._save();
-    const localVideoPath = prebuiltLocalVideoPath || row.local_video_path || (videoItem ? dataUrlToFile(videoItem, ownerId) : '');
-    let videoUrl = videoUrlInput || (localVideoPath ? await buildPublicVideoUrlAuto(localVideoPath, cfg, ownerId, req) : '');
+    const generatedLocalVideoPath = videoItem ? dataUrlToFile(videoItem, ownerId) : '';
+    const localVideoPaths = [...new Set([...prebuiltLocalVideoPaths, prebuiltLocalVideoPath, row.local_video_path, generatedLocalVideoPath].filter(Boolean))];
+    const localVideoPath = localVideoPaths[0] || '';
+    let videoUrls = [...new Set(directVideoUrls.length ? directVideoUrls : (videoUrlInput ? [videoUrlInput] : []))];
+    if (!videoUrls.length) {
+      for (const localPath of localVideoPaths) videoUrls.push(await buildPublicVideoUrlAuto(localPath, cfg, ownerId, req));
+    }
+    let videoUrl = videoUrls[0] || '';
     const imageUrls = Array.isArray(body.ref_image_urls) ? body.ref_image_urls.filter(Boolean) : [];
     if (!imageUrls.length) {
       for (const img of refImages) {
@@ -3589,18 +3600,18 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
     if (Number(rule.maxImageCount || 0) > 0 && imageUrls.length > Number(rule.maxImageCount)) {
       throw new Error(`${rule.label || videoModel} 参考图最多支持 ${rule.maxImageCount} 张，当前为 ${imageUrls.length} 张。`);
     }
-    const mode = resolveApimartVideoMode(body.video_mode, { imageCount: imageUrls.length, hasVideo: !!videoUrl });
+    const mode = resolveApimartVideoMode(body.video_mode, { imageCount: imageUrls.length, hasVideo: videoUrls.length > 0 });
     const videoReferenceType = String(body.video_reference_type || 'reference') === 'extend' ? 'extend' : 'reference';
     const acceptsImages = rule.supportsImageUrls || rule.supportsImageWithRoles || !!rule.imageParam;
     if (imageUrls.length && !acceptsImages) throw new Error(`${rule.label || videoModel} 不支持参考图片输入。`);
     if (Number(rule.minImageCount || 0) > imageUrls.length) throw new Error(`${rule.label || videoModel} 至少需要 ${rule.minImageCount} 张参考图片。`);
-    if (rule.minReferenceCount && imageUrls.length + (videoUrl ? 1 : 0) < Number(rule.minReferenceCount)) throw new Error(`${rule.label || videoModel} 至少需要一张参考图片或一个参考视频。`);
-    if (rule.maxReferenceCount && imageUrls.length + (videoUrl ? 1 : 0) > Number(rule.maxReferenceCount)) throw new Error(`${rule.label || videoModel} 的参考图片和视频合计最多 ${rule.maxReferenceCount} 个。`);
-    if (rule.requiredVideo && !videoUrl) throw new Error(`${rule.label || videoModel} 必须上传视频或填写公开视频 URL。`);
-    if (videoUrl && String(rule.model || videoModel).toLowerCase() === 'happyhorse-1.0' && imageUrls.length > 5) throw new Error('HappyHorse 1.0 视频编辑最多支持 5 张参考图片。');
-    if (videoUrl && !rule.supportsVideoUrls) throw new Error(`${rule.label || videoModel} 不支持上传视频编辑，请切换 Omni Flash。`);
-    if (videoUrl && Number(rule.maxVideoCount || 0) > 0 && Number(rule.maxVideoCount) < 1) throw new Error(`${rule.label || videoModel} 不支持上传视频编辑。`);
-    if (rule.disallowFrameReferenceMix && videoUrl && ['first_frame','first_last_frame'].includes(mode)) {
+    if (rule.minReferenceCount && imageUrls.length + videoUrls.length < Number(rule.minReferenceCount)) throw new Error(`${rule.label || videoModel} 至少需要一张参考图片或一个参考视频。`);
+    if (rule.maxReferenceCount && imageUrls.length + videoUrls.length > Number(rule.maxReferenceCount)) throw new Error(`${rule.label || videoModel} 的参考图片和视频合计最多 ${rule.maxReferenceCount} 个。`);
+    if (rule.requiredVideo && !videoUrls.length) throw new Error(`${rule.label || videoModel} 必须上传视频或填写公开视频 URL。`);
+    if (videoUrls.length && String(rule.model || videoModel).toLowerCase() === 'happyhorse-1.0' && imageUrls.length > 5) throw new Error('HappyHorse 1.0 视频编辑最多支持 5 张参考图片。');
+    if (videoUrls.length && !rule.supportsVideoUrls) throw new Error(`${rule.label || videoModel} 不支持上传视频编辑，请切换 Omni Flash。`);
+    if (videoUrls.length > Number(rule.maxVideoCount || 1)) throw new Error(`${rule.label || videoModel} 最多支持 ${Number(rule.maxVideoCount || 1)} 个参考视频，当前为 ${videoUrls.length} 个。`);
+    if (rule.disallowFrameReferenceMix && videoUrls.length && ['first_frame','first_last_frame'].includes(mode)) {
       throw new Error(`${rule.label || videoModel} 不能将首帧 / 首尾帧生成与参考视频同时提交。`);
     }
     if (rule.disallowFrameReferenceMix && mode === 'first_frame' && imageUrls.length !== 1) {
@@ -3621,11 +3632,11 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
     } else if (rule.resolutionParam !== false) {
       payload[rule.resolutionParam || 'resolution'] = normalizedResolution;
     }
-    const omitAspect = (imageUrls.length && (rule.omitAspectWithImages || (Array.isArray(rule.omitAspectWithImageModes) && rule.omitAspectWithImageModes.includes(mode)))) || (videoUrl && rule.omitAspectWithVideo);
+    const omitAspect = (imageUrls.length && (rule.omitAspectWithImages || (Array.isArray(rule.omitAspectWithImageModes) && rule.omitAspectWithImageModes.includes(mode)))) || (videoUrls.length && rule.omitAspectWithVideo);
     if (!omitAspect && rule.aspectParam !== false) payload[rule.aspectParam || 'aspect_ratio'] = normalizedAspectRatio;
     if (imageUrls.length) {
       if (rule.imageParam === 'skyreels') {
-        if (mode === 'multi_reference' || imageUrls.length > 2 || !!videoUrl) {
+        if (mode === 'multi_reference' || imageUrls.length > 2 || videoUrls.length > 0) {
           payload.ref_images = [];
           for (let i = 0; i < imageUrls.length; i += 5) {
             const tag = `@image${payload.ref_images.length + 1}`;
@@ -3658,9 +3669,11 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
       }
     }
     if (String(payload.model || '').toLowerCase() === 'omni-flash-ext' && imageUrls.length) {
-      payload.generation_type = (videoUrl || mode === 'multi_reference' || imageUrls.length > 1) ? 'reference' : 'frame';
+      payload.generation_type = (videoUrls.length || mode === 'multi_reference' || imageUrls.length > 1) ? 'reference' : 'frame';
     }
-    if (videoUrl) {
+    if (videoUrls.length) {
+      videoUrl = videoUrls[0] || '';
+      for (const additionalVideoUrl of videoUrls.slice(1)) await probePublicVideoUrl(additionalVideoUrl);
       try {
         await probePublicVideoUrl(videoUrl);
       } catch (probeError) {
@@ -3671,6 +3684,7 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
         addLog(`公网视频通道失效，正在自动重建：${probeError.message || probeError}`, { ownerId, level:'warn' });
         await restartPublicTunnelForVideoReference(readConfig());
         videoUrl = await buildPublicVideoUrlAuto(localVideoPath, readConfig(), ownerId, req);
+        videoUrls[0] = videoUrl;
         await probePublicVideoUrl(videoUrl);
       }
       if (rule.videoParam === 'video_url') payload.video_url = videoUrl;
@@ -3680,18 +3694,18 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
         const tag = '@video1';
         payload.ref_videos = [{ tag, type:videoReferenceType, video_url:videoUrl }];
         if (!payload.prompt.includes(tag)) payload.prompt = `${tag} ${payload.prompt}`;
-      } else payload.video_urls = [videoUrl];
+      } else payload.video_urls = videoUrls;
     }
     let durationRule = rule;
-    if (videoUrl && Array.isArray(rule.videoDurationRange)) durationRule = { ...rule, durations:undefined, durationRange:rule.videoDurationRange };
+    if (videoUrls.length && Array.isArray(rule.videoDurationRange)) durationRule = { ...rule, durations:undefined, durationRange:rule.videoDurationRange };
     if ((mode === 'first_last_frame' || (imageUrls.length === 2 && rule.imageParam === 'pixverse')) && Array.isArray(rule.firstLastDurations)) durationRule = { ...rule, durationRange:undefined, durations:rule.firstLastDurations };
     const resolutionDurations = rule.resolutionDurationRules && rule.resolutionDurationRules[normalizedResolution];
     if (Array.isArray(resolutionDurations)) durationRule = { ...rule, durationRange:undefined, durations:resolutionDurations, defaultDuration:resolutionDurations[0] };
-    const omitDurationForReferenceVideo = videoUrl && rule.videoParam === 'ref_videos' && videoReferenceType === 'reference';
-    if (rule.supportsDuration !== false && (!videoUrl || rule.durationWithVideo) && !omitDurationForReferenceVideo) {
+    const omitDurationForReferenceVideo = videoUrls.length && rule.videoParam === 'ref_videos' && videoReferenceType === 'reference';
+    if (rule.supportsDuration !== false && (!videoUrls.length || rule.durationWithVideo) && !omitDurationForReferenceVideo) {
       payload.duration = normalizeVideoDurationForRule(body.duration, durationRule.defaultDuration ?? 6, durationRule, payload.model);
     }
-    if (rule.audioParam && !(videoUrl && rule.videoParam === 'video_list')) payload[rule.audioParam] = rule.forceAudio ? true : body.generate_audio !== false && rule.defaultAudio !== false;
+    if (rule.audioParam && !(videoUrls.length && rule.videoParam === 'video_list')) payload[rule.audioParam] = rule.forceAudio ? true : body.generate_audio !== false && rule.defaultAudio !== false;
     if (rule.watermarkParam) payload[rule.watermarkParam] = body.watermark === true;
     if (rule.cameraFixedParam) payload[rule.cameraFixedParam] = body.camera_fixed === true;
     if (rule.returnLastFrameParam) payload[rule.returnLastFrameParam] = body.return_last_frame === true;
@@ -3728,14 +3742,17 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
     if (mode === 'veo_remix') row.mode = '任务续写';
     row.image_urls = imageUrls;
     row.video_url = videoUrl;
+    row.video_urls = videoUrls;
     row.reference_public_url = videoUrl;
+    row.reference_public_urls = videoUrls;
     row.local_video_path = localVideoPath;
+    row.local_video_paths = localVideoPaths;
     row.submission_payload = payload;
     if (sourceVideoName) row.source_video_name = sourceVideoName;
     if (body.source_video_duration) row.source_video_duration = body.source_video_duration;
     row.updated_at = nowISO(); getDB()._save();
     let ret;
-    addLog(`视频请求参数：endpoint=${submitEndpoint} model=${payload.model} resolution=${payload.resolution || payload.quality || payload.mode || ''} aspect=${payload.aspect_ratio || payload.size || ''} duration=${payload.duration ?? (rule.supportsDuration === false ? '模型自动' : '参考视频模式')} images=${imageUrls.length} videos=${videoUrl ? 1 : 0}`, { ownerId });
+    addLog(`视频请求参数：endpoint=${submitEndpoint} model=${payload.model} resolution=${payload.resolution || payload.quality || payload.mode || ''} aspect=${payload.aspect_ratio || payload.size || ''} duration=${payload.duration ?? (rule.supportsDuration === false ? '模型自动' : '参考视频模式')} images=${imageUrls.length} videos=${videoUrls.length}`, { ownerId });
     try {
       ret = await postJsonApimart(submitEndpoint, apiKey, payload, 30000);
       addLog(`视频接口返回：${JSON.stringify(ret).slice(0, 1000)}`, { ownerId });
@@ -3827,6 +3844,14 @@ async function createApimartVideoBatch(body, ownerId, req, cfg) {
   }
   if (!sourceVideos.length) throw new Error('没有可用的视频任务，请上传 mp4/mov 或填写公网视频直链');
 
+  const multiVideoReference = body.multi_video_reference === true && sourceVideos.length > 1;
+  const videoRule = getApimartVideoRule(canonicalApimartVideoModel(body.video_model || 'omni-flash-ext'));
+  if (multiVideoReference) {
+    const maxVideoCount = Number(videoRule.maxVideoCount || 1);
+    if (!videoRule.supportsVideoUrls || maxVideoCount < 2) throw new Error(`${videoRule.label || body.video_model} 不支持多视频参考。`);
+    if (sourceVideos.length > maxVideoCount) throw new Error(`${videoRule.label || body.video_model} 最多支持 ${maxVideoCount} 个参考视频，当前上传 ${sourceVideos.length} 个。`);
+  }
+
   const refImageUrls = [];
   for (const img of refImages) {
     const fp = dataUrlToFile(img, ownerId);
@@ -3835,9 +3860,16 @@ async function createApimartVideoBatch(body, ownerId, req, cfg) {
   }
   assertApimartVideoReferenceRules({ imageUrls: refImageUrls, videoUrl: videoUrlInput || (videoFiles.length ? 'local_video_upload' : ''), context:'视频批量任务' });
 
+  const taskSources = multiVideoReference ? [{
+    source_index: 1,
+    name: sourceVideos.map(item=>item.name).filter(Boolean).join(', '),
+    local_video_paths: sourceVideos.map(item=>item.local_video_path).filter(Boolean),
+    video_urls: sourceVideos.map(item=>item.video_url).filter(Boolean),
+    duration_seconds: ''
+  }] : sourceVideos;
   const tasks = [];
   const copies = safeInt(body.copies, 1, 1, 4);
-  for (const src of sourceVideos) {
+  for (const src of taskSources) {
     for (const prompt of prompts) {
       for (let copy = 1; copy <= copies; copy++) tasks.push({ ...src, prompt, copy_index:copy });
     }
@@ -3846,7 +3878,7 @@ async function createApimartVideoBatch(body, ownerId, req, cfg) {
   const concurrency = safeInt(body.concurrency, 1, 1, 50);
   const videoBatchId = uuid('video_batch_');
   const videoBatchName = `Video_${beijingDateKey().replace(/-/g,'')}_${new Date().toISOString().slice(11,19).replace(/:/g,'')}`;
-  addLog(`视频批量任务开始，并发：${concurrency}，视频：${sourceVideos.length}，提示词：${prompts.length}，任务：${tasks.length}`, { ownerId });
+  addLog(`视频批量任务开始，并发：${concurrency}，视频：${sourceVideos.length}${multiVideoReference ? '（多视频参考合并）' : ''}，提示词：${prompts.length}，任务：${tasks.length}`, { ownerId });
   const rows = await runLimited(tasks, concurrency, async(item)=>{
     addLog(`提交视频任务：第 ${item.source_index} 个视频 ${item.name || ''}`, { ownerId });
     return await createApimartVideoTask({
@@ -3857,7 +3889,9 @@ async function createApimartVideoBatch(body, ownerId, req, cfg) {
       ref_images:[],
       ref_image_urls:refImageUrls,
       video_url:item.video_url || '',
+      video_urls:item.video_urls || [],
       local_video_path:item.local_video_path || '',
+      local_video_paths:item.local_video_paths || [],
       source_video_name:item.name || '',
       source_video_duration:item.duration_seconds || '',
       video_batch_id: videoBatchId,
