@@ -467,10 +467,10 @@
       <section class="page" id="page-lan">
         <div class="section-head"><div><h1>局域网共享</h1><p>开启后同一局域网设备可以访问这台电脑的生成面板。</p></div></div>
         <div class="card">
-          <label class="switch-line"><input id="lanEnabled" type="checkbox" /> 开启局域网共享（即时生效，不用重启 start.bat）</label>
-          <div class="row"><div><label>共享端口</label><input id="servicePort" type="number" min="1" max="65535" value="7861" /></div><div><label>说明</label><div class="calc-box">可自定义 IP 后面的数字端口，例如 :7861 / :8080 / :9000</div></div></div>
-          <p class="hint">本机地址：<b id="localUrl">http://127.0.0.1:7861</b></p>
-          <p class="hint">局域网地址：<b id="lanUrl">http://192.168.110.30:7861</b></p>
+          <label class="switch-line"><input id="lanEnabled" type="checkbox" checked /> 开启局域网共享（即时生效，不用重启 start.bat）</label>
+          <div class="row"><div><label>共享端口</label><input id="servicePort" type="number" min="1" max="65535" value="7868" /></div><div><label>说明</label><div class="calc-box">默认局域网地址为 http://192.168.110.30:7868，可按需修改端口。</div></div></div>
+          <p class="hint">本机地址：<b id="localUrl">http://127.0.0.1:7868</b></p>
+          <p class="hint">局域网地址：<b id="lanUrl">http://192.168.110.30:7868</b></p>
           <p class="hint">现在切换局域网开关后会立即生效；如果你修改了端口，程序会自动切换到新端口。</p>
           <p class="hint">局域网用户的 API Key 不会使用主机保存的密钥；他们可以在自己的浏览器本地缓存保存自己的 API Key。</p>
           <button class="secondary" id="saveLanBtn">保存局域网设置</button>

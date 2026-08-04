@@ -1264,7 +1264,7 @@ function updateSizeHint(){
 }
 
 function updateLanDisplay(c = {}){
-  const port = c.port || Number($('#servicePort')?.value || 7861);
+  const port = c.port || Number($('#servicePort')?.value || 7868);
   const localUrl = c.local_url || `http://127.0.0.1:${port}`;
   const lanUrl = c.lan_url || `http://${c.local_ip || '本机IP'}:${port}`;
   if($('#servicePort')) $('#servicePort').value = port;
@@ -3632,7 +3632,7 @@ function collectConfig(){
     output_dir: $('#outputDir').value.trim(),
     log_keep_days: Number($('#logKeepDays').value || 3),
     lan_enabled: $('#lanEnabled').checked,
-    port: Number($('#servicePort')?.value || 7861)
+    port: Number($('#servicePort')?.value || 7868)
   };
 }
 

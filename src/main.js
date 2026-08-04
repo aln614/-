@@ -19,7 +19,7 @@ let mainWindow = null;
 let server = null;
 let queue = null;
 let configPath = null;
-let currentPort = 7860;
+let currentPort = 7868;
 let activeOpenAppShortcut = '';
 let isAppQuitting = false;
 let tray = null;
@@ -531,10 +531,10 @@ const DEFAULT_CONFIG = {
   background_keepalive: true,
   output_dir: '',
   log_keep_days: 3,
-  lan_enabled: false,
+  lan_enabled: true,
   device_data_isolation: true,
   port: 7868,
-  lan_ip_override: '',
+  lan_ip_override: '192.168.110.30',
   public_enabled: false,
   public_provider: 'cloudflare',
   public_url: '',
@@ -828,7 +828,7 @@ function saveConfig(partial) {
     ? String(next.skin_id).toLowerCase()
     : 'classic';
   next.mascot_enabled = next.mascot_enabled !== false;
-  if (!next.port) next.port = 7860;
+  if (!next.port) next.port = DEFAULT_CONFIG.port;
   fs.writeFileSync(configPath, JSON.stringify(next, null, 2), 'utf8');
   try { mirrorRuntimeDataToOutputDir(next, { configOnly: true }); } catch {}
   return next;
@@ -974,7 +974,7 @@ function getLocalIP() {
   return '127.0.0.1';
 }
 function urls(cfg) {
-  const port = Number(cfg.port || 7861);
+  const port = Number(cfg.port || DEFAULT_CONFIG.port);
   const ip = cfg.lan_ip_override || getLocalIP();
   const pub = normalizeExternalPublicOrigin((cfg.public_url || tunnelState.url || '').trim());
   return { local_ip: ip, port, local_url: `http://127.0.0.1:${port}`, lan_url: `http://${ip}:${port}`, public_url: pub };
@@ -2163,7 +2163,7 @@ function buildLocalFlow2VideoUrl(filePath, ownerId='', endpoint='') {
   const host = String(endpoint || '').includes('127.0.0.1') || /localhost/i.test(String(endpoint || ''))
     ? (process.env.LAIG_FLOW2API_HOST_ACCESS || 'host.docker.internal')
     : '127.0.0.1';
-  return `http://${host}:${currentPort || Number(readConfig().port || 7861)}/public-video/${id}${ext}`;
+  return `http://${host}:${currentPort || Number(readConfig().port || DEFAULT_CONFIG.port)}/public-video/${id}${ext}`;
 }
 async function probePublicVideoUrl(urlValue) {
   if (!urlValue) return;
@@ -5809,7 +5809,7 @@ function startTunnelProcess(body = {}) {
   if (tunnelRetryTimer) clearTimeout(tunnelRetryTimer);
   tunnelRetryTimer = null;
   const provider = body.provider || cfg0.public_provider || 'cloudflare';
-  const port = Number(cfg0.port || 7861);
+  const port = Number(cfg0.port || DEFAULT_CONFIG.port);
   const access = String(body.public_password || cfg0.public_password || '').trim() || Math.random().toString(36).slice(2, 10);
   const nextCfg = saveConfig({
     public_enabled: true,
@@ -7357,7 +7357,7 @@ async function apiHandler(req, res, parsed) {
       if (!local) return send(res, {ok:false,error:'局域网端只能在浏览器本地保存 API Key，不能修改主机设置'}, 403);
       const body = await readBody(req);
       if (!String(body.api_key || '').trim() && String(cfg.api_key || '').trim()) delete body.api_key;
-      const oldPort = Number(cfg.port || 7861); const next = saveConfig(body); const newPort = Number(next.port || 7861);
+      const oldPort = Number(cfg.port || DEFAULT_CONFIG.port); const next = saveConfig(body); const newPort = Number(next.port || DEFAULT_CONFIG.port);
       const runtime = { port_changed: oldPort !== newPort };
       if (runtime.port_changed) setTimeout(()=>startServer(newPort), 900);
       return send(res, {ok:true, config:{...next, ...urls(next), local_runtime_data_dir:DATA_ROOT, output_runtime_data_dir:runtimeMirrorDir(next), local_hot_cache_dir:LOCAL_HOT_CACHE_ROOT, local_hot_cache_max_mb:Math.round(LOCAL_HOT_CACHE_MAX_BYTES / 1024 / 1024)}, runtime});
@@ -7761,7 +7761,7 @@ function requestHandler(req, res) {
   fs.createReadStream(file).pipe(res);
 }
 function startServer(port, retryCount = 0) {
-  const desiredPort = Number(port || readConfig().port || 7861);
+  const desiredPort = Number(port || readConfig().port || DEFAULT_CONFIG.port);
   currentPort = desiredPort;
   if (server) {
     try { server.close(); } catch {}
@@ -7783,7 +7783,7 @@ function startServer(port, retryCount = 0) {
     }
   });
   server.listen(currentPort, '0.0.0.0', () => {
-    saveConfig({port:Number(currentPort || 7861)});
+    saveConfig({port:Number(currentPort || DEFAULT_CONFIG.port)});
     addLog(`Desktop WebUI server started on http://127.0.0.1:${currentPort}`, {ownerId:'local'});
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.loadURL(`http://127.0.0.1:${currentPort}`);
     const chatCatalogTimer = setTimeout(() => refreshApimartChatModels(readConfig().apimart_proxy_url || '').catch(()=>{}), 1200);
@@ -7796,7 +7796,7 @@ function resolveImageInfoFromSrc(src) {
   if (!src) return info;
   try {
     if (src.startsWith('data:image/')) { info.filePath = src; return info; }
-    const u = new URL(src, `http://127.0.0.1:${currentPort || 7861}`);
+    const u = new URL(src, `http://127.0.0.1:${currentPort || DEFAULT_CONFIG.port}`);
     if (u.pathname === '/file' || u.pathname === '/download') {
       const fp = u.searchParams.get('path') || '';
       const img = getDB()._store.images.find(x => x.file_path === fp || x.thumb_path === fp);
@@ -8040,7 +8040,7 @@ app.whenReady().then(() => {
     createTray();
     registerConfiguredOpenAppShortcut();
   }
-  startServer(Number(readConfig().port || 7861));
+  startServer(Number(readConfig().port || DEFAULT_CONFIG.port));
   const startupPublicCfg = readConfig();
   if (startupPublicCfg.public_enabled && (startupPublicCfg.public_provider || 'cloudflare') !== 'manual') {
     const tunnelRestoreTimer = setTimeout(() => {
