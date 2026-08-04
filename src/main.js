@@ -1127,18 +1127,32 @@ let softwareUpdateRuntime = {
   started_at: '',
   updated_at: ''
 };
-function setSoftwareUpdateRuntime(patch = {}) {
+let lastSoftwareUpdateRuntimePersistAt = 0;
+function setSoftwareUpdateRuntime(patch = {}, opts = {}) {
   softwareUpdateRuntime = { ...softwareUpdateRuntime, ...patch, updated_at: nowISO() };
-  try { saveConfig({ update_runtime: softwareUpdateRuntime }); } catch {}
+  if (opts.persist !== false) {
+    try { saveConfig({ update_runtime: softwareUpdateRuntime }); lastSoftwareUpdateRuntimePersistAt = Date.now(); } catch {}
+  }
   return softwareUpdateRuntime;
+}
+function reportSoftwareUpdateDownloadProgress(patch = {}) {
+  const previousProgress = Number(softwareUpdateRuntime.progress || 0);
+  const nextProgress = Number(patch.progress || 0);
+  const shouldPersist = Math.abs(nextProgress - previousProgress) >= 1 || Date.now() - lastSoftwareUpdateRuntimePersistAt >= 5000;
+  return setSoftwareUpdateRuntime(patch, { persist: shouldPersist });
 }
 function getSoftwareUpdateStatus() {
   const cfg = readConfig();
-  const runtime = cfg.update_runtime || softwareUpdateRuntime;
+  // The live runtime is authoritative while the updater process is active. The
+  // persisted copy is only a recovery record after the application restarts.
+  const liveRuntime = softwareUpdateRuntime || {};
+  const runtime = (liveRuntime.updated_at && ['queued','downloading','downloaded','installing'].includes(liveRuntime.state))
+    ? liveRuntime
+    : (cfg.update_runtime || liveRuntime);
   if (['queued','downloading'].includes(runtime.state) && runtime.updated_at) {
     const ts = Date.parse(runtime.updated_at);
-    if (Number.isFinite(ts) && Date.now() - ts > 10 * 60 * 1000) {
-      return { ok:true, ...setSoftwareUpdateRuntime({ state:'failed', message:'更新下载长时间无进度，已停止。请重新点击更新。', progress:0 }), last_check: cfg.update_last_check || null };
+    if (Number.isFinite(ts) && Date.now() - ts > 35 * 60 * 1000) {
+      return { ok:true, ...setSoftwareUpdateRuntime({ state:'failed', message:'更新下载超过 35 分钟仍未完成，已停止。请重新点击更新。', progress:0 }), last_check: cfg.update_last_check || null };
     }
   }
   return { ok:true, ...runtime, last_check: cfg.update_last_check || null };
@@ -1251,12 +1265,26 @@ function downloadUrlToFileWithSystemCurl(target, dest, opts = {}) {
     if (process.platform !== 'win32') return reject(new Error('system curl fast path is only enabled on Windows'));
     ensureDir(path.dirname(dest));
     const tmp = `${dest}.part`;
-    try { fs.rmSync(tmp, { force:true }); } catch {}
-    const args = ['-L', '--fail', '--retry', '2', '--retry-delay', '1', '--connect-timeout', '12', '--max-time', String(Math.ceil(Number(opts.timeoutMs || 6 * 60 * 1000) / 1000)), '--output', tmp, target];
+    const expectedTotal = Number(opts.total || 0);
+    let existingBytes = 0;
+    try { existingBytes = fs.existsSync(tmp) ? fs.statSync(tmp).size : 0; } catch {}
+    if (expectedTotal > 0 && existingBytes > expectedTotal) {
+      try { fs.rmSync(tmp, { force:true }); } catch {}
+      existingBytes = 0;
+    }
+    const proxy = normalizeProxyUrl(opts.proxy || '');
+    const args = [
+      '-L', '--fail', '--retry', '3', '--retry-delay', '2',
+      '--connect-timeout', '30', '--max-time', String(Math.ceil(Number(opts.timeoutMs || 30 * 60 * 1000) / 1000)),
+      '--speed-time', String(Math.ceil(Math.max(240000, Number(opts.idleTimeoutMs || 4 * 60 * 1000)) / 1000)), '--speed-limit', '1',
+      '--continue-at', '-'
+    ];
+    if (proxy) args.push('--proxy', proxy);
+    args.push('--output', tmp, target);
     const child = spawn('curl.exe', args, { windowsHide:true, stdio:['ignore', 'ignore', 'pipe'] });
     let stderr = '';
     let settled = false;
-    let lastBytes = 0;
+    let lastBytes = existingBytes;
     let lastGrowAt = Date.now();
     const onProgress = typeof opts.onProgress === 'function' ? opts.onProgress : null;
     const finishReject = error => {
@@ -1265,18 +1293,17 @@ function downloadUrlToFileWithSystemCurl(target, dest, opts = {}) {
       clearTimeout(timer);
       clearInterval(progressTimer);
       try { child.kill(); } catch {}
-      try { fs.rmSync(tmp, { force:true }); } catch {}
       reject(error);
     };
     const timer = setTimeout(() => {
       finishReject(new Error('系统下载器下载超时，切换内置下载'));
-    }, Number(opts.timeoutMs || 6 * 60 * 1000));
+    }, Number(opts.timeoutMs || 30 * 60 * 1000));
     const progressTimer = setInterval(() => {
       let bytes = 0;
       try { bytes = fs.existsSync(tmp) ? fs.statSync(tmp).size : 0; } catch {}
       if (bytes > lastBytes) { lastBytes = bytes; lastGrowAt = Date.now(); }
       if (onProgress) onProgress({ bytes, total:Number(opts.total || 0), source:'system' });
-      if (Date.now() - lastGrowAt > Number(opts.idleTimeoutMs || 60000)) {
+      if (Date.now() - lastGrowAt > Math.max(240000, Number(opts.idleTimeoutMs || 4 * 60 * 1000))) {
         finishReject(new Error('系统下载器长时间没有下载进度，切换内置下载'));
       }
     }, 1000);
@@ -1291,10 +1318,11 @@ function downloadUrlToFileWithSystemCurl(target, dest, opts = {}) {
         if (code !== 0) throw new Error((stderr || `curl exited with code ${code}`).slice(-600));
         const stat = fs.statSync(tmp);
         if (!stat.size) throw new Error('新版 EXE 下载为空文件');
+        if (expectedTotal > 0 && stat.size !== expectedTotal) throw new Error(`新版 EXE 下载大小不完整：${stat.size}/${expectedTotal}`);
+        try { fs.rmSync(dest, { force:true }); } catch {}
         fs.renameSync(tmp, dest);
         resolve(dest);
       } catch (e) {
-        try { fs.rmSync(tmp, { force:true }); } catch {}
         reject(e);
       }
     });
@@ -1346,29 +1374,59 @@ async function downloadSoftwareUpdate(repoInput = '', cfg = readConfig()) {
   if (!info.asset_url) throw new Error('最新 Release 没有找到 Windows EXE 附件，请先在 GitHub Release 上传单文件 EXE。');
   const assetName = path.basename(String(info.asset_name || `LocalApiImageGenerator-${info.latest_version}-win-x64.exe`));
   const dest = ensureInside(updateCacheDir(), path.join(updateCacheDir(), assetName));
-  setSoftwareUpdateRuntime({ state:'downloading', message:'正在下载新版 EXE...', repo:info.repo, version:info.latest_version, asset_name:assetName, downloaded_path:'', bytes:0, total:info.asset_size || 0, progress:0, started_at:nowISO() });
   try {
-    setSoftwareUpdateRuntime({ state:'downloading', message:'正在调用系统下载器下载新版 EXE...', progress:1 });
-    await downloadUrlToFileWithSystemCurl(info.asset_url, dest, {
-      timeoutMs: 6 * 60 * 1000,
-      idleTimeoutMs: 60000,
-      total: info.asset_size || 0,
-      onProgress: p => {
-        const total = p.total || info.asset_size || 0;
-        const progress = total ? Math.max(1, Math.min(99, Math.round(p.bytes / total * 100))) : 1;
-        setSoftwareUpdateRuntime({ state:'downloading', message:`正在调用系统下载器下载新版 EXE${total ? ` ${progress}%` : ''}`, bytes:p.bytes, total, progress });
-      }
-    });
-  } catch (fastError) {
-    addLog(`系统下载器失败，切换到内置下载：${fastError.message || fastError}`, { level:'warn' });
-    setSoftwareUpdateRuntime({ state:'downloading', message:'系统下载器无进度，已切换到内置下载...', bytes:0, progress:1 });
-    await downloadUrlToFileRobust(info.asset_url, dest, {
-      onProgress: p => {
-        const total = p.total || info.asset_size || 0;
-        const progress = total ? Math.max(1, Math.min(99, Math.round(p.bytes / total * 100))) : 0;
-        setSoftwareUpdateRuntime({ state:'downloading', message:`正在下载新版 EXE${total ? ` ${progress}%` : ''}`, bytes:p.bytes, total, progress });
-      }
-    });
+    const existingSize = fs.existsSync(dest) ? fs.statSync(dest).size : 0;
+    if (existingSize > 0 && (!info.asset_size || existingSize === Number(info.asset_size))) {
+      const next = { ...info, downloaded_path: dest, downloaded_at: nowISO() };
+      saveConfig({ update_repo: info.repo, update_last_check: next });
+      setSoftwareUpdateRuntime({ state:'downloaded', message:'已复用已完成的新版 EXE，准备安装...', downloaded_path:dest, bytes:existingSize, total:info.asset_size || existingSize, progress:100 });
+      return { ok:true, ...next };
+    }
+  } catch {}
+  setSoftwareUpdateRuntime({ state:'downloading', message:'正在下载新版 EXE...', repo:info.repo, version:info.latest_version, asset_name:assetName, downloaded_path:'', bytes:0, total:info.asset_size || 0, progress:0, started_at:nowISO() });
+  const downloadErrors = [];
+  let downloaded = false;
+  for (const proxy of updateDownloadProxyCandidates(cfg)) {
+    const route = proxy ? '本机网络代理' : '直连 GitHub';
+    try {
+      setSoftwareUpdateRuntime({ state:'downloading', message:`正在通过${route}下载新版 EXE...`, progress:1 });
+      await downloadUrlToFileWithSystemCurl(info.asset_url, dest, {
+        timeoutMs: 30 * 60 * 1000,
+        idleTimeoutMs: 4 * 60 * 1000,
+        total: info.asset_size || 0,
+        proxy,
+        onProgress: p => {
+          const total = p.total || info.asset_size || 0;
+          const progress = total ? Math.max(1, Math.min(99, Math.round(p.bytes / total * 100))) : 1;
+          reportSoftwareUpdateDownloadProgress({ state:'downloading', message:`正在通过${route}下载新版 EXE${total ? ` ${progress}%` : ''}`, bytes:p.bytes, total, progress });
+        }
+      });
+      if (proxy) markGoodApimartProxy(proxy);
+      downloaded = true;
+      break;
+    } catch (error) {
+      const message = error?.message || String(error);
+      downloadErrors.push(`[${route}] ${message}`);
+      addLog(`软件更新${route}失败，尝试下一条网络链路：${message}`, { level:'warn' });
+    }
+  }
+  if (!downloaded) {
+    try {
+      setSoftwareUpdateRuntime({ state:'downloading', message:'系统下载器不可用，已切换内置下载...', progress:1 });
+      await downloadUrlToFileRobust(info.asset_url, dest, {
+        timeoutMs: 30 * 60 * 1000,
+        idleTimeoutMs: 4 * 60 * 1000,
+        onProgress: p => {
+          const total = p.total || info.asset_size || 0;
+          const progress = total ? Math.max(1, Math.min(99, Math.round(p.bytes / total * 100))) : 0;
+          reportSoftwareUpdateDownloadProgress({ state:'downloading', message:`正在下载新版 EXE${total ? ` ${progress}%` : ''}`, bytes:p.bytes, total, progress });
+        }
+      });
+      downloaded = true;
+    } catch (fallbackError) {
+      downloadErrors.push(`[内置下载] ${fallbackError?.message || fallbackError}`);
+      throw new Error(`新版 EXE 下载失败：${downloadErrors.join(' | ')}`);
+    }
   }
   const next = { ...info, downloaded_path: dest, downloaded_at: nowISO() };
   saveConfig({ update_repo: info.repo, update_last_check: next });
@@ -1458,6 +1516,20 @@ function dataUrlToFile(item, owner) {
   const file = path.join(dir, `${Date.now().toString(36)}_${Math.random().toString(36).slice(2,8)}${ext}`);
   fs.writeFileSync(file, Buffer.from(m[2], 'base64'));
   return file;
+}
+function updateDownloadProxyCandidates(cfg = readConfig()) {
+  const candidates = [];
+  const add = value => {
+    const proxy = normalizeProxyUrl(value || '');
+    if (proxy && !candidates.includes(proxy)) candidates.push(proxy);
+  };
+  add(lastGoodApimartProxy);
+  add(cfg.update_proxy_url);
+  add(cfg.apimart_proxy_url);
+  add(process.env.HTTPS_PROXY);
+  add(process.env.HTTP_PROXY);
+  candidates.push('');
+  return candidates;
 }
 function batchMediaUploadDir(owner='local') {
   const safeOwner = String(owner || 'local').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 96) || 'local';
