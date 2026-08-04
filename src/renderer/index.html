@@ -346,6 +346,7 @@
             <div class="row" id="videoAdvancedRuleRow"><div><label>Seed（可选）</label><input id="videoSeed" type="number" min="-1" step="1" placeholder="-1 或留空为随机" /></div><div class="setting-note-box">Doubao Seedance 支持 2-12 秒、480p/720p/1080p、16:9/9:16/1:1/4:3/3:4/21:9；首尾帧需要 quality 模型。</div></div>
             <div class="warning" id="videoPlatformWarning">上传视频时使用 Omni Flash 编辑；公网视频 URL 必须是 APIMart 云端可访问的 HTTP/HTTPS 直链。</div>
             <div id="videoUrlWrap"><label>已有公开视频 URL（可选）</label><input id="videoUrlInput" placeholder="https://.../reference.mp4，可不填" /></div>
+            <div id="videoReferenceTypeWrap" class="hidden"><label>SkyReels 视频参考方式</label><select id="videoReferenceType"><option value="reference">动作 / 主体参考</option><option value="extend">视频扩展</option></select><div class="field-help">动作参考跟随源视频时长；视频扩展使用当前时长，且不能同时使用参考图。</div></div>
           </div>
           <div class="card">
             <h2>视频与参考图</h2>

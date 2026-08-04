@@ -45,7 +45,7 @@ for (const group of pickerBlock.matchAll(/\['[^']+',\s*\[([^\]]+)\]\]/g)) {
   for (const model of group[1].matchAll(/'([^']+)'/g)) picker.add(model[1].toLowerCase());
 }
 
-assert(backend.size === 38, `Expected 38 official backend models, found ${backend.size}`);
+assert(backend.size === 39, `Expected 39 official backend models, found ${backend.size}`);
 assert(picker.size === backend.size, `Model picker/backend count mismatch: picker=${picker.size}, backend=${backend.size}`);
 for (const model of picker) assert(backend.has(model), `Model picker has no backend rule: ${model}`);
 for (const model of backend.keys()) assert(picker.has(model), `Backend model is missing from picker: ${model}`);
@@ -67,6 +67,7 @@ assert(/model:'grok-imagine-1\.5-video-apimart'[^\n]*durationRange:\[6,30\],\s*d
 assert(/model:'grok-imagine-1\.5-video-apimart'[^\n]*durationMin:6,\s*durationMax:30,\s*defaultDuration:6/.test(app), 'Grok Imagine 1.5 Video slider must support 6-30 seconds with default 6');
 assert(/model:'grok-imagine-1\.5-video-apimart'[^\n]*resolutionParam:'quality'[^\n]*aspectParam:'size'/.test(main), 'Grok must submit quality and size fields');
 assert(/model:'sora-2'[^\n]*durations:\[4,8,12,16,20\],\s*defaultDuration:4/.test(main), 'Sora 2 default duration must be 4 seconds');
+assert(/model:'sora-2'[^\n]*supportsImageUrls:true,\s*maxImageCount:1\s*\}/.test(main), 'Sora 2 must submit the documented image_urls and aspect_ratio fields together');
 assert(/model:'veo3\.1-fast'[^\n]*durations:\[8\]/.test(main) && /model:'veo3\.1-quality'[^\n]*durations:\[8\]/.test(main), 'VEO3.1 generation must be fixed to 8 seconds');
 assert(/model:'veo3\.1-lite'[^\n]*supportsImageUrls:false/.test(main), 'VEO3.1 Lite must reject reference images');
 assert(/model:'wan2\.7-videoedit'[^\n]*durations:\[0,2,3,4,5,6,7,8,9,10\][^\n]*durationWithVideo:true/.test(main), 'Wan2.7 VideoEdit must allow 0 or 2-10 seconds and send duration with video');
@@ -75,7 +76,11 @@ assert(/model:'kling-v3-motion-control'[^\n]*supportsDuration:false/.test(main),
 assert(/model:'kling-video-o1'[^\n]*durations:\[5,10\]/.test(main), 'Kling Video O1 only supports 5 or 10 seconds');
 assert(/model:'MiniMax-Hailuo-02'[^\n]*resolutions:\['512p','768p','1080p'\][^\n]*resolutionDurationRules:\{'1080p':\[5\]\}/.test(main), 'Hailuo 02 1080p must be fixed to 5 seconds');
 assert(/model:'MiniMax-Hailuo-2\.3'[^\n]*durations:\[6,10\][^\n]*resolutionDurationRules:\{'1080p':\[6\]\}/.test(main), 'Hailuo 2.3 1080p must be fixed to 6 seconds');
+assert(/model:'MiniMax-H3'[^\n]*resolutions:\['2K','768P'\][^\n]*durationRange:\[4,15\][^\n]*maxImageCount:9[^\n]*maxVideoCount:3/.test(main), 'MiniMax H3 must use official 2K/768P, 4-15 seconds, and reference limits');
+assert(/model:'MiniMax-H3'[^\n]*durationMin:4,\s*durationMax:15[^\n]*supportsVideo:true/.test(app), 'MiniMax H3 slider and video-reference UI rule must be registered');
 assert(/model:'skyreels-v4-fast'[^\n]*durationRange:\[3,15\][^\n]*videoParam:'ref_videos'/.test(main), 'SkyReels V4 must support 3-15 seconds and tagged video references');
+assert(/model:'skyreels-v4-fast'[^\n]*omitAspectWithImageModes:\['first_frame','first_last_frame'\][^\n]*omitAspectWithVideo:true/.test(main), 'SkyReels must only omit aspect ratio for I2V or video reference modes');
+assert(/videoReferenceType[^\n]*extend/.test(app) && /video_reference_type:currentVideoReferenceType\(\)/.test(app), 'SkyReels reference and extension mode must reach the backend');
 assert(/model:'happyhorse-1\.0'[^\n]*resolutions:\['720P','1080P'\][^\n]*aspectParam:'size'/.test(main), 'HappyHorse must preserve uppercase quality values and use size');
 assert(/model:'wan2\.5-preview'[^\n]*durations:\[5,10\]/.test(main), 'Wan2.5 must support 5 or 10 seconds');
 assert(/model:'wan2\.6'[^\n]*durations:\[5,10,15\]/.test(main), 'Wan2.6 must support 5, 10, or 15 seconds');
