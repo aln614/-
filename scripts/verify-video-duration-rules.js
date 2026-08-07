@@ -45,7 +45,7 @@ for (const group of pickerBlock.matchAll(/\['[^']+',\s*\[([^\]]+)\]\]/g)) {
   for (const model of group[1].matchAll(/'([^']+)'/g)) picker.add(model[1].toLowerCase());
 }
 
-assert(backend.size === 39, `Expected 39 official backend models, found ${backend.size}`);
+assert(backend.size === 42, `Expected 42 official backend models, found ${backend.size}`);
 assert(picker.size === backend.size, `Model picker/backend count mismatch: picker=${picker.size}, backend=${backend.size}`);
 for (const model of picker) assert(backend.has(model), `Model picker has no backend rule: ${model}`);
 for (const model of backend.keys()) assert(picker.has(model), `Backend model is missing from picker: ${model}`);
@@ -91,8 +91,12 @@ assert(/model:'viduq3'[^\n]*durationRange:\[3,16\][^\n]*minImageCount:1/.test(ma
 assert(/model:'pixverse-v6'[^\n]*durationRange:\[1,15\][^\n]*firstLastDurations:\[5,8\]/.test(main), 'Pixverse v6 must support 1-15 seconds and 5/8 second first-last mode');
 assert(/model:'Omni-Flash-Ext'[^\n]*durations:\[4,6,8,10\][^\n]*durationWithVideo:false/.test(main), 'Omni Flash Ext must use 4/6/8/10 seconds and omit duration for video edit');
 assert(/model:'gemini-omni-flash-preview'[^\n]*supportsDuration:false/.test(main), 'Gemini Omni Flash duration must be model-controlled');
+assert(/model:'flux-3-video'[^\n]*resolutions:\['hd','fhd'\][^\n]*durationRange:\[5,20\][^\n]*videoParam:'video_url'/.test(main), 'FLUX 3 Video must use documented HD/FHD, 5-20 second, video-url rules');
+assert(/model:'veo3\.1-fast-official'[^\n]*durations:\[4,6,8\][^\n]*imageParam:'first_frame_image'/.test(main), 'VEO3 official Fast must use its documented frame controls');
 assert(/model:'doubao-seedance-2\.0'[^\n]*aspectParam:'size'/.test(main), 'Seedance 2.0 must submit size instead of aspect_ratio');
-assert(!/doubao-seedance-2\.0-face|doubao-seedance-2\.0-fast-face|wan2\.6-i2v|veo3\.1-fast-official/.test(app.slice(app.indexOf('const APIMART_VIDEO_MODEL_GROUPS_UI'), app.indexOf('function apimartVideoModelOptionsHtml'))), 'Undocumented legacy model variants must not appear in the model picker');
+const videoModelPicker = app.slice(app.indexOf('const APIMART_VIDEO_MODEL_GROUPS_UI'), app.indexOf('function apimartVideoModelOptionsHtml'));
+assert(!/doubao-seedance-2\.0-face|doubao-seedance-2\.0-fast-face|wan2\.6-i2v/.test(videoModelPicker), 'Undocumented legacy model variants must not appear in the model picker');
+assert(/flux-3-video/.test(videoModelPicker), 'FLUX 3 Video must appear in the video model picker');
 assert(/id="videoDuration"\s+type="range"/.test(html), 'Video duration must use a range input');
 assert(!/<select\s+id="videoDuration"/.test(html), 'Legacy video duration select must not return');
 assert(/function selectedVideoDuration\(\)/.test(app), 'Slider must translate its index to a supported duration value');

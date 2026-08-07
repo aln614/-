@@ -6031,6 +6031,7 @@ registerApimartVideoUiRules([
   { model:'veo3.1-lite', label:'VEO3.1 Lite', resolutions:['720p','1080p','4k'], durations:[8], defaultDuration:8 },
   { model:'veo3.1-fast-official', label:'VEO3.1 Official Fast', resolutions:['720p','1080p','4k'], durations:[4,6,8], defaultDuration:8 },
   { model:'veo3.1-quality-official', label:'VEO3.1 Official Quality', resolutions:['720p','1080p','4k'], durations:[4,6,8], defaultDuration:8 },
+  { model:'flux-3-video', label:'FLUX 3 Video', resolutions:['hd','fhd'], defaultResolution:'hd', aspects:['auto','21:9','2:1','16:9','4:3','1:1','3:4','9:16'], defaultAspect:'auto', durationMin:5, durationMax:20, defaultDuration:5, supportsVideo:true, durationWithVideo:true, maxImageCount:10, maxVideoCount:1, note:'支持文生、1-10 张关键帧图生及单视频续写；默认生成同步音频。' },
   { model:'MiniMax-Hailuo-02', label:'MiniMax Hailuo 02', resolutions:['768p','1080p'], defaultResolution:'768p', durations:[5,10] },
   { model:'MiniMax-Hailuo-2.3', label:'MiniMax Hailuo 2.3', resolutions:['768p','1080p'], defaultResolution:'768p', durations:[6,10], defaultDuration:6 },
   { model:'MiniMax-Hailuo-2.3-Fast', label:'MiniMax Hailuo 2.3 Fast', resolutions:['768p','1080p'], defaultResolution:'768p', durations:[6,10], defaultDuration:6 },
@@ -6103,7 +6104,7 @@ registerApimartVideoUiRules([
   { model:'pixverse-v6', label:'Pixverse v6', resolutions:['360p','540p','720p','1080p'], defaultResolution:'540p', aspects:['16:9','4:3','1:1','3:4','9:16','2:3','3:2','21:9'], durationMin:1, durationMax:15, defaultDuration:5, firstLastDurations:[5,8], maxImageCount:7 }
 ]);
 const APIMART_VIDEO_MODEL_GROUPS_UI = [
-  ['Omni / Google', ['gemini-omni-flash-preview','omni-flash-ext','veo3.1-fast','veo3.1-quality','veo3.1-lite']],
+  ['Omni / Google / FLUX', ['gemini-omni-flash-preview','omni-flash-ext','veo3.1-fast','veo3.1-quality','veo3.1-lite','veo3.1-fast-official','veo3.1-quality-official','flux-3-video']],
   ['Doubao Seedance', ['doubao-seedance-1-0-pro-fast','doubao-seedance-1-0-pro-quality','doubao-seedance-1-5-pro','doubao-seedance-2.0','doubao-seedance-2.0-fast','doubao-seedance-2.0-mini']],
   ['Sora / MiniMax / SkyReels', ['sora-2','sora-2-pro','MiniMax-Hailuo-02','MiniMax-Hailuo-2.3','MiniMax-Hailuo-2.3-Fast','MiniMax-H3','skyreels-v4-fast','skyreels-v4-std']],
   ['HappyHorse / Wan', ['happyhorse-1.0','happyhorse-1.1','wan2.5-preview','wan2.6','wan2.7','wan2.7-r2v','wan2.7-videoedit']],
