@@ -33,6 +33,12 @@ let previewStart = {x:0,y:0,px:0,py:0};
 let previewTransformRaf = 0;
 let isLocalClient = true;
 let isPublicClient = false;
+let apimartBalanceState = { status:'idle', user:null, token:null, queriedAt:'', error:'' };
+let apimartBalanceRequest = null;
+let apimartBalanceRequestKey = '';
+let apimartBalanceRefreshQueued = false;
+let apimartBalanceRefreshTimer = null;
+let apimartBalancePollTimer = null;
 function isLanDesktopClient(){ return !!(window.lanClient && typeof window.lanClient.getShortcuts === 'function' && typeof window.lanClient.saveShortcuts === 'function'); }
 function canEditShortcutSettings(){ return isLocalClient || isLanDesktopClient(); }
 const publicBatchUploadPromises = new WeakMap();
@@ -216,6 +222,159 @@ async function api(path, opts = {}) {
   const data = await res.json();
   if(data && data.ok === false) throw new Error(data.error || '操作失败');
   return data;
+}
+
+function apimartBalanceKeyForCurrentVisitor(){
+  if(currentImagePlatform() === 'apimart') return String($('#apiKey')?.value || '').trim();
+  return String(loadClientConfig('apimart')?.api_key || '').trim();
+}
+function apimartBalanceIsUnlimited(balance = null){
+  return !!(balance?.unlimited_quota || Number(balance?.remain_balance) === -1 || Number(balance?.remain_credits) === -1);
+}
+function formatApimartBalanceValue(value, unlimited = false){
+  if(unlimited || Number(value) === -1) return '不限';
+  const number = Number(value);
+  if(!Number.isFinite(number)) return '--';
+  return new Intl.NumberFormat('zh-CN', {maximumFractionDigits:4}).format(number);
+}
+function renderApimartBalanceDetails(){
+  const user = apimartBalanceState.user;
+  const token = apimartBalanceState.token;
+  const setText = (selector, value) => { const el=$(selector); if(el) el.textContent=value; };
+  const setGroup = (prefix, balance) => {
+    const unlimited = apimartBalanceIsUnlimited(balance);
+    setText(`#${prefix}RemainBalance`, formatApimartBalanceValue(balance?.remain_balance, unlimited));
+    setText(`#${prefix}RemainCredits`, formatApimartBalanceValue(balance?.remain_credits, unlimited));
+    setText(`#${prefix}UsedBalance`, formatApimartBalanceValue(balance?.used_balance));
+    setText(`#${prefix}UsedCredits`, formatApimartBalanceValue(balance?.used_credits));
+    setText(`#${prefix}Quota`, unlimited ? '不限' : '按账户规则');
+  };
+  setGroup('apiBalanceUser', user);
+  setGroup('apiBalanceToken', token);
+  setText('#apiBalanceUpdatedAt', apimartBalanceState.queriedAt ? `最近更新：${new Date(apimartBalanceState.queriedAt).toLocaleString('zh-CN')}` : '尚未查询');
+  const error = $('#apiBalanceError');
+  if(error){ error.textContent = apimartBalanceState.error || ''; error.classList.toggle('show', !!apimartBalanceState.error); }
+  const refresh = $('#apiBalanceRefreshBtn');
+  if(refresh){ refresh.disabled = apimartBalanceState.status === 'loading'; refresh.textContent = apimartBalanceState.status === 'loading' ? '查询中...' : '刷新余额'; }
+}
+function renderApimartBalanceState(){
+  const btn = $('#apiState');
+  const value = $('#apiBalanceValue');
+  if(!btn || !value) return;
+  const user = apimartBalanceState.user;
+  const unlimited = apimartBalanceIsUnlimited(user);
+  let text = '未配置';
+  let title = '请先填写当前设备自己的 APIMart API Key';
+  if(apimartBalanceState.status === 'loading'){
+    text = user ? formatApimartBalanceValue(user.remain_balance, unlimited) : '查询中';
+    title = '正在查询 APIMart 用户账户总体余额';
+  }else if(apimartBalanceState.status === 'ready' && user){
+    text = formatApimartBalanceValue(user.remain_balance, unlimited);
+    title = unlimited ? 'APIMart 用户账户余额：不限。点击查看详情与当前 API Key 用量。' : `APIMart 用户账户剩余余额：${text}。点击查看详情与当前 API Key 用量。`;
+  }else if(apimartBalanceState.status === 'error'){
+    text = '查询失败';
+    title = apimartBalanceState.error || '余额查询失败，点击重试';
+  }
+  value.textContent = text;
+  btn.title = title;
+  btn.classList.toggle('is-loading', apimartBalanceState.status === 'loading');
+  btn.classList.toggle('has-error', apimartBalanceState.status === 'error');
+  btn.classList.toggle('has-value', apimartBalanceState.status === 'ready');
+  renderApimartBalanceDetails();
+}
+function ensureApimartBalanceModal(){
+  let modal = $('#apiBalanceModal');
+  if(modal) return modal;
+  modal = document.createElement('div');
+  modal.id = 'apiBalanceModal';
+  modal.className = 'modal api-balance-modal';
+  modal.setAttribute('aria-hidden', 'true');
+  modal.innerHTML = `
+    <div class="api-balance-dialog glass-modal" role="dialog" aria-modal="true" aria-labelledby="apiBalanceTitle">
+      <div class="api-balance-head"><div><div class="api-balance-kicker">APIMart</div><h2 id="apiBalanceTitle">API 账户余额</h2><p id="apiBalanceUpdatedAt">尚未查询</p></div><button class="api-balance-close" id="apiBalanceCloseBtn" type="button" title="关闭" aria-label="关闭">×</button></div>
+      <section class="api-balance-section"><div class="api-balance-section-head"><div><strong>用户账户总体余额</strong><span>整个用户账户 · /v1/user/balance</span></div><b id="apiBalanceUserRemainBalance">--</b></div><div class="api-balance-grid"><div><span>剩余积分</span><strong id="apiBalanceUserRemainCredits">--</strong></div><div><span>已用余额</span><strong id="apiBalanceUserUsedBalance">--</strong></div><div><span>已用积分</span><strong id="apiBalanceUserUsedCredits">--</strong></div><div><span>账户额度</span><strong id="apiBalanceUserQuota">--</strong></div></div></section>
+      <section class="api-balance-section token"><div class="api-balance-section-head"><div><strong>当前 API Key 用量</strong><span>单个令牌 · /v1/balance</span></div><b id="apiBalanceTokenRemainBalance">--</b></div><div class="api-balance-grid"><div><span>剩余积分</span><strong id="apiBalanceTokenRemainCredits">--</strong></div><div><span>已用余额</span><strong id="apiBalanceTokenUsedBalance">--</strong></div><div><span>已用积分</span><strong id="apiBalanceTokenUsedCredits">--</strong></div><div><span>令牌额度</span><strong id="apiBalanceTokenQuota">--</strong></div></div></section>
+      <div class="api-balance-error" id="apiBalanceError" role="status"></div>
+      <div class="api-balance-actions"><span>仅使用当前设备填写的 API Key 查询，不会保存或展示密钥。</span><button class="primary" id="apiBalanceRefreshBtn" type="button">刷新余额</button></div>
+    </div>`;
+  document.body.appendChild(modal);
+  modal.addEventListener('click', e=>{ if(e.target === modal) closeApimartBalanceModal(); });
+  $('#apiBalanceCloseBtn')?.addEventListener('click', closeApimartBalanceModal);
+  $('#apiBalanceRefreshBtn')?.addEventListener('click', ()=>refreshApimartBalance({manual:true}));
+  return modal;
+}
+function openApimartBalanceModal(){
+  const modal = ensureApimartBalanceModal();
+  modal.classList.add('active');
+  modal.setAttribute('aria-hidden', 'false');
+  renderApimartBalanceState();
+  refreshApimartBalance({manual:true});
+}
+function closeApimartBalanceModal(){
+  const modal = $('#apiBalanceModal');
+  modal?.classList.remove('active');
+  modal?.setAttribute('aria-hidden', 'true');
+}
+async function refreshApimartBalance(opts = {}){
+  const apiKey = apimartBalanceKeyForCurrentVisitor();
+  if(!apiKey){
+    apimartBalanceState = {status:'missing', user:null, token:null, queriedAt:'', error:''};
+    renderApimartBalanceState();
+    if(opts.manual) toast('请先填写当前设备自己的 APIMart API Key');
+    return null;
+  }
+  if(apimartBalanceRequest){
+    if(apiKey !== apimartBalanceRequestKey) apimartBalanceRefreshQueued = true;
+    return apimartBalanceRequest;
+  }
+  const queriedKey = apiKey;
+  apimartBalanceRequestKey = queriedKey;
+  apimartBalanceState = {...apimartBalanceState, status:'loading', error:''};
+  renderApimartBalanceState();
+  apimartBalanceRequest = api('/api/apimart/balance', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({api_key:apiKey})})
+    .then(result=>{
+      if(queriedKey !== apimartBalanceKeyForCurrentVisitor()){
+        apimartBalanceRefreshQueued = true;
+        return null;
+      }
+      apimartBalanceState = {status:'ready', user:result.user || null, token:result.token || null, queriedAt:result.queried_at || new Date().toISOString(), error:''};
+      renderApimartBalanceState();
+      return result;
+    })
+    .catch(error=>{
+      if(queriedKey !== apimartBalanceKeyForCurrentVisitor()){
+        apimartBalanceRefreshQueued = true;
+        return null;
+      }
+      apimartBalanceState = {...apimartBalanceState, status:'error', error:String(error?.message || error || '余额查询失败')};
+      renderApimartBalanceState();
+      if(opts.manual) toast(`余额查询失败：${apimartBalanceState.error}`);
+      return null;
+    })
+    .finally(()=>{
+      apimartBalanceRequest = null;
+      apimartBalanceRequestKey = '';
+      if(apimartBalanceRefreshQueued){
+        apimartBalanceRefreshQueued = false;
+        scheduleApimartBalanceRefresh(0);
+      }
+    });
+  return apimartBalanceRequest;
+}
+function scheduleApimartBalanceRefresh(delay = 900){
+  clearTimeout(apimartBalanceRefreshTimer);
+  apimartBalanceRefreshTimer = setTimeout(()=>refreshApimartBalance(), delay);
+}
+function setupApimartBalance(){
+  const btn = $('#apiState');
+  if(!btn || btn.dataset.bound === '1') return;
+  btn.dataset.bound = '1';
+  btn.addEventListener('click', openApimartBalanceModal);
+  $('#apiKey')?.addEventListener('input', ()=>scheduleApimartBalanceRefresh(1100));
+  $('#imageApiPlatformSwitch')?.addEventListener('click', ()=>scheduleApimartBalanceRefresh(180));
+  if(apimartBalancePollTimer) clearInterval(apimartBalancePollTimer);
+  apimartBalancePollTimer = setInterval(()=>{ if(!document.hidden) refreshApimartBalance(); }, 120000);
+  scheduleApimartBalanceRefresh(120);
 }
 
 function bindSoftwareUpdateModal(modal){
@@ -3916,7 +4075,6 @@ async function loadStatus(){
   const s = await api('/api/status');
   if(isVideoRealtimeMode() && s.video_stats) updateRightPanelStats(s.video_stats, true);
   else updateRightPanelStats(s, false);
-  $('#apiState').textContent = `API：${s.api.status}`;
   $('#runningState').textContent = `运行：${s.running}`;
   $('#apiMetricStatus').textContent = s.api.status;
   const hc = s.host_cumulative || {};
@@ -9457,6 +9615,7 @@ async function startup(){
     loadPreviewBgSettings();
     applyPreviewBgSettings();
     await loadConfig();
+    setupApimartBalance();
     calcEstimate();
     await refreshAll();
     setupVideoPage();

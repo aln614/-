@@ -2501,7 +2501,7 @@ function isLikelyEmptyApimartResponse(json) {
   if (isPlainEmptyObject(json)) return true;
   if (typeof json === 'string' && !json.trim()) return true;
   if (json && typeof json === 'object') {
-    const hasKnownField = ['code','data','task_id','taskId','taskID','post_id','postId','postID','id','status','message','msg','error','raw','result'].some(k => Object.prototype.hasOwnProperty.call(json, k));
+    const hasKnownField = ['code','data','task_id','taskId','taskID','post_id','postId','postID','id','status','message','msg','error','raw','result','success','remain_balance','remain_credits','used_balance','used_credits','unlimited_quota'].some(k => Object.prototype.hasOwnProperty.call(json, k));
     return !hasKnownField;
   }
   return false;
@@ -2700,6 +2700,35 @@ async function getJsonApimart(endpoint, apiKey, timeoutMs=120000) {
   const target = `https://api.apimart.ai/v1${endpoint}`;
   const json = await apimartJsonWithFallback(target, apiKey, null, 'GET', timeoutMs);
   return validateApimartJsonResponse(json, `APIMart GET ${endpoint}`);
+}
+
+function assertApimartBalanceApiKey(apiKey = '') {
+  const key = String(apiKey || '').trim();
+  if (!key) throw invalidBatchApiKey('请先在当前设备填写 APIMart API Key，再查询余额');
+  if (looksLikeApiUrl(key)) throw invalidBatchApiKey('API Key 填写错误：当前内容是网址，请填写 APIMart API Key');
+  if (/\s/.test(key) || key.length < 8) throw invalidBatchApiKey('API Key 填写错误，请填写完整且不含空格的 APIMart API Key');
+  return key;
+}
+
+function normalizeApimartBalanceResponse(payload = {}) {
+  const root = payload && typeof payload === 'object' ? payload : {};
+  const data = root.data && typeof root.data === 'object' && !Array.isArray(root.data) ? root.data : root;
+  const pick = (name) => data[name] !== undefined ? data[name] : root[name];
+  const numberOrNull = (value) => {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+  };
+  const normalized = {
+    success: pick('success') !== false,
+    message: String(pick('message') || pick('msg') || ''),
+    remain_balance: numberOrNull(pick('remain_balance')),
+    remain_credits: numberOrNull(pick('remain_credits')),
+    used_balance: numberOrNull(pick('used_balance')),
+    used_credits: numberOrNull(pick('used_credits')),
+    unlimited_quota: pick('unlimited_quota') === true || String(pick('unlimited_quota')).toLowerCase() === 'true'
+  };
+  if (!normalized.success) throw new Error(normalized.message || extractApimartErrorMessage(root) || 'APIMart 余额查询失败');
+  return normalized;
 }
 
 function flattenApimartTaskItems(resp) {
@@ -7496,6 +7525,22 @@ async function apiHandler(req, res, parsed) {
       const runtime = { port_changed: oldPort !== newPort };
       if (runtime.port_changed) setTimeout(()=>startServer(newPort), 900);
       return send(res, {ok:true, config:{...next, ...urls(next), local_runtime_data_dir:DATA_ROOT, output_runtime_data_dir:runtimeMirrorDir(next), local_hot_cache_dir:LOCAL_HOT_CACHE_ROOT, local_hot_cache_max_mb:Math.round(LOCAL_HOT_CACHE_MAX_BYTES / 1024 / 1024)}, runtime});
+    }
+    if (method === 'POST' && p === '/api/apimart/balance') {
+      // Never read a host key as a fallback here. LAN/public visitors query only
+      // the key they supplied in this request, so their API credentials stay isolated.
+      const body = await readBody(req);
+      const apiKey = assertApimartBalanceApiKey(body.api_key);
+      const [tokenPayload, userPayload] = await Promise.all([
+        getJsonApimart('/balance', apiKey, 15000),
+        getJsonApimart('/user/balance', apiKey, 15000)
+      ]);
+      return send(res, {
+        ok: true,
+        token: normalizeApimartBalanceResponse(tokenPayload),
+        user: normalizeApimartBalanceResponse(userPayload),
+        queried_at: nowISO()
+      });
     }
     if (method === 'POST' && p === '/api/update/check') {
       if (!local) return send(res, {ok:false,error:'只有主机端可以检查软件更新'}, 403);

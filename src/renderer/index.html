@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>TENYING_AI 1.0</title>
-  <link rel="stylesheet" href="/static/style.css?v=1.0.43" />
+  <link rel="stylesheet" href="/static/style.css?v=1.0.60" />
 </head>
 <body>
   <div class="app-shell">
@@ -21,7 +21,7 @@
         <button class="pill agent-pill" id="agentBtn" title="打开 Agent">Agent</button>
         <button class="pill asset-library-pill" id="assetLibraryBtn" title="打开资产库">资产库</button>
         <button class="pill announce-pill" id="announcementBtn" title="查看 APIMart 公告">公告<span id="announcementBadge" class="announce-badge">0</span></button>
-        <span class="pill" id="apiState">API：检查中</span>
+        <button class="pill api-balance-pill" id="apiState" type="button" title="查看 APIMart 账户余额与当前 API Key 用量"><span class="api-balance-label">API余额</span><strong id="apiBalanceValue">查询中</strong></button>
         <span class="pill" id="runningState">运行：0</span>
         <span class="pill" id="lanState">局域网：未开启</span>
       </div>
@@ -883,6 +883,6 @@
       </div>
     </div>
   </div>
-  <script src="/static/app.js?v=1.0.43"></script>
+  <script src="/static/app.js?v=1.0.60"></script>
 </body>
 </html>
