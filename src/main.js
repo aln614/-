@@ -7531,13 +7531,16 @@ async function apiHandler(req, res, parsed) {
       // the key they supplied in this request, so their API credentials stay isolated.
       const body = await readBody(req);
       const apiKey = assertApimartBalanceApiKey(body.api_key);
-      const [tokenPayload, userPayload] = await Promise.all([
-        getJsonApimart('/balance', apiKey, 15000),
-        getJsonApimart('/user/balance', apiKey, 15000)
-      ]);
+      const includeToken = body.include_token === true || body.include_token === 'true';
+      const [userPayload, tokenPayload] = includeToken
+        ? await Promise.all([
+          getJsonApimart('/user/balance', apiKey, 15000),
+          getJsonApimart('/balance', apiKey, 15000)
+        ])
+        : [await getJsonApimart('/user/balance', apiKey, 15000), null];
       return send(res, {
         ok: true,
-        token: normalizeApimartBalanceResponse(tokenPayload),
+        token: tokenPayload ? normalizeApimartBalanceResponse(tokenPayload) : null,
         user: normalizeApimartBalanceResponse(userPayload),
         queried_at: nowISO()
       });

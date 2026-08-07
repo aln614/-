@@ -153,7 +153,7 @@ if (!Array.isArray(describeNormalizerSandbox.describeNormalized) || describeNorm
 if (!mainJs.includes('texts = normalizeDescribePromptTexts(texts.length ? texts : pickMidjourneyTextOutputs(raw))')) fail('Describe recent-history endpoint does not normalize legacy text outputs');
 if (!mainJs.includes('error_message: errorMessage') || !mainJs.includes('fail_reason: errorMessage')) fail('Describe recent-history endpoint does not expose terminal failure reasons');
 if (!mainJs.includes("appCode ? 'no-cache, no-store, must-revalidate'")) fail('Updated renderer code can remain hidden behind stale browser caching');
-if (!indexHtml.includes('/static/app.js?v=1.0.60') || !indexHtml.includes('/static/style.css?v=1.0.60')) fail('Renderer assets do not carry the current release cache key');
+if (!indexHtml.includes('/static/app.js?v=1.0.61') || !indexHtml.includes('/static/style.css?v=1.0.61')) fail('Renderer assets do not carry the current release cache key');
 const describeResultTextStart = appJs.indexOf('function mjDescribeResultText');
 const describeResultTextEnd = appJs.indexOf('\nasync function collectMjFormData', describeResultTextStart);
 if (describeResultTextStart < 0 || describeResultTextEnd < 0) fail('Describe terminal-state text renderer is missing');

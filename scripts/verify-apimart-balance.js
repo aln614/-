@@ -13,12 +13,15 @@ function assert(value, message) {
 assert(mainJs.includes("p === '/api/apimart/balance'"), 'APIMart balance route is missing.');
 assert(mainJs.includes("getJsonApimart('/balance', apiKey, 15000)"), 'Token balance endpoint is not queried.');
 assert(mainJs.includes("getJsonApimart('/user/balance', apiKey, 15000)"), 'User balance endpoint is not queried.');
+assert(mainJs.includes('const includeToken = body.include_token'), 'Header refresh cannot limit polling to the user-balance endpoint.');
 assert(mainJs.includes('assertApimartBalanceApiKey(body.api_key)'), 'Balance route must require the caller-supplied API Key.');
 assert(mainJs.includes('normalizeApimartBalanceResponse'), 'Balance response normalization is missing.');
 assert(rendererJs.includes('function refreshApimartBalance'), 'Renderer balance refresh logic is missing.');
 assert(rendererJs.includes('function ensureApimartBalanceModal'), 'Renderer balance detail modal is missing.');
 assert(rendererJs.includes("api('/api/apimart/balance'"), 'Renderer does not call the balance endpoint.');
 assert(rendererJs.includes('apimartBalancePollTimer'), 'Balance periodic refresh is missing.');
+assert(rendererJs.includes('APIMART_BALANCE_POLL_INTERVAL_MS = 15000'), 'Balance refresh is not configured for real-time polling.');
+assert(rendererJs.includes('balanceTaskSignature'), 'Balance does not refresh immediately when task state changes.');
 assert(indexHtml.includes('id="apiState"') && indexHtml.includes('API余额'), 'Header API balance command is missing.');
 
 console.log('[verify-apimart-balance] OK: user and token balance monitoring are wired with per-device API Key isolation.');

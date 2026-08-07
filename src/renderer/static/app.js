@@ -39,6 +39,8 @@ let apimartBalanceRequestKey = '';
 let apimartBalanceRefreshQueued = false;
 let apimartBalanceRefreshTimer = null;
 let apimartBalancePollTimer = null;
+let apimartBalanceLastTaskSignature = '';
+const APIMART_BALANCE_POLL_INTERVAL_MS = 15000;
 function isLanDesktopClient(){ return !!(window.lanClient && typeof window.lanClient.getShortcuts === 'function' && typeof window.lanClient.saveShortcuts === 'function'); }
 function canEditShortcutSettings(){ return isLocalClient || isLanDesktopClient(); }
 const publicBatchUploadPromises = new WeakMap();
@@ -331,13 +333,14 @@ async function refreshApimartBalance(opts = {}){
   apimartBalanceRequestKey = queriedKey;
   apimartBalanceState = {...apimartBalanceState, status:'loading', error:''};
   renderApimartBalanceState();
-  apimartBalanceRequest = api('/api/apimart/balance', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({api_key:apiKey})})
+  const includeToken = opts.details === true || $('#apiBalanceModal')?.classList.contains('active');
+  apimartBalanceRequest = api('/api/apimart/balance', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({api_key:apiKey, include_token:includeToken})})
     .then(result=>{
       if(queriedKey !== apimartBalanceKeyForCurrentVisitor()){
         apimartBalanceRefreshQueued = true;
         return null;
       }
-      apimartBalanceState = {status:'ready', user:result.user || null, token:result.token || null, queriedAt:result.queried_at || new Date().toISOString(), error:''};
+      apimartBalanceState = {status:'ready', user:result.user || null, token:result.token || apimartBalanceState.token || null, queriedAt:result.queried_at || new Date().toISOString(), error:''};
       renderApimartBalanceState();
       return result;
     })
@@ -370,10 +373,16 @@ function setupApimartBalance(){
   if(!btn || btn.dataset.bound === '1') return;
   btn.dataset.bound = '1';
   btn.addEventListener('click', openApimartBalanceModal);
-  $('#apiKey')?.addEventListener('input', ()=>scheduleApimartBalanceRefresh(1100));
-  $('#imageApiPlatformSwitch')?.addEventListener('click', ()=>scheduleApimartBalanceRefresh(180));
+  $('#apiKey')?.addEventListener('input', ()=>{
+    apimartBalanceState = {...apimartBalanceState, token:null};
+    scheduleApimartBalanceRefresh(1100);
+  });
+  $('#imageApiPlatformSwitch')?.addEventListener('click', ()=>{
+    apimartBalanceState = {...apimartBalanceState, token:null};
+    scheduleApimartBalanceRefresh(180);
+  });
   if(apimartBalancePollTimer) clearInterval(apimartBalancePollTimer);
-  apimartBalancePollTimer = setInterval(()=>{ if(!document.hidden) refreshApimartBalance(); }, 120000);
+  apimartBalancePollTimer = setInterval(()=>{ if(!document.hidden) refreshApimartBalance(); }, APIMART_BALANCE_POLL_INTERVAL_MS);
   scheduleApimartBalanceRefresh(120);
 }
 
@@ -4073,6 +4082,9 @@ function updateRightPanelStats(data, video=false){
 }
 async function loadStatus(){
   const s = await api('/api/status');
+  const balanceTaskSignature = [s.total, s.done, s.fail, s.running, s.video_stats?.total, s.video_stats?.done, s.video_stats?.fail, s.video_stats?.running].join('|');
+  if(apimartBalanceLastTaskSignature && balanceTaskSignature !== apimartBalanceLastTaskSignature) scheduleApimartBalanceRefresh(180);
+  apimartBalanceLastTaskSignature = balanceTaskSignature;
   if(isVideoRealtimeMode() && s.video_stats) updateRightPanelStats(s.video_stats, true);
   else updateRightPanelStats(s, false);
   $('#runningState').textContent = `运行：${s.running}`;
