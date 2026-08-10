@@ -5032,6 +5032,16 @@ function assetPublicRow(a, local=false, ownerId='', sharedGroupSet=new Set()) {
     thumb_url: a.thumb_path ? `/file?path=${encodeURIComponent(a.thumb_path)}` : ''
   };
 }
+function sortAssetRows(rows = []) {
+  return [...rows].sort((a, b) => {
+    const aOrder = Number(a && a.sort_order);
+    const bOrder = Number(b && b.sort_order);
+    if (Number.isFinite(aOrder) && Number.isFinite(bOrder) && aOrder !== bOrder) return aOrder - bOrder;
+    if (Number.isFinite(aOrder) && !Number.isFinite(bOrder)) return -1;
+    if (!Number.isFinite(aOrder) && Number.isFinite(bOrder)) return 1;
+    return String(a?.created_at || '').localeCompare(String(b?.created_at || ''));
+  });
+}
 
 function streamAssetSource(assetId, local, cfg, deviceOwner, req, res, download=false) {
   const ownerId = assetClientId(local, deviceOwner);
@@ -5173,7 +5183,7 @@ function assetUpload(body, local, cfg, deviceOwner) {
       }
     }
     const stat = fs.statSync(localPath);
-    const row = { id, owner_client_id:ownerId, owner_name:ownerId === 'host' ? '主机' : ownerId, group_id:groupId, name:original, original_name:original, type, mime_type:mime, size:stat.size, local_path:localPath, thumb_path:thumbPath, created_at:nowISO(), updated_at:nowISO(), shared:false, shared_at:null, shared_by:null, tags:[], note:'' };
+    const row = { id, owner_client_id:ownerId, owner_name:ownerId === 'host' ? '主机' : ownerId, group_id:groupId, name:original, original_name:original, type, mime_type:mime, size:stat.size, local_path:localPath, thumb_path:thumbPath, sort_order:Date.now() + saved.length, created_at:nowISO(), updated_at:nowISO(), shared:false, shared_at:null, shared_by:null, tags:[], note:'' };
     db.assets.push(row); saved.push(assetPublicRow(row, local, ownerId, assetSharedGroupIds(db)));
   }
   writeAssetDb(db, cfg);
@@ -5185,9 +5195,9 @@ function assetList(groupId, local, cfg, deviceOwner, search='') {
   const q = String(search || '').trim().toLowerCase();
   const sharedGroupSet = assetSharedGroupIds(db);
   const scopeIds = assetDescendantGroupIds(db, groupId);
-  const assets = visibleAssets(db, local, ownerId)
+  const assets = sortAssetRows(visibleAssets(db, local, ownerId)
     .filter(a => (!groupId || scopeIds.has(a.group_id)) && (!q || String(a.name || '').toLowerCase().includes(q)))
-    .map(a => assetPublicRow(a, local, ownerId, sharedGroupSet));
+  ).map(a => assetPublicRow(a, local, ownerId, sharedGroupSet));
   return {ok:true, assets};
 }
 function assetDelete(body, local, cfg, deviceOwner) {
@@ -5267,10 +5277,34 @@ function assetMove(body, local, cfg, deviceOwner) {
       }
     }
     a.group_id = target.id;
+    a.sort_order = Date.now() + count;
     a.updated_at = nowISO();
     count++;
   });
   writeAssetDb(db, cfg); return {ok:true, count};
+}
+function assetReorder(body, local, cfg, deviceOwner) {
+  const ownerId = assetClientId(local, deviceOwner);
+  const db = readAssetDb(cfg);
+  const id = String(body.id || '').trim();
+  const beforeId = String(body.before_id || '').trim();
+  const source = db.assets.find(a => a.id === id);
+  if (!source) throw new Error('资产不存在');
+  if (!canManageAssetRow(source, local, ownerId)) throw new Error('没有权限操作该资产');
+  const siblings = sortAssetRows(db.assets.filter(a => a.group_id === source.group_id));
+  const before = beforeId ? siblings.find(a => a.id === beforeId) : null;
+  if (beforeId && !before) throw new Error('排序目标不存在或不在同一分组');
+  if (before && !canManageAssetRow(before, local, ownerId)) throw new Error('没有权限调整共享素材的排序');
+  const reordered = siblings.filter(a => a.id !== source.id);
+  const insertAt = before ? Math.max(0, reordered.findIndex(a => a.id === before.id)) : reordered.length;
+  reordered.splice(insertAt < 0 ? reordered.length : insertAt, 0, source);
+  const now = nowISO();
+  reordered.forEach((asset, index) => {
+    asset.sort_order = (index + 1) * 1000;
+    if (asset.id === source.id) asset.updated_at = now;
+  });
+  writeAssetDb(db, cfg);
+  return {ok:true, id:source.id, before_id:before ? before.id : '', group_id:source.group_id};
 }
 async function assetCopySource(body, local, cfg, deviceOwner) {
   if(!local) return {ok:false,error:'远程访问端无法直接操作主机剪贴板，请使用复制资产链接或下载'};
@@ -7625,6 +7659,7 @@ async function apiHandler(req, res, parsed) {
     if (method === 'POST' && p === '/api/assets/rename') { const body=await readBody(req); return send(res, assetRename(body, local, cfg, deviceOwner)); }
     if (method === 'POST' && p === '/api/assets/update') { const body=await readBody(req); return send(res, assetUpdate(body, local, cfg, deviceOwner)); }
     if (method === 'POST' && p === '/api/assets/move') { const body=await readBody(req); return send(res, assetMove(body, local, cfg, deviceOwner)); }
+    if (method === 'POST' && p === '/api/assets/reorder') { const body=await readBody(req); return send(res, assetReorder(body, local, cfg, deviceOwner)); }
     if (method === 'POST' && p === '/api/assets/copy_source') { const body=await readBody(req); return send(res, await assetCopySource(body, local, cfg, deviceOwner)); }
     if (method === 'POST' && p === '/api/assets/share') { const body=await readBody(req); return send(res, assetShare(body, local, cfg, deviceOwner, true)); }
     if (method === 'POST' && p === '/api/assets/unshare') { const body=await readBody(req); return send(res, assetShare(body, local, cfg, deviceOwner, false)); }

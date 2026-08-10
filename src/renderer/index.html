@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>TENYING_AI 1.0</title>
-  <link rel="stylesheet" href="/static/style.css?v=1.0.62" />
+  <link rel="stylesheet" href="/static/style.css?v=1.0.64" />
 </head>
 <body>
   <div class="app-shell">
@@ -634,7 +634,14 @@
         <div class="prompt-library-actions"><button class="secondary" id="newPromptLibraryTemplateBtn">+ 新建模板</button><button class="chat-window-min" id="minimizePromptLibraryWindow" title="缩小成图标"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg></button><button class="chat-window-close" id="closePromptLibraryWindow" title="关闭"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg></button></div>
       </div>
       <div class="prompt-library-body">
-        <aside class="prompt-library-groups"><div id="promptLibraryGroups"></div><button class="secondary" id="newPromptLibraryGroupBtn">+ 新建分组</button></aside>
+        <aside class="prompt-library-groups" id="promptLibraryGroupsSidebar">
+          <button class="prompt-sidebar-rail" id="promptSidebarToggleBtn" type="button" title="展开 / 折叠分类">分类</button>
+          <div class="prompt-sidebar-content">
+            <div class="prompt-sidebar-title"><b>分类</b><button class="prompt-sidebar-pin" id="promptSidebarPinBtn" type="button" title="钉住 / 取消钉住分类"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3l7 7-3 1-4 4 1 5-1 1-5-5-4 4-1-1 4-4-5-5 1-1 5 1 4-4 1-3z" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" stroke-linecap="round"/></svg></button></div>
+            <div id="promptLibraryGroups"></div>
+            <button class="secondary" id="newPromptLibraryGroupBtn">+ 新建分组</button>
+          </div>
+        </aside>
         <section class="prompt-library-main">
           <div class="prompt-library-list" id="promptLibraryList"></div>
           <div class="prompt-library-editor" id="promptLibraryEditor">
@@ -883,6 +890,6 @@
       </div>
     </div>
   </div>
-  <script src="/static/app.js?v=1.0.62"></script>
+  <script src="/static/app.js?v=1.0.64"></script>
 </body>
 </html>

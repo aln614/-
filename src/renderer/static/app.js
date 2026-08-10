@@ -2465,7 +2465,7 @@ const AGENT_PROGRAM_API_ALLOWLIST = new Set([
   '/api/video_submit','/api/video_batch_submit','/api/video_delete_selected','/api/video_export_selected',
   '/api/mj_submit','/api/prompt_library/group','/api/prompt_library/template',
   '/api/assets/groups/create','/api/assets/groups/rename','/api/assets/groups/delete','/api/assets/upload',
-  '/api/assets/delete','/api/assets/rename','/api/assets/update','/api/assets/move','/api/assets/share',
+  '/api/assets/delete','/api/assets/rename','/api/assets/update','/api/assets/move','/api/assets/reorder','/api/assets/share',
   '/api/assets/unshare','/api/assets/copy_source','/api/assets/export_zip','/api/config',
   '/api/clear_all_cache'
 ]);
@@ -8206,16 +8206,26 @@ function setupPromptLibraryHardBindings(){
 }
 
 // V10.3: Prompt Library floating window.
+const PROMPT_LIBRARY_SIDEBAR_PIN_KEY = 'LAIG_PROMPT_LIBRARY_SIDEBAR_PINNED';
 let promptLibraryData = { groups:[], templates:[], can_write:false, can_manage:false };
 let promptLibraryCurrentGroup = 'all';
 let promptLibraryEditingId = '';
+let promptLibrarySidebarPinned = localStorage.getItem(PROMPT_LIBRARY_SIDEBAR_PIN_KEY) === '1';
 function plCanWrite(){ return !!promptLibraryData.can_write; }
 function plGroups(){ return (promptLibraryData.groups || []).filter(g=>g.id !== 'all' || true); }
 async function loadPromptLibrary(){
   try{ promptLibraryData = await api('/api/prompt_library'); renderPromptLibrary(); }
   catch(e){ toast(e.message || '提示词库加载失败'); }
 }
-function openPromptLibrary(){ $('#promptLibraryLayer')?.classList.add('active'); $('#promptLibraryOrb')?.classList.remove('show'); bringFloatingLayer('#promptLibraryLayer', '#promptLibraryWindow'); loadPromptLibrary(); }
+function openPromptLibrary(){
+  $('#promptLibraryLayer')?.classList.add('active');
+  $('#promptLibraryOrb')?.classList.remove('show');
+  const win = $('#promptLibraryWindow');
+  win?.classList.toggle('prompt-sidebar-pinned', promptLibrarySidebarPinned);
+  win?.classList.toggle('prompt-sidebar-collapsed', !promptLibrarySidebarPinned);
+  bringFloatingLayer('#promptLibraryLayer', '#promptLibraryWindow');
+  loadPromptLibrary();
+}
 function closePromptLibrary(){ $('#promptLibraryLayer')?.classList.remove('active'); $('#promptLibraryOrb')?.classList.remove('show'); }
 function minimizePromptLibrary(){ $('#promptLibraryLayer')?.classList.remove('active'); $('#promptLibraryOrb')?.classList.add('show'); }
 function renderPromptLibrary(){
@@ -8289,6 +8299,9 @@ function renderPromptLibrary(){
     if(act==='delete'){ if(confirm('确定删除这个提示词模板？')){ await api('/api/prompt_library/template',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:t.id, action:'delete'})}); await loadPromptLibrary(); } }
   }));
   $('#newPromptLibraryTemplateBtn')?.classList.toggle('hidden', !canWrite); $('#newPromptLibraryGroupBtn')?.classList.toggle('hidden', !canWrite);
+  $('#promptLibraryWindow')?.classList.toggle('prompt-sidebar-pinned', promptLibrarySidebarPinned);
+  $('#promptLibraryWindow')?.classList.toggle('prompt-sidebar-collapsed', !promptLibrarySidebarPinned);
+  $('#promptSidebarPinBtn')?.classList.toggle('active', promptLibrarySidebarPinned);
 }
 function showPromptLibraryEditor(t={}){
   promptLibraryEditingId=t.id||''; $('#promptLibraryEditor')?.classList.add('show'); $('#promptLibraryEditorTitle').textContent=t.id?'编辑模板':'新建模板';
@@ -8305,6 +8318,27 @@ function setupPromptLibrary(){
   $('#newPromptLibraryTemplateBtn')?.addEventListener('click',()=>showPromptLibraryEditor({group_id:promptLibraryCurrentGroup==='all'?'uncategorized':promptLibraryCurrentGroup}));
   $('#cancelPromptLibraryEditBtn')?.addEventListener('click', hidePromptLibraryEditor);
   $('#newPromptLibraryGroupBtn')?.addEventListener('click', promptLibraryCreateGroup);
+  $('#promptSidebarToggleBtn')?.addEventListener('click', e=>{
+    e.preventDefault();
+    e.stopPropagation();
+    if(!promptLibrarySidebarPinned) $('#promptLibraryWindow')?.classList.toggle('prompt-sidebar-peek');
+  });
+  $('#promptSidebarPinBtn')?.addEventListener('click', e=>{
+    e.preventDefault();
+    e.stopPropagation();
+    promptLibrarySidebarPinned = !promptLibrarySidebarPinned;
+    localStorage.setItem(PROMPT_LIBRARY_SIDEBAR_PIN_KEY, promptLibrarySidebarPinned ? '1' : '0');
+    const win = $('#promptLibraryWindow');
+    win?.classList.remove('prompt-sidebar-peek');
+    renderPromptLibrary();
+  });
+  const promptSidebar = $('#promptLibraryGroupsSidebar');
+  promptSidebar?.addEventListener('mouseenter', ()=>{
+    if(!promptLibrarySidebarPinned) $('#promptLibraryWindow')?.classList.add('prompt-sidebar-peek');
+  });
+  promptSidebar?.addEventListener('mouseleave', ()=>{
+    if(!promptLibrarySidebarPinned) $('#promptLibraryWindow')?.classList.remove('prompt-sidebar-peek');
+  });
   $('#savePromptLibraryTemplateBtn')?.addEventListener('click',async()=>{ const body={ id:promptLibraryEditingId, title:$('#plTitle').value, group_id:$('#plGroup').value, type:$('#plType').value, tags:$('#plTags').value, content:$('#plContent').value, note:$('#plNote').value }; await api('/api/prompt_library/template',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); hidePromptLibraryEditor(); await loadPromptLibrary(); toast('提示词模板已保存'); });
   makeFloatingBox('promptLibraryWindow','promptLibraryHead','promptLibraryResize');
   makeFloatingBox('promptLibraryOrb','promptLibraryOrb',null);
@@ -8362,7 +8396,7 @@ function makeFloatingBox(boxId, headId, resizeId){
 
 // V14.10.33 Asset Library
 const ASSET_SIDEBAR_PIN_KEY = 'LAIG_ASSET_SIDEBAR_PINNED';
-const assetState = { ready:false, groups:[], assets:[], allAssets:[], currentGroup:'', selected:new Set(), batch:false, isHost:false, settings:{}, clientId:'', sidebarPinned:localStorage.getItem(ASSET_SIDEBAR_PIN_KEY)==='1', editingGroupId:'', collapsedGroups:new Set() };
+const assetState = { ready:false, groups:[], assets:[], allAssets:[], currentGroup:'', selected:new Set(), batch:false, isHost:false, settings:{}, clientId:'', sidebarPinned:localStorage.getItem(ASSET_SIDEBAR_PIN_KEY)==='1', editingGroupId:'', collapsedGroups:new Set(), draggingAssetId:'', reorderTarget:null };
 function assetGroupById(id){ return (assetState.groups||[]).find(g=>g.id===id) || {}; }
 function assetCanEdit(row={}){ return assetState.isHost || row.permission === 'host' || row.permission === 'owner' || row.owner_client_id === assetState.clientId; }
 function assetCanUploadToCurrentGroup(){ const g = assetGroupById(assetState.currentGroup); return !!assetState.currentGroup && assetCanEdit(g); }
@@ -8489,9 +8523,9 @@ function renderAssetLibrary(){
       const ownerText = a.owner_name || a.owner_client_id || '';
       const selected = assetState.selected.has(a.id);
       const badge = readonly ? `<span class="asset-shared-badge readonly">共享 · 来自 ${escapeHtml(ownerText)} · 只读</span>` : (a.shared ? '<span class="asset-shared-badge">已共享</span>' : '');
-      const media = thumb ? `<img src="${withPublicAccess(thumb)}" loading="lazy" />` : (a.type==='video' ? `<video class="asset-video-thumb" data-asset-video-thumb src="${withPublicAccess(a.url)}" muted playsinline preload="metadata"></video><span class="asset-file-icon asset-video-fallback">${assetIcon(a.type)}</span>` : `<span class="asset-file-icon">${assetIcon(a.type)}</span>`);
+      const media = thumb ? `<img class="asset-image-thumb" src="${withPublicAccess(thumb)}" loading="lazy" />` : (a.type==='video' ? `<video class="asset-video-thumb" data-asset-video-thumb src="${withPublicAccess(a.url)}" muted playsinline preload="metadata"></video><span class="asset-file-icon asset-video-fallback">${assetIcon(a.type)}</span>` : `<span class="asset-file-icon">${assetIcon(a.type)}</span>`);
       const groupName = assetGroupById(a.group_id).name || '';
-      return `<article class="asset-card ${a.type==='video'?'video':''} ${selected?'selected':''} ${readonly?'readonly':''}" data-id="${escapeHtml(a.id)}" draggable="true">${selected?'<div class="asset-card-check">✓</div>':''}${badge}<div class="asset-thumb">${media}</div><div class="asset-info"><div class="asset-name" data-asset-name title="${readonly?'共享素材只读':'双击重命名'}">${escapeHtml(a.name||'未命名素材')}</div><div class="asset-meta">${escapeHtml(a.type||'file')} · ${groupName?escapeHtml(groupName)+' · ':''}${assetFormatSize(a.size)} · ${escapeHtml(formatBeijingTime(a.created_at)||'')}</div></div><div class="asset-card-actions"><button class="asset-card-icon-btn" data-act="copy" title="复制资产源文件" aria-label="复制资产源文件">${assetActionSvg('copy')}</button><button class="asset-card-icon-btn" data-act="download" title="下载" aria-label="下载">${assetActionSvg('download')}</button>${assetCanEdit(a)?`<button class="asset-card-icon-btn danger" data-act="delete" title="删除" aria-label="删除">${assetActionSvg('delete')}</button>`:''}</div></article>`;
+      return `<article class="asset-card ${a.type==='video'?'video':''} ${selected?'selected':''} ${readonly?'readonly':''}" data-id="${escapeHtml(a.id)}" data-group-id="${escapeHtml(a.group_id || '')}" draggable="true">${selected?'<div class="asset-card-check">✓</div>':''}${badge}<div class="asset-thumb">${media}</div><div class="asset-info"><div class="asset-name" data-asset-name title="${readonly?'共享素材只读':'双击重命名'}">${escapeHtml(a.name||'未命名素材')}</div><div class="asset-meta">${escapeHtml(a.type||'file')} · ${groupName?escapeHtml(groupName)+' · ':''}${assetFormatSize(a.size)} · ${escapeHtml(formatBeijingTime(a.created_at)||'')}</div></div><div class="asset-card-actions"><button class="asset-card-icon-btn" data-act="copy" title="复制资产源文件" aria-label="复制资产源文件">${assetActionSvg('copy')}</button><button class="asset-card-icon-btn" data-act="download" title="下载" aria-label="下载">${assetActionSvg('download')}</button>${assetCanEdit(a)?`<button class="asset-card-icon-btn danger" data-act="delete" title="删除" aria-label="删除">${assetActionSvg('delete')}</button>`:''}</div></article>`;
     }).join('') || '<div class="asset-empty">暂无素材，点击右上角“上传素材”或拖拽文件到这里。</div>';
     assetHydrateVideoThumbs();
   }
@@ -8582,6 +8616,35 @@ async function assetMoveIds(ids, groupId){
   assetState.selected.clear();
   await loadAssetLibrary();
   toast(`已移动 ${cleanIds.length} 个资产源文件`);
+}
+function assetInternalDragPayload(dataTransfer){
+  try{
+    const raw = dataTransfer?.getData('application/x-laig-asset-reorder') || '';
+    const parsed = raw ? JSON.parse(raw) : null;
+    return parsed && parsed.id ? parsed : null;
+  }catch{ return null; }
+}
+function assetHasInternalDrag(dataTransfer){
+  return !!assetState.draggingAssetId || Array.from(dataTransfer?.types || []).includes('application/x-laig-asset-reorder');
+}
+function clearAssetReorderTargets(){
+  assetState.reorderTarget = null;
+  $$('.asset-card.asset-reorder-before,.asset-card.asset-reorder-after').forEach(card=>card.classList.remove('asset-reorder-before','asset-reorder-after'));
+}
+function markAssetReorderTarget(card, before){
+  clearAssetReorderTargets();
+  if(!card) return;
+  assetState.reorderTarget = { id:card.dataset.id, before:!!before };
+  card.classList.add(before ? 'asset-reorder-before' : 'asset-reorder-after');
+}
+async function assetReorderAsset(id, beforeId=''){
+  const source = assetState.assets.find(asset=>asset.id===id);
+  const before = beforeId ? assetState.assets.find(asset=>asset.id===beforeId) : null;
+  if(!source || !assetCanEdit(source)) return toast('没有权限调整该资产顺序');
+  if(before && before.group_id !== source.group_id) return toast('仅可调整同一分组内的素材顺序');
+  await api('/api/assets/reorder',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:source.id,before_id:before?.id || ''})});
+  await loadAssetAssets();
+  toast('素材顺序已调整');
 }
 function ensureAssetContextMenu(){
   let menu = $('#assetContextMenu');
@@ -8725,9 +8788,23 @@ function setupAssetLibrary(){
   sidebar?.addEventListener('mouseleave',()=>{ if(!assetState.sidebarPinned) $('#assetLibraryWindow')?.classList.remove('asset-sidebar-peek'); });
   const dropArea=$('.asset-library-main');
   if(dropArea){
-    dropArea.addEventListener('dragover',e=>{e.preventDefault(); dropArea.classList.add('drag');});
+    dropArea.addEventListener('dragover',e=>{
+      if(assetHasInternalDrag(e.dataTransfer)) return;
+      e.preventDefault();
+      dropArea.classList.add('drag');
+    });
     dropArea.addEventListener('dragleave',e=>{ if(!dropArea.contains(e.relatedTarget)) dropArea.classList.remove('drag'); });
-    dropArea.addEventListener('drop',e=>{e.preventDefault(); dropArea.classList.remove('drag'); assetUploadFiles(e.dataTransfer.files||[]);});
+    dropArea.addEventListener('drop',e=>{
+      if(assetHasInternalDrag(e.dataTransfer)){
+        e.preventDefault();
+        e.stopPropagation();
+        dropArea.classList.remove('drag');
+        return;
+      }
+      e.preventDefault();
+      dropArea.classList.remove('drag');
+      assetUploadFiles(e.dataTransfer.files||[]);
+    });
   }
   $('#assetGroupTree')?.addEventListener('click',async e=>{
     const toggle = e.target.closest('[data-group-toggle]');
@@ -8752,11 +8829,54 @@ function setupAssetLibrary(){
   $('#assetGroupTree')?.addEventListener('focusout',e=>{ const input=e.target.closest('[data-group-edit]'); if(!input) return; const row=input.closest('.asset-group-row'); setTimeout(()=>{ if(assetState.editingGroupId === row.dataset.id) assetSaveGroupName(row.dataset.id, input.value).catch(err=>toast(err.message||'重命名失败')); }, 0); });
   $('#assetGrid')?.addEventListener('click',async e=>{ const card=e.target.closest('.asset-card'); if(!card) return; if(e.target.closest('[data-asset-name],.asset-name-edit')) return; const id=card.dataset.id; const a=assetState.assets.find(x=>x.id===id); const act=e.target.closest('button[data-act]')?.dataset.act; if(act==='copy'){ await assetCopyAsset(a); return; } if(act==='download'){ window.open(withPublicAccess(a.download_url||a.url),'_blank'); return; } if(act==='delete'){ return assetDeleteIds([id]); } if(assetState.batch){ assetState.selected.has(id)?assetState.selected.delete(id):assetState.selected.add(id); renderAssetLibrary(); return; } if(a?.type==='image') showPreview(a.url,{model:'资产库',fullUrl:a.url,filename:a.name}); else if(a?.type==='video') showVideoPreview({url:a.url,stream_url:a.url,download_url:a.download_url,filename:a.name,model:'资产库视频'}); else window.open(withPublicAccess(a.download_url||a.url),'_blank'); });
   $('#assetGrid')?.addEventListener('contextmenu',e=>{ const card=e.target.closest('.asset-card'); if(!card) return; e.preventDefault(); e.stopPropagation(); showAssetContextMenu(e,card.dataset.id); });
+  $('#assetGrid')?.addEventListener('dragover',e=>{
+    const payload = assetInternalDragPayload(e.dataTransfer);
+    const id = payload?.id || assetState.draggingAssetId;
+    if(!id) return;
+    const source = assetState.assets.find(asset=>asset.id===id);
+    const target = e.target.closest('.asset-card');
+    if(!source || !assetCanEdit(source)) return;
+    if(target && target.dataset.id === source.id) return;
+    const targetAsset = target ? assetState.assets.find(asset=>asset.id===target.dataset.id) : null;
+    if(targetAsset && targetAsset.group_id !== source.group_id) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'move';
+    if(target){
+      const rect = target.getBoundingClientRect();
+      markAssetReorderTarget(target, e.clientY < rect.top + rect.height / 2);
+    }else clearAssetReorderTargets();
+  });
+  $('#assetGrid')?.addEventListener('dragleave',e=>{
+    if(!e.currentTarget.contains(e.relatedTarget)) clearAssetReorderTargets();
+  });
+  $('#assetGrid')?.addEventListener('drop',e=>{
+    const payload = assetInternalDragPayload(e.dataTransfer);
+    const id = payload?.id || assetState.draggingAssetId;
+    if(!id) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const target = e.target.closest('.asset-card');
+    const reorderTarget = assetState.reorderTarget;
+    clearAssetReorderTargets();
+    let beforeId = '';
+    if(target && reorderTarget?.id === target.dataset.id){
+      if(reorderTarget.before) beforeId = target.dataset.id;
+      else {
+        const source = assetState.assets.find(asset=>asset.id===id);
+        const siblings = assetState.assets.filter(asset=>asset.group_id === source?.group_id && asset.id !== id);
+        const targetIndex = siblings.findIndex(asset=>asset.id===target.dataset.id);
+        beforeId = siblings[targetIndex + 1]?.id || '';
+      }
+    }
+    assetReorderAsset(id, beforeId).catch(err=>toast(err.message || '调整素材顺序失败'));
+  });
   $('#assetGrid')?.addEventListener('dragstart',e=>{
     const card=e.target.closest('.asset-card[draggable="true"]');
     if(!card) return;
     const asset=assetState.assets.find(x=>x.id===card.dataset.id);
     if(!asset) return;
+    assetState.draggingAssetId = asset.id;
     const sourceUrl = withPublicAccess(asset.source_url || asset.url || asset.download_url || '');
     if(asset.type === 'image') setImageDragData(e,{fullUrl:sourceUrl, filename:asset.name || 'asset.png', skipNativeDrag:true});
     else {
@@ -8767,11 +8887,12 @@ function setupAssetLibrary(){
     if(assetCanEdit(asset)){
       const ids=assetState.selected.has(card.dataset.id)?assetSelectedIds():[card.dataset.id];
       e.dataTransfer.setData('application/x-laig-assets',JSON.stringify(ids));
+      e.dataTransfer.setData('application/x-laig-asset-reorder',JSON.stringify({id:asset.id,group_id:asset.group_id || ''}));
       e.dataTransfer.effectAllowed='copyMove';
     }else e.dataTransfer.effectAllowed='copy';
     card.classList.add('dragging');
   });
-  $('#assetGrid')?.addEventListener('dragend',e=>{ e.target.closest('.asset-card')?.classList.remove('dragging'); $$('.asset-group-row.asset-drop-target').forEach(x=>x.classList.remove('asset-drop-target')); });
+  $('#assetGrid')?.addEventListener('dragend',e=>{ assetState.draggingAssetId=''; clearAssetReorderTargets(); e.target.closest('.asset-card')?.classList.remove('dragging'); $$('.asset-group-row.asset-drop-target').forEach(x=>x.classList.remove('asset-drop-target')); });
   $('#assetGroupTree')?.addEventListener('dragover',e=>{ const row=e.target.closest('.asset-group-row'); if(!row || !e.dataTransfer.types.includes('application/x-laig-assets')) return; e.preventDefault(); e.dataTransfer.dropEffect='move'; $$('.asset-group-row.asset-drop-target').forEach(x=>x.classList.remove('asset-drop-target')); row.classList.add('asset-drop-target'); });
   $('#assetGroupTree')?.addEventListener('dragleave',e=>{ const row=e.target.closest('.asset-group-row'); if(row && !row.contains(e.relatedTarget)) row.classList.remove('asset-drop-target'); });
   $('#assetGroupTree')?.addEventListener('drop',e=>{ const row=e.target.closest('.asset-group-row'); if(!row) return; e.preventDefault(); row.classList.remove('asset-drop-target'); let ids=[]; try{ ids=JSON.parse(e.dataTransfer.getData('application/x-laig-assets')||'[]'); }catch{} assetMoveIds(ids,row.dataset.id).catch(err=>toast(err.message||'移动资产失败')); });
