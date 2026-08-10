@@ -6162,6 +6162,7 @@ function registerApimartVideoUiRules(items = []){
       note:item.note || '',
       durationWithVideo:item.durationWithVideo === true,
       supportsDuration:item.supportsDuration !== false,
+      supportsAutoDuration:item.supportsAutoDuration === true,
       supportsAspect:item.supportsAspect !== false,
       videoDurationRange:item.videoDurationRange || null,
       firstLastDurations:item.firstLastDurations || null,
@@ -6182,7 +6183,11 @@ function registerApimartVideoUiRules(items = []){
       audioMaxDuration:Number(item.audioMaxDuration || 0),
       audioTotalDuration:Number(item.audioTotalDuration || 0),
       audioDurationAtMostVideo:item.audioDurationAtMostVideo === true,
-      audioDisallowsVideo:item.audioDisallowsVideo === true
+      audioDisallowsVideo:item.audioDisallowsVideo === true,
+      forceAdaptiveForVideoEdit:item.forceAdaptiveForVideoEdit === true,
+      forceAdaptiveForFrameModes:item.forceAdaptiveForFrameModes === true,
+      forceAutoDurationForVideoEdit:item.forceAutoDurationForVideoEdit === true,
+      outputFormats:Array.isArray(item.outputFormats) ? item.outputFormats : []
     };
   });
 }
@@ -6241,6 +6246,7 @@ registerApimartVideoUiRules([
   { model:'doubao-seedance-2.0', label:'Doubao Seedance 2.0', resolutions:['480p','720p','1080p','4k'], aspects:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'], durationMin:4, durationMax:15, defaultDuration:5, supportsVideo:true, durationWithVideo:true, maxImageCount:9, maxVideoCount:3, supportsAudioReference:true, maxAudioCount:3, audioReferenceParam:'audio_urls', audioRequiresReference:true, audioMaxDuration:15, audioTotalDuration:15 },
   { model:'doubao-seedance-2.0-fast', label:'Doubao Seedance 2.0 Fast', resolutions:['480p','720p'], aspects:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'], durationMin:4, durationMax:15, defaultDuration:5, supportsVideo:true, durationWithVideo:true, maxImageCount:9, maxVideoCount:3, supportsAudioReference:true, maxAudioCount:3, audioReferenceParam:'audio_urls', audioRequiresReference:true, audioMaxDuration:15, audioTotalDuration:15 },
   { model:'doubao-seedance-2.0-mini', label:'Doubao Seedance 2.0 Mini', resolutions:['480p','720p'], aspects:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'], durationMin:4, durationMax:15, defaultDuration:5, supportsVideo:true, durationWithVideo:true, maxImageCount:9, maxVideoCount:3, supportsAudioReference:true, maxAudioCount:3, audioReferenceParam:'audio_urls', audioRequiresReference:true, audioMaxDuration:15, audioTotalDuration:15 },
+  { model:'doubao-seedance-2.5', label:'Doubao Seedance 2.5', resolutions:['480p','720p'], defaultResolution:'720p', aspects:['16:9','4:3','1:1','3:4','9:16','21:9','adaptive'], defaultAspect:'adaptive', durationMin:4, durationMax:30, defaultDuration:5, supportsAutoDuration:true, supportsVideo:true, durationWithVideo:true, maxImageCount:30, maxVideoCount:10, supportsAudioReference:true, maxAudioCount:10, audioReferenceParam:'audio_urls', audioMinDuration:2, audioMaxDuration:30, audioTotalDuration:30, forceAdaptiveForVideoEdit:true, forceAdaptiveForFrameModes:true, forceAutoDurationForVideoEdit:true, outputFormats:['mp4','mov'], note:'Supports text, image, video, and audio references. Video editing automatically uses adaptive size and automatic duration.' },
   { model:'sora-2', label:'Sora 2', resolutions:['720p'], aspects:['16:9','9:16'], durations:[4,8,12,16,20], defaultDuration:4, maxImageCount:1 },
   { model:'sora-2-pro', label:'Sora 2 Pro', resolutions:['720p','1024p','1080p'], aspects:['16:9','9:16'], durations:[4,8,12,16,20], defaultDuration:4, maxImageCount:1 },
   { model:'veo3.1-fast', label:'VEO3.1 Fast', resolutions:['720p','1080p','4k'], aspects:['16:9','9:16'], durations:[8], defaultDuration:8, maxImageCount:3 },
@@ -6275,7 +6281,7 @@ registerApimartVideoUiRules([
 ]);
 const APIMART_VIDEO_MODEL_GROUPS_UI = [
   ['Omni / Google / FLUX', ['gemini-omni-flash-preview','omni-flash-ext','veo3.1-fast','veo3.1-quality','veo3.1-lite','veo3.1-fast-official','veo3.1-quality-official','flux-3-video']],
-  ['Doubao Seedance', ['doubao-seedance-1-0-pro-fast','doubao-seedance-1-0-pro-quality','doubao-seedance-1-5-pro','doubao-seedance-2.0','doubao-seedance-2.0-fast','doubao-seedance-2.0-mini']],
+  ['Doubao Seedance', ['doubao-seedance-1-0-pro-fast','doubao-seedance-1-0-pro-quality','doubao-seedance-1-5-pro','doubao-seedance-2.0','doubao-seedance-2.0-fast','doubao-seedance-2.0-mini','doubao-seedance-2.5']],
   ['Sora / MiniMax / SkyReels', ['sora-2','sora-2-pro','MiniMax-Hailuo-02','MiniMax-Hailuo-2.3','MiniMax-Hailuo-2.3-Fast','MiniMax-H3','skyreels-v4-fast','skyreels-v4-std']],
   ['HappyHorse / Wan', ['happyhorse-1.0','happyhorse-1.1','wan2.5-preview','wan2.6','wan2.7','wan2.7-r2v','wan2.7-videoedit']],
   ['Kling', ['kling-v2-6','kling-v2-6-motion-control','kling-v3','kling-v3-motion-control','kling-v3-omni','kling-video-o1','kling-3.0-turbo']],
@@ -6311,6 +6317,47 @@ function videoModeAutoLabel(){
 function currentVideoModeValue(){
   const v = $('#videoModeSelect')?.value || 'auto';
   return v === 'auto' ? 'auto' : v;
+}
+function isSeedance25VideoModel(model = $('#videoModel')?.value){
+  return currentVideoPlatform() === 'apimart' && String(model || '').toLowerCase() === 'doubao-seedance-2.5';
+}
+function seedance25VideoEditIsActive(){
+  if(!isSeedance25VideoModel()) return false;
+  const mode = currentVideoModeValue();
+  return mode === 'video_edit' || (mode === 'auto' && hasReferenceVideo() && !videoAudioFilesData.length);
+}
+function seedance25RequiresAdaptiveAspect(){
+  if(!isSeedance25VideoModel()) return false;
+  const mode = currentVideoModeValue();
+  const autoFrameMode = mode === 'auto' && !hasReferenceVideo() && !videoAudioFilesData.length && [1,2].includes(videoRefImages.length);
+  return seedance25VideoEditIsActive() || autoFrameMode || ['first_frame','first_last_frame'].includes(mode);
+}
+function seedance25UsesAutomaticDuration(){
+  return isSeedance25VideoModel() && (seedance25VideoEditIsActive() || $('#seedance25AutoDuration')?.checked === true);
+}
+function updateSeedance25Options(){
+  const row = $('#seedance25Options');
+  const enabled = isSeedance25VideoModel();
+  if(row) row.classList.toggle('hidden', !enabled);
+  const automaticDuration = $('#seedance25AutoDuration');
+  const forceAutomaticDuration = enabled && seedance25VideoEditIsActive();
+  let changed = false;
+  if(automaticDuration){
+    if(forceAutomaticDuration && !automaticDuration.checked){ automaticDuration.checked = true; changed = true; }
+    automaticDuration.disabled = forceAutomaticDuration;
+    automaticDuration.title = forceAutomaticDuration ? 'Video editing requires automatic duration.' : '';
+  }
+  const aspect = $('#videoAspect');
+  const forceAdaptiveAspect = enabled && seedance25RequiresAdaptiveAspect();
+  if(aspect){
+    if(forceAdaptiveAspect && [...aspect.options].some(option=>option.value === 'adaptive') && aspect.value !== 'adaptive'){
+      aspect.value = 'adaptive';
+      changed = true;
+    }
+    aspect.disabled = forceAdaptiveAspect;
+    aspect.title = forceAdaptiveAspect ? 'This task type requires adaptive aspect ratio.' : '';
+  }
+  return changed;
 }
 function videoModeLabel(v){
   return ({auto:`自动识别：${videoModeAutoLabel()}`,text_to_video:'文生视频',first_frame:'首帧生成',first_last_frame:'首尾帧生成',multi_reference:'多素材生成',video_edit:'上传视频编辑'})[v || 'auto'] || videoModeAutoLabel();
@@ -6349,6 +6396,9 @@ function normalizedVideoDurationValues(values=[]){
 function currentVideoDurationSpec(){
   if(currentVideoPlatform() === 'apimart'){
     const rule = currentApimartVideoRule();
+    if(seedance25UsesAutomaticDuration()){
+      return { values:[], defaultValue:-1, mode:'auto', note:'Automatic duration is selected by Seedance 2.5.' };
+    }
     let values = normalizedVideoDurationValues(rule.durations);
     let mode = rule.supportsDuration === false ? 'auto' : (rule.durationMode || 'discrete');
     if(hasReferenceVideo() && Array.isArray(rule.videoDurationRange)){
@@ -6490,6 +6540,7 @@ function updateVideoModeUI(){
   const platform = currentVideoPlatform();
   const hasVideo = hasReferenceVideo();
   syncFlow2VideoEditModel();
+  if(updateSeedance25Options()) updateVideoDurationOptions();
   const images = videoRefImages.length;
   const selectedMode = currentVideoModeValue();
   let mode = selectedMode === 'auto' ? videoModeAutoLabel() : videoModeLabel(selectedMode);
@@ -6572,7 +6623,7 @@ function hasReferenceVideo(){ return !!(videoFilesData.length || ($('#videoUrlIn
 function videoMultiReferenceEnabled(){ return currentVideoPlatform() === 'apimart' && $('#videoMultiReference')?.checked === true; }
 function selectCompatibleMultiVideoReferenceModel(videoCount = videoFilesData.length){
   const requiredCount = Math.max(2, Number(videoCount || 0));
-  const preferredModels = ['MiniMax-H3','doubao-seedance-2.0','doubao-seedance-2.0-fast','doubao-seedance-2.0-mini','wan2.7-r2v'];
+  const preferredModels = ['doubao-seedance-2.5','MiniMax-H3','doubao-seedance-2.0','doubao-seedance-2.0-fast','doubao-seedance-2.0-mini','wan2.7-r2v'];
   return preferredModels.find(model=>{
     const rule = APIMART_VIDEO_MODEL_RULES_UI[String(model).toLowerCase()];
     return rule?.supportsVideo && Number(rule.maxVideoCount || 1) >= requiredCount;
@@ -6780,7 +6831,15 @@ async function submitVideoTask(opts = {}){
   const platformCfg = loadClientConfig(platform) || {};
   const selectedVideoMode = currentVideoModeValue();
   const effectiveVideoMode = videoAudioFilesData.length && selectedVideoMode === 'auto' && (apimartRule?.audioRequiresReference || apimartRule?.audioRequiresImage) ? 'multi_reference' : selectedVideoMode;
-  const body = { video_platform:platform, api_endpoint:platform === 'flow2api' ? (platformCfg.api_endpoint || 'http://127.0.0.1:38000') : 'https://api.apimart.ai', api_key:apiKey, video_model:$('#videoModel')?.value || '', video_mode:effectiveVideoMode, video_reference_type:currentVideoReferenceType(), multi_video_reference:multiVideoReference, seed:$('#videoSeed')?.value?.trim() || '', copies:Number($('#videoRepeatCount')?.value || 1), retry_times:Number($('#videoRetryTimes')?.value || 0), prompts:$('#videoPrompt').value, prompt_multiline_tasks: $('#videoPromptMultilineTasks') ? $('#videoPromptMultilineTasks').checked : false, resolution:$('#videoResolution').value, aspect_ratio:$('#videoAspect').value, video_url:$('#videoUrlInput').value.trim(), video_files:videoFilesData, audio_files:videoAudioFilesData, ref_images:videoRefImages, character_orientation:$('#videoCharacterOrientation')?.value || 'image', source_task_id:$('#videoSourceTaskId')?.value?.trim() || '' };
+  const seedance25 = isSeedance25VideoModel();
+  const seedance25AutomaticDuration = seedance25UsesAutomaticDuration();
+  const body = { video_platform:platform, api_endpoint:platform === 'flow2api' ? (platformCfg.api_endpoint || 'http://127.0.0.1:38000') : 'https://api.apimart.ai', api_key:apiKey, video_model:$('#videoModel')?.value || '', video_mode:effectiveVideoMode, video_reference_type:currentVideoReferenceType(), multi_video_reference:multiVideoReference, seed:$('#videoSeed')?.value?.trim() || '', copies:Number($('#videoRepeatCount')?.value || 1), retry_times:Number($('#videoRetryTimes')?.value || 0), prompts:$('#videoPrompt').value, prompt_multiline_tasks: $('#videoPromptMultilineTasks') ? $('#videoPromptMultilineTasks').checked : false, resolution:$('#videoResolution').value, aspect_ratio:seedance25RequiresAdaptiveAspect() ? 'adaptive' : $('#videoAspect').value, video_url:$('#videoUrlInput').value.trim(), video_files:videoFilesData, audio_files:videoAudioFilesData, ref_images:videoRefImages, character_orientation:$('#videoCharacterOrientation')?.value || 'image', source_task_id:$('#videoSourceTaskId')?.value?.trim() || '' };
+  if(seedance25){
+    body.generate_audio = $('#seedance25GenerateAudio')?.checked !== false;
+    body.watermark = $('#seedance25Watermark')?.checked === true;
+    body.return_last_frame = $('#seedance25ReturnLastFrame')?.checked === true;
+    body.output_format = $('#seedance25OutputFormat')?.value || 'mp4';
+  }
   if(platform === 'apimart' && isSkyReelsVideoModel() && refVideoMode && currentVideoReferenceType() === 'extend' && videoRefImages.length) return reject('SkyReels 视频扩展不能与参考图同时使用。');
   if(platform === 'apimart' && isSkyReelsVideoModel() && refVideoMode && ['first_frame','first_last_frame'].includes(currentVideoModeValue())) return reject('SkyReels 首帧 / 首尾帧生成不能与参考视频同时使用。');
   const apimartDurationWithVideo = apimartVideoUsesRequestedDurationWithReference(apimartRule);
@@ -6789,7 +6848,8 @@ async function submitVideoTask(opts = {}){
   const shouldSendDuration = platform === 'apimart'
     ? !veoTaskExtension && apimartRule?.supportsDuration !== false && (!refVideoMode || apimartDurationWithVideo)
     : !refVideoMode;
-  if(shouldSendDuration && Number.isFinite(durationValue)) body.duration = durationValue;
+  if(shouldSendDuration && seedance25AutomaticDuration) body.duration = -1;
+  else if(shouldSendDuration && Number.isFinite(durationValue)) body.duration = durationValue;
   const button = $('#startVideoBtn');
   if(!opts.fromAgent && button){ button.disabled = true; button.textContent = '批量提交中...'; }
   try{
@@ -7576,6 +7636,9 @@ function setupVideoPage(){
   if($('#videoAdvancedRuleRow') && !$('#videoCharacterOrientationWrap')){
     $('#videoAdvancedRuleRow').insertAdjacentHTML('afterend', '<div class="row"><div id="videoCharacterOrientationWrap" class="hidden"><label>运动控制朝向</label><select id="videoCharacterOrientation"><option value="image">跟随参考图</option><option value="video">跟随参考视频</option></select></div><div id="videoSourceTaskIdWrap" class="hidden"><label>原任务 ID</label><input id="videoSourceTaskId" placeholder="task_...（原任务必须已完成）" /></div></div>');
   }
+  if($('#videoAdvancedRuleRow') && !$('#seedance25Options')){
+    $('#videoAdvancedRuleRow').insertAdjacentHTML('afterend', '<div class="row hidden" id="seedance25Options"><div><label>输出格式</label><select id="seedance25OutputFormat"><option value="mp4">MP4</option><option value="mov">MOV（适合编辑 / 延长）</option></select><div class="field-help">Seedance 2.5 仅支持 MP4 或 MOV。</div></div><div class="seedance25-switches"><label class="switch-line"><input id="seedance25AutoDuration" type="checkbox" /> 自动时长</label><label class="switch-line"><input id="seedance25GenerateAudio" type="checkbox" checked /> 生成音频</label><label class="switch-line"><input id="seedance25Watermark" type="checkbox" /> 添加 AI 水印</label><label class="switch-line"><input id="seedance25ReturnLastFrame" type="checkbox" /> 返回尾帧</label></div></div>');
+  }
   setVideoApiPlatform(localStorage.getItem(VIDEO_PLATFORM_KEY) || 'apimart', true);
   $('#apiKey')?.addEventListener('input', syncVideoApiKeyFromHome);
   $$('#videoApiPlatformSwitch .platform-btn').forEach(btn=>btn.addEventListener('click',()=>setVideoApiPlatform(btn.dataset.platform || 'apimart')));
@@ -7593,6 +7656,8 @@ function setupVideoPage(){
   $('#videoModeSelect')?.addEventListener('change', ()=>{ updateVideoDurationOptions(); updateVideoModeUI(); updateVideoDurationVisibility(); updateVideoTaskEstimate(); });
   $('#videoResolution')?.addEventListener('change', ()=>{ updateVideoDurationOptions(); updateVideoTaskEstimate(); });
   $('#videoSeed')?.addEventListener('input', updateVideoTaskEstimate);
+  $('#seedance25AutoDuration')?.addEventListener('change', ()=>{ updateVideoDurationOptions(); updateVideoTaskEstimate(); });
+  ['#seedance25GenerateAudio','#seedance25Watermark','#seedance25ReturnLastFrame','#seedance25OutputFormat'].forEach(selector=>$(selector)?.addEventListener('change', updateVideoTaskEstimate));
   $('#videoRepeatCount')?.addEventListener('input', updateVideoTaskEstimate);
   if($('#openVideoUrlBtn')) $('#openVideoUrlBtn').textContent = '复制视频';
   const videoPanel = $('#videoRealtimePanel');

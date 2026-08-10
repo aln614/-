@@ -2358,6 +2358,7 @@ registerApimartVideoRules([
   { model:'doubao-seedance-2.0', label:'Doubao Seedance 2.0', resolutions:['480p','720p','1080p','4k'], aspectRatios:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'], aspectParam:'size', durationRange:[4,15], supportsImageUrls:true, supportsVideoUrls:true, supportsImageWithRoles:true, supportsLastFrame:true, maxImageCount:9, maxVideoCount:3, videoParam:'video_urls', durationWithVideo:true, audioParam:'generate_audio', defaultAudio:true, returnLastFrameParam:'return_last_frame', audioReferenceParam:'audio_urls', maxAudioCount:3, audioRequiresReference:true, audioMaxDuration:15, audioTotalDuration:15, audioReferenceMaxBytes:15*1024*1024 },
   { model:'doubao-seedance-2.0-fast', label:'Doubao Seedance 2.0 Fast', resolutions:['480p','720p'], aspectRatios:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'], aspectParam:'size', durationRange:[4,15], supportsImageUrls:true, supportsVideoUrls:true, supportsImageWithRoles:true, supportsLastFrame:true, maxImageCount:9, maxVideoCount:3, videoParam:'video_urls', durationWithVideo:true, audioParam:'generate_audio', defaultAudio:true, returnLastFrameParam:'return_last_frame', audioReferenceParam:'audio_urls', maxAudioCount:3, audioRequiresReference:true, audioMaxDuration:15, audioTotalDuration:15, audioReferenceMaxBytes:15*1024*1024 },
   { model:'doubao-seedance-2.0-mini', label:'Doubao Seedance 2.0 Mini', resolutions:['480p','720p'], aspectRatios:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'], aspectParam:'size', durationRange:[4,15], supportsImageUrls:true, supportsVideoUrls:true, supportsImageWithRoles:true, supportsLastFrame:true, maxImageCount:9, maxVideoCount:3, videoParam:'video_urls', durationWithVideo:true, audioParam:'generate_audio', defaultAudio:true, returnLastFrameParam:'return_last_frame', audioReferenceParam:'audio_urls', maxAudioCount:3, audioRequiresReference:true, audioMaxDuration:15, audioTotalDuration:15, audioReferenceMaxBytes:15*1024*1024 },
+  { model:'doubao-seedance-2.5', label:'Doubao Seedance 2.5', resolutions:['480p','720p'], defaultResolution:'720p', aspectRatios:['16:9','4:3','1:1','3:4','9:16','21:9','adaptive'], defaultAspectRatio:'adaptive', aspectParam:'size', durationRange:[4,30], defaultDuration:5, supportsAutoDuration:true, supportsImageUrls:true, supportsVideoUrls:true, supportsImageWithRoles:true, supportsLastFrame:true, imageRolesBecomeReferencesWithMedia:true, maxImageCount:30, maxVideoCount:10, videoParam:'video_urls', durationWithVideo:true, audioParam:'generate_audio', defaultAudio:true, watermarkParam:'watermark', returnLastFrameParam:'return_last_frame', audioReferenceParam:'audio_urls', maxAudioCount:10, audioMinDuration:2, audioMaxDuration:30, audioTotalDuration:30, audioReferenceMaxBytes:15*1024*1024, outputFormatParam:'output_format', outputFormats:['mp4','mov'], forceAdaptiveForVideoEdit:true, forceAdaptiveForFrameModes:true, forceAutoDurationForVideoEdit:true },
   { model:'sora-2', label:'Sora 2', resolutions:['720p'], aspectRatios:['16:9','9:16'], durations:[4,8,12,16,20], defaultDuration:4, supportsImageUrls:true, maxImageCount:1 },
   { model:'sora-2-pro', label:'Sora 2 Pro', resolutions:['720p','1024p','1080p'], aspectRatios:['16:9','9:16'], durations:[4,8,12,16,20], defaultDuration:4, supportsImageUrls:true, maxImageCount:1 },
   { model:'veo3.1-fast-official', label:'VEO3.1 Official Fast', resolutions:['720p','1080p','4k'], defaultResolution:'720p', aspectRatios:['16:9','9:16'], defaultAspectRatio:'16:9', durations:[4,6,8], defaultDuration:8, supportsImageUrls:false, imageParam:'first_frame_image', supportsLastFrame:true, maxImageCount:2, audioParam:'generate_audio', defaultAudio:false, negativePromptParam:'negative_prompt' },
@@ -2415,6 +2416,7 @@ function normalizeVideoAspectRatio(value, model = 'Omni-Flash-Ext') {
 }
 function normalizeVideoDurationForRule(value, defaultValue = 6, rule = {}, model = 'Omni-Flash-Ext') {
   const requested = Number(value);
+  if (rule.supportsAutoDuration === true && requested === -1) return -1;
   if (Array.isArray(rule.durationRange) && rule.durationRange.length >= 2) {
     const min = Number(rule.durationRange[0]);
     const max = Number(rule.durationRange[1]);
@@ -3666,11 +3668,16 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
     if (rule.videoParam === 'ref_videos' && videoUrl && videoReferenceType === 'extend' && imageUrls.length) {
       throw new Error(`${rule.label || videoModel} 视频扩展不能与参考图同时使用。`);
     }
-    const requestedDuration = normalizeVideoDurationForRule(body.duration, rule.defaultDuration ?? 6, rule, videoModel);
+    const forceAutomaticDuration = rule.forceAutoDurationForVideoEdit === true && mode === 'video_edit';
+    const requestedDuration = forceAutomaticDuration
+      ? -1
+      : normalizeVideoDurationForRule(body.duration, rule.defaultDuration ?? 6, rule, videoModel);
     assertApimartAudioReferenceRules({ rule, audioUrls, audioItems:audioDurationItems, imageUrls, videoUrls, mode, requestedDuration });
     const payload = { model: rule.model || videoModel, prompt };
     const normalizedResolution = normalizeVideoResolution(body.resolution, videoModel);
-    const normalizedAspectRatio = normalizeVideoAspectRatio(body.aspect_ratio, videoModel);
+    const forceAdaptiveAspect = (rule.forceAdaptiveForVideoEdit === true && mode === 'video_edit')
+      || (rule.forceAdaptiveForFrameModes === true && ['first_frame', 'first_last_frame'].includes(mode));
+    const normalizedAspectRatio = forceAdaptiveAspect ? 'adaptive' : normalizeVideoAspectRatio(body.aspect_ratio, videoModel);
     // Field names are model-specific: for example Grok uses quality/size while Kling uses mode.
     if (rule.modeFromResolution) {
       payload.mode = String(normalizedResolution).toLowerCase() === '4k' ? '4k' : (String(normalizedResolution).toLowerCase() === '1080p' ? 'pro' : 'std');
@@ -3704,7 +3711,7 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
         payload.first_frame_image = imageUrls[0];
         if (imageUrls[1] && mode === 'first_last_frame' && rule.supportsLastFrame) payload.last_frame_image = imageUrls[1];
         else if (imageUrls.length > 1 && rule.supportsImageUrls) payload.image_urls = imageUrls;
-      } else if (rule.supportsImageWithRoles && (mode === 'first_frame' || mode === 'first_last_frame' || !rule.supportsImageUrls)) {
+      } else if (rule.supportsImageWithRoles && !(rule.imageRolesBecomeReferencesWithMedia && (videoUrls.length || audioUrls.length)) && (mode === 'first_frame' || mode === 'first_last_frame' || !rule.supportsImageUrls)) {
         const imageWithRoles = buildApimartVideoImageRolePayload(videoModel, imageUrls, mode);
         if (imageWithRoles.length) payload.image_with_roles = imageWithRoles;
       } else if (rule.supportsImageUrls) {
@@ -3763,12 +3770,19 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
     if (Array.isArray(resolutionDurations)) durationRule = { ...rule, durationRange:undefined, durations:resolutionDurations, defaultDuration:resolutionDurations[0] };
     const omitDurationForReferenceVideo = videoUrls.length && rule.videoParam === 'ref_videos' && videoReferenceType === 'reference';
     if (rule.supportsDuration !== false && (!videoUrls.length || rule.durationWithVideo) && !omitDurationForReferenceVideo) {
-      payload.duration = normalizeVideoDurationForRule(body.duration, durationRule.defaultDuration ?? 6, durationRule, payload.model);
+      payload.duration = forceAutomaticDuration
+        ? -1
+        : normalizeVideoDurationForRule(body.duration, durationRule.defaultDuration ?? 6, durationRule, payload.model);
     }
     if (rule.audioParam && !(videoUrls.length && rule.videoParam === 'video_list')) payload[rule.audioParam] = rule.forceAudio ? true : body.generate_audio !== false && rule.defaultAudio !== false;
     if (rule.watermarkParam) payload[rule.watermarkParam] = body.watermark === true;
     if (rule.cameraFixedParam) payload[rule.cameraFixedParam] = body.camera_fixed === true;
     if (rule.returnLastFrameParam) payload[rule.returnLastFrameParam] = body.return_last_frame === true;
+    if (rule.outputFormatParam) {
+      const allowedOutputFormats = Array.isArray(rule.outputFormats) ? rule.outputFormats : ['mp4'];
+      const requestedOutputFormat = String(body.output_format || allowedOutputFormats[0] || 'mp4').toLowerCase();
+      payload[rule.outputFormatParam] = allowedOutputFormats.includes(requestedOutputFormat) ? requestedOutputFormat : allowedOutputFormats[0];
+    }
     if (rule.promptOptimizerParam) payload[rule.promptOptimizerParam] = body.prompt_optimizer !== false;
     if (rule.fastPretreatmentParam) payload[rule.fastPretreatmentParam] = body.fast_pretreatment === true;
     if (rule.motionModeParam) payload[rule.motionModeParam] = 'normal';

@@ -45,7 +45,7 @@ for (const group of pickerBlock.matchAll(/\['[^']+',\s*\[([^\]]+)\]\]/g)) {
   for (const model of group[1].matchAll(/'([^']+)'/g)) picker.add(model[1].toLowerCase());
 }
 
-assert(backend.size === 42, `Expected 42 official backend models, found ${backend.size}`);
+assert(backend.size === 43, `Expected 43 official backend models, found ${backend.size}`);
 assert(picker.size === backend.size, `Model picker/backend count mismatch: picker=${picker.size}, backend=${backend.size}`);
 for (const model of picker) assert(backend.has(model), `Model picker has no backend rule: ${model}`);
 for (const model of backend.keys()) assert(picker.has(model), `Backend model is missing from picker: ${model}`);
@@ -63,6 +63,13 @@ assert(/'doubao-seedance-1-0-pro-fast'[\s\S]*?durationRange:\s*\[2,12\],\s*defau
 assert(/'doubao-seedance-1-0-pro-quality'[\s\S]*?durationRange:\s*\[2,12\],\s*defaultDuration:\s*5/.test(main), 'Seedance 1.0 Pro Quality must support 2-12 seconds with default 5');
 assert(/model:'doubao-seedance-1-5-pro'[^\n]*durationRange:\[4,12\][^\n]*audioParam:'audio'/.test(main), 'Seedance 1.5 Pro must support 4-12 seconds and audio');
 assert(/model:'doubao-seedance-2\.0'[^\n]*aspectParam:'size'[^\n]*durationRange:\[4,15\][^\n]*videoParam:'video_urls'/.test(main), 'Seedance 2.0 must use size and support video references');
+assert(/model:'doubao-seedance-2\.5'[^\n]*resolutions:\['480p','720p'\][^\n]*durationRange:\[4,30\][^\n]*supportsAutoDuration:true[^\n]*maxImageCount:30[^\n]*maxVideoCount:10/.test(main), 'Seedance 2.5 must support its documented resolution, duration, and reference limits');
+assert(/model:'doubao-seedance-2\.5'[^\n]*audioReferenceParam:'audio_urls'[^\n]*maxAudioCount:10[^\n]*audioMinDuration:2[^\n]*audioTotalDuration:30/.test(main), 'Seedance 2.5 must support up to ten 2-30 second audio references');
+assert(/model:'doubao-seedance-2\.5'[^\n]*imageRolesBecomeReferencesWithMedia:true[^\n]*outputFormatParam:'output_format'[^\n]*outputFormats:\['mp4','mov'\][^\n]*forceAdaptiveForVideoEdit:true/.test(main), 'Seedance 2.5 must send documented output format and task constraints');
+assert(/imageRolesBecomeReferencesWithMedia && \(videoUrls\.length \|\| audioUrls\.length\)/.test(main), 'Seedance 2.5 frame roles must become reference images when audio or video references coexist');
+assert(/model:'doubao-seedance-2\.5'[^\n]*durationMin:4,\s*durationMax:30[^\n]*supportsAutoDuration:true[^\n]*maxVideoCount:10/.test(app), 'Seedance 2.5 slider and multi-video UI rule must be registered');
+assert(/seedance25OutputFormat/.test(app) && /seedance25AutoDuration/.test(app), 'Seedance 2.5 advanced controls must be available in the video editor');
+assert(/payload\[rule\.outputFormatParam\]/.test(main) && /body\.output_format/.test(app), 'Video output format must be passed through to APIMart');
 assert(/model:'grok-imagine-1\.5-video-apimart'[^\n]*durationRange:\[6,30\],\s*defaultDuration:6/.test(main), 'Grok Imagine 1.5 Video must support 6-30 seconds with default 6');
 assert(/model:'grok-imagine-1\.5-video-apimart'[^\n]*durationMin:6,\s*durationMax:30,\s*defaultDuration:6/.test(app), 'Grok Imagine 1.5 Video slider must support 6-30 seconds with default 6');
 assert(/model:'grok-imagine-1\.5-video-apimart'[^\n]*resolutionParam:'quality'[^\n]*aspectParam:'size'/.test(main), 'Grok must submit quality and size fields');

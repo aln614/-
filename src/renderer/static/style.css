@@ -647,6 +647,9 @@ html,body,.main,.right-panel,.logs,.table-wrap,.chat-messages,.preview-info,.ass
 .theme-dark .api-key-warning{background:rgba(255,184,77,.12);border-color:rgba(255,184,77,.28);color:#ffd18a;}
 .setting-note-box{align-self:end;min-height:44px;display:flex;align-items:center;border:1px solid var(--line);border-radius:14px;padding:10px 12px;color:var(--muted);font-size:12px;background:rgba(255,255,255,.48);}
 .theme-dark .setting-note-box{background:rgba(255,255,255,.05);border-color:#2a2f3a;}
+.seedance25-switches{display:grid;grid-template-columns:1fr 1fr;gap:8px 14px;align-content:end;padding:10px 0 2px;}
+.seedance25-switches .switch-line{margin:0;white-space:nowrap;}
+@media(max-width:640px){.seedance25-switches{grid-template-columns:1fr;}}
 
 /* 允许AI聊天页面自身完整滚动，避免内容被100%高度裁切 */
 #page-chat.page.active{
