@@ -2,6 +2,12 @@ const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 let mainImages = [];
 let refImages = [];
+const RECENT_UPLOAD_DEFAULT_LIMIT = 10;
+const RECENT_UPLOAD_MAX_LIMIT = 50;
+let recentUploadSettings = { limit: RECENT_UPLOAD_DEFAULT_LIMIT };
+let recentUploadItems = [];
+let recentUploadWriteChain = Promise.resolve();
+let recentVideoUploadItems = { video: [], audio: [], reference_image: [] };
 let batches = [];
 let historyBatches = [];
 let selectedImages = new Set();
@@ -3613,11 +3619,241 @@ function fileIcon(it){
   return '📄';
 }
 
+// V1.0.66: file-backed recent uploads; large video/audio files stay in the output runtime directory.
+function normalizeRecentUploadLimit(value, fallback=RECENT_UPLOAD_DEFAULT_LIMIT){
+  const parsed = Math.round(Number(value));
+  if(!Number.isFinite(parsed)) return fallback;
+  return Math.max(1, Math.min(RECENT_UPLOAD_MAX_LIMIT, parsed));
+}
+function queueRecentUploadWrite(work){
+  const next = recentUploadWriteChain.then(work, work);
+  recentUploadWriteChain = next.catch(()=>{});
+  return next;
+}
+function recentUploadSourceUrl(row={}){
+  return withPublicAccess(row.source_url || row.url || row.download_url || '');
+}
+function recentUploadSourceLabel(row={}){
+  return row.source === 'ref' ? '参考图' : '主图';
+}
+function applyRecentUploadResponse(payload={}){
+  const all = Array.isArray(payload.items) ? payload.items : [];
+  recentUploadSettings = { limit: normalizeRecentUploadLimit(payload.settings?.image_limit, RECENT_UPLOAD_DEFAULT_LIMIT) };
+  recentUploadItems = all.filter(row=>row?.kind === 'image').slice(0, recentUploadSettings.limit);
+  recentVideoUploadItems = {
+    video: all.filter(row=>row?.kind === 'video'),
+    audio: all.filter(row=>row?.kind === 'audio'),
+    reference_image: all.filter(row=>row?.kind === 'reference_image')
+  };
+  renderRecentUploadPanel();
+  renderRecentVideoUploadPanel();
+}
+function renderRecentUploadPanel(){
+  const grid = $('#recentUploadGrid');
+  const count = $('#recentUploadCount');
+  const clear = $('#clearRecentUploadsBtn');
+  if(count) count.textContent = `${recentUploadItems.length} / ${recentUploadSettings.limit}`;
+  if(clear) clear.disabled = !recentUploadItems.length;
+  if(!grid) return;
+  if(!recentUploadItems.length){
+    grid.innerHTML = '<div class="recent-upload-empty">暂无上传图片</div>';
+    return;
+  }
+  grid.innerHTML = recentUploadItems.map(row=>{
+    const source = recentUploadSourceLabel(row);
+    const src = recentUploadSourceUrl(row);
+    const name = escapeHtml(row.name || 'uploaded-image.png');
+    return `<button class="recent-upload-item" type="button" data-recent-upload-id="${escapeHtml(row.id)}" title="${name} · 点击添加为主图"><span class="recent-upload-item-media"><img src="${src}" alt="${name}" loading="lazy" decoding="async" /></span><span class="recent-upload-item-source ${row.source === 'ref' ? 'is-ref' : ''}">${source}</span><span class="recent-upload-item-name">${name}</span></button>`;
+  }).join('');
+}
+function recentVideoUploadAudioIcon(){
+  return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10v4h4l5 4V6l-5 4H4zm12.2-2.4a1 1 0 0 1 1.4.1 6.3 6.3 0 0 1 0 8.6 1 1 0 1 1-1.5-1.3 4.3 4.3 0 0 0 0-6 1 1 0 0 1 .1-1.4zm2.7-2.5a1 1 0 0 1 1.4.1 10 10 0 0 1 0 13.4 1 1 0 1 1-1.5-1.3 8 8 0 0 0 0-10.8 1 1 0 0 1 .1-1.4z"/></svg>';
+}
+function renderRecentVideoUploadLane(kind, selector, emptyText){
+  const grid = $(selector);
+  if(!grid) return;
+  const rows = recentVideoUploadItems[kind] || [];
+  if(!rows.length){
+    grid.innerHTML = `<div class="recent-video-upload-empty">${emptyText}</div>`;
+    return;
+  }
+  grid.innerHTML = rows.map(row=>{
+    const name = escapeHtml(row.name || 'uploaded-media');
+    const source = recentUploadSourceUrl(row);
+    if(kind === 'video'){
+      return `<button class="recent-video-upload-item is-video" type="button" data-recent-video-upload-id="${escapeHtml(row.id)}" title="${name} · 点击重新加入主任务视频"><span class="recent-video-upload-media"><span class="video-first-frame" data-src="${source}"><span class="video-lazy-icon">▶</span><small>加载封面</small></span><span class="recent-video-upload-badge">视频</span></span><span class="recent-video-upload-name">${name}</span></button>`;
+    }
+    if(kind === 'audio'){
+      return `<button class="recent-video-upload-item is-audio" type="button" data-recent-video-upload-id="${escapeHtml(row.id)}" title="${name} · 点击重新加入参考音频"><span class="recent-video-upload-media recent-video-upload-audio">${recentVideoUploadAudioIcon()}<span class="recent-video-upload-badge">音频</span></span><span class="recent-video-upload-name">${name}</span></button>`;
+    }
+    return `<button class="recent-video-upload-item is-reference" type="button" data-recent-video-upload-id="${escapeHtml(row.id)}" title="${name} · 点击重新加入参考图"><span class="recent-video-upload-media"><img src="${source}" alt="${name}" loading="lazy" decoding="async" /><span class="recent-video-upload-badge">参考图</span></span><span class="recent-video-upload-name">${name}</span></button>`;
+  }).join('');
+  if(kind === 'video') initLazyVideoFirstFrames(grid);
+}
+function renderRecentVideoUploadPanel(){
+  const panel = $('#recentVideoUploadPanel');
+  if(!panel) return;
+  const total = Object.values(recentVideoUploadItems).reduce((sum, rows)=>sum + rows.length, 0);
+  const count = $('#recentVideoUploadCount');
+  if(count) count.textContent = `${total} 条`;
+  renderRecentVideoUploadLane('video', '#recentVideoUploadVideos', '暂无最近上传视频');
+  renderRecentVideoUploadLane('audio', '#recentVideoUploadAudios', '暂无最近上传音频');
+  renderRecentVideoUploadLane('reference_image', '#recentVideoUploadReferences', '暂无最近上传参考图');
+}
+async function refreshRecentUploadPanel(){
+  try{
+    applyRecentUploadResponse(await api('/api/recent_uploads'));
+  }catch(error){
+    recentUploadItems = [];
+    recentVideoUploadItems = { video: [], audio: [], reference_image: [] };
+    renderRecentUploadPanel();
+    renderRecentVideoUploadPanel();
+    console.warn('[recent-upload-cache] load failed:', error);
+  }
+}
+function recentUploadQuery(file, kind, source){
+  const query = new URLSearchParams({
+    name:String(file?.name || 'uploaded-file'),
+    kind,
+    source
+  });
+  return `/api/recent_uploads/upload?${query.toString()}`;
+}
+function cacheRecentMediaFiles(files, kind, source){
+  const list = [...(files || [])].filter(file=>file instanceof Blob && Number(file.size || 0) > 0);
+  if(!list.length) return Promise.resolve();
+  return queueRecentUploadWrite(async()=>{
+    for(const file of list){
+      await api(recentUploadQuery(file, kind, source), {
+        method:'POST',
+        headers:{'Content-Type':String(file.type || 'application/octet-stream')},
+        body:file
+      });
+    }
+    await refreshRecentUploadPanel();
+  }).catch(error=>console.warn('[recent-upload-cache] save failed:', error));
+}
+function cacheRecentUploadedFiles(files, source='main'){
+  const imageFiles = [...(files || [])].filter(file=>file instanceof Blob && (String(file.type || '').startsWith('image/') || /\.(png|jpe?g|webp|gif)$/i.test(String(file.name || ''))));
+  return cacheRecentMediaFiles(imageFiles, 'image', source === 'ref' ? 'ref' : 'main');
+}
+function cacheRecentVideoUploadedFiles(files, kind){
+  return cacheRecentMediaFiles(files, kind, kind === 'reference_image' ? 'video_ref' : kind);
+}
+async function recentUploadFileFromRow(row={}){
+  const url = recentUploadSourceUrl(row);
+  if(!url) throw new Error('最近上传素材源文件不存在');
+  const response = await fetch(url, { headers:assetSourceHeaders() });
+  if(!response.ok) throw new Error(`读取最近上传素材失败 (${response.status})`);
+  const blob = await response.blob();
+  return new File([blob], row.name || 'uploaded-file', {
+    type:blob.type || row.mime_type || 'application/octet-stream',
+    lastModified:Number(row.created_at || Date.now())
+  });
+}
+async function addRecentUploadAsMain(id){
+  const row = recentUploadItems.find(item=>item.id === id);
+  if(!row) return;
+  try{
+    const file = await recentUploadFileFromRow(row);
+    const item = await batchImageFileToItem(file);
+    mainImages.push(item);
+    renderThumbs();
+    calcEstimate();
+    prestagePublicBatchMedia([item]);
+    toast(`已将“${row.name || '图片'}”添加为主图`);
+  }catch(error){
+    toast(error.message || '读取最近上传图片失败');
+  }
+}
+async function addRecentVideoUploadToInputs(id){
+  const row = ['video','audio','reference_image']
+    .flatMap(kind=>recentVideoUploadItems[kind] || [])
+    .find(item=>item.id === id);
+  if(!row) return;
+  try{
+    const file = await recentUploadFileFromRow(row);
+    if(row.kind === 'reference_image') await handleVideoRefs([file], {cache:false, silent:true});
+    else await handleVideoFile([file], {cache:false});
+    toast(`已将“${row.name || '素材'}”重新加入当前视频任务`);
+  }catch(error){
+    toast(error.message || '读取最近上传素材失败');
+  }
+}
+async function clearRecentUploadedImages(){
+  const ret = await api('/api/recent_uploads/clear', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({kind:'image'})});
+  applyRecentUploadResponse(ret);
+}
+function setRecentUploadSettingsHelp(message='', isError=false){
+  const help = $('#recentUploadSettingsHelp');
+  if(!help) return;
+  help.textContent = message || `默认保留最近 ${RECENT_UPLOAD_DEFAULT_LIMIT} 张；可设置为 1 到 ${RECENT_UPLOAD_MAX_LIMIT} 张。`;
+  help.classList.toggle('is-error', !!isError);
+}
+function openRecentUploadSettings(){
+  const modal = $('#recentUploadSettingsModal');
+  if(!modal) return;
+  const input = $('#recentUploadLimitInput');
+  if(input) input.value = String(recentUploadSettings.limit);
+  setRecentUploadSettingsHelp();
+  modal.classList.add('active');
+  modal.setAttribute('aria-hidden', 'false');
+  setTimeout(()=>input?.focus(), 0);
+}
+function closeRecentUploadSettings(){
+  const modal = $('#recentUploadSettingsModal');
+  modal?.classList.remove('active');
+  modal?.setAttribute('aria-hidden', 'true');
+}
+async function saveRecentUploadLimit(){
+  const raw = String($('#recentUploadLimitInput')?.value || '').trim();
+  const value = Number(raw);
+  if(!Number.isInteger(value) || value < 1 || value > RECENT_UPLOAD_MAX_LIMIT){
+    setRecentUploadSettingsHelp(`请输入 1 到 ${RECENT_UPLOAD_MAX_LIMIT} 的整数。`, true);
+    return;
+  }
+  const ret = await api('/api/recent_uploads/settings', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({image_limit:value})});
+  applyRecentUploadResponse(ret);
+  closeRecentUploadSettings();
+  toast(`最近上传图片缓存已设置为 ${value} 张`);
+}
+function setupRecentUploadPanel(){
+  renderRecentUploadPanel();
+  renderRecentVideoUploadPanel();
+  const grid = $('#recentUploadGrid');
+  if(grid && grid.dataset.bound !== '1'){
+    grid.dataset.bound = '1';
+    grid.addEventListener('click', event=>{
+      const item = event.target.closest('[data-recent-upload-id]');
+      if(item) addRecentUploadAsMain(item.dataset.recentUploadId);
+    });
+  }
+  const videoPanel = $('#recentVideoUploadPanel');
+  if(videoPanel && videoPanel.dataset.bound !== '1'){
+    videoPanel.dataset.bound = '1';
+    videoPanel.addEventListener('click', event=>{
+      const item = event.target.closest('[data-recent-video-upload-id]');
+      if(item) addRecentVideoUploadToInputs(item.dataset.recentVideoUploadId);
+    });
+  }
+  $('#recentUploadSettingsBtn')?.addEventListener('click', openRecentUploadSettings);
+  $('#recentUploadSettingsCloseBtn')?.addEventListener('click', closeRecentUploadSettings);
+  $('#cancelRecentUploadSettingsBtn')?.addEventListener('click', closeRecentUploadSettings);
+  $('#saveRecentUploadSettingsBtn')?.addEventListener('click', ()=>saveRecentUploadLimit().catch(error=>setRecentUploadSettingsHelp(error.message || '保存缓存设置失败', true)));
+  $('#clearRecentUploadsBtn')?.addEventListener('click', ()=>clearRecentUploadedImages().then(()=>{ setRecentUploadSettingsHelp('已清空最近上传的图片。'); toast('最近上传图片已清空'); }).catch(error=>setRecentUploadSettingsHelp(error.message || '清空缓存失败', true)));
+  $('#recentUploadLimitInput')?.addEventListener('keydown', event=>{ if(event.key === 'Enter'){ event.preventDefault(); saveRecentUploadLimit().catch(error=>setRecentUploadSettingsHelp(error.message || '保存缓存设置失败', true)); } });
+  $('#recentUploadSettingsModal')?.addEventListener('click', event=>{ if(event.target === event.currentTarget) closeRecentUploadSettings(); });
+  refreshRecentUploadPanel();
+}
+
 async function addFiles(files, target){
-  const arr = await Promise.all([...files].filter(f => f.type.startsWith('image/')).map(batchImageFileToItem));
+  const imageFiles = [...files].filter(f => f.type.startsWith('image/'));
+  const arr = await Promise.all(imageFiles.map(batchImageFileToItem));
+  if(!arr.length) return;
   if(target === 'main') mainImages.push(...arr); else refImages.push(...arr);
   renderThumbs(); calcEstimate();
   prestagePublicBatchMedia(arr);
+  cacheRecentUploadedFiles(imageFiles, target);
 }
 
 function renderThumbs(){
@@ -6794,9 +7030,11 @@ function renderVideoInputs(){
   updateVideoDurationVisibility();
   updateVideoTaskEstimate();
 }
-async function handleVideoFile(files){
+async function handleVideoFile(files, options={}){
   const list = [...(files || [])];
   if(!list.length) return;
+  const recentVideos = [];
+  const recentAudios = [];
   const hasUploadedVideo = list.some(file=>/\.(mp4|mov)$/i.test(file.name || '') || /^video\//i.test(file.type || ''));
   if(hasUploadedVideo && currentVideoPlatform() === 'flow2api' && !flow2VideoModelSupportsUploadedVideo()){
     if($('#videoModel')) $('#videoModel').value = 'omni';
@@ -6811,6 +7049,7 @@ async function handleVideoFile(files){
       const item = await fileToData(f);
       item.duration_seconds = (Number.isFinite(duration) && duration > 0) ? Number(duration.toFixed(3)) : '';
       videoAudioFilesData.push(item);
+      recentAudios.push(f);
       continue;
     }
     if(!(/\.mp4$|\.mov$/.test(name))) { toast('已跳过非 mp4/mov 视频：' + (f.name||'')); continue; }
@@ -6822,8 +7061,13 @@ async function handleVideoFile(files){
     const item = await fileToData(f);
     item.duration_seconds = (Number.isFinite(duration) && duration > 0) ? Number(duration.toFixed(3)) : '';
     videoFilesData.push(item);
+    recentVideos.push(f);
   }
   renderVideoInputs();
+  if(options.cache !== false){
+    if(recentVideos.length) cacheRecentVideoUploadedFiles(recentVideos, 'video');
+    if(recentAudios.length) cacheRecentVideoUploadedFiles(recentAudios, 'audio');
+  }
 }
 function getAudioDurationSeconds(file){
   return new Promise(resolve=>{
@@ -6837,11 +7081,14 @@ function getAudioDurationSeconds(file){
     audio.src = url;
   });
 }
-async function handleVideoRefs(files){
-  const arr = await Promise.all([...files].map(fileToData));
+async function handleVideoRefs(files, options={}){
+  const refs = [...(files || [])].filter(file=>String(file?.type || '').startsWith('image/') || /\.(png|jpe?g|webp|gif)$/i.test(String(file?.name || '')));
+  if(!refs.length) return;
+  const arr = await Promise.all(refs.map(fileToData));
   videoRefImages.push(...arr);
-  toast(`已加入 ${arr.length} 张视频参考图，当前共 ${videoRefImages.length} 张`);
+  if(options.silent !== true) toast(`已加入 ${arr.length} 张视频参考图，当前共 ${videoRefImages.length} 张`);
   renderVideoInputs();
+  if(options.cache !== false) cacheRecentVideoUploadedFiles(refs, 'reference_image');
 }
 function clearVideoInputs(){ videoFilesData=[]; videoAudioFilesData=[]; videoRefImages=[]; $('#videoPrompt').value=''; $('#videoUrlInput').value=''; if($('#videoSourceTaskId')) $('#videoSourceTaskId').value=''; renderVideoInputs(); }
 async function submitVideoTask(opts = {}){
@@ -8943,12 +9190,18 @@ function setupAssetLibrary(){
     if(!asset) return;
     assetState.draggingAssetId = asset.id;
     const sourceUrl = withPublicAccess(asset.source_url || asset.url || asset.download_url || '');
-    if(asset.type === 'image') setImageDragData(e,{fullUrl:sourceUrl, filename:asset.name || 'asset.png', skipNativeDrag:true});
+    // Keep web/LAN fallback data on the original source URL. Electron receives the asset id below
+    // and starts a native drag with asset.local_path, so external apps get the real file rather than its thumbnail.
+    if(asset.type === 'image') {
+      setImageDragData(e,{fullUrl:sourceUrl, filename:asset.name || 'asset.png', skipNativeDrag:true});
+      try{ e.dataTransfer.setData('DownloadURL', `${asset.mime_type || 'image/*'}:${asset.name || 'asset.png'}:${new URL(sourceUrl, location.href).href}`); }catch{}
+    }
     else {
       try{ e.dataTransfer.setData('text/uri-list', new URL(sourceUrl, location.href).href); }catch{}
       try{ e.dataTransfer.setData('text/plain', new URL(sourceUrl, location.href).href); }catch{}
       try{ e.dataTransfer.setData('DownloadURL', `${asset.mime_type || 'application/octet-stream'}:${asset.name || 'asset'}:${new URL(sourceUrl, location.href).href}`); }catch{}
     }
+    try{ window.electronAPI?.startAssetDrag?.({id:asset.id}); }catch{}
     if(assetCanEdit(asset)){
       const ids=assetState.selected.has(card.dataset.id)?assetSelectedIds():[card.dataset.id];
       e.dataTransfer.setData('application/x-laig-assets',JSON.stringify(ids));
@@ -9878,6 +10131,7 @@ async function startup(){
     loadPreviewBgSettings();
     applyPreviewBgSettings();
     await loadConfig();
+    setupRecentUploadPanel();
     setupApimartBalance();
     calcEstimate();
     await refreshAll();

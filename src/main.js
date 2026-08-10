@@ -37,6 +37,7 @@ const SERVER_ONLY = process.env.LAIG_SERVER_ONLY === '1' || process.env.LAIG_DOC
 const JSON_BODY_LIMIT_BYTES = Number(process.env.LAIG_JSON_BODY_LIMIT_MB || 64) * 1024 * 1024;
 const MEDIA_BODY_LIMIT_BYTES = Number(process.env.LAIG_MEDIA_BODY_LIMIT_MB || 1536) * 1024 * 1024;
 const BATCH_MEDIA_FILE_LIMIT_BYTES = Number(process.env.LAIG_BATCH_MEDIA_FILE_LIMIT_MB || 256) * 1024 * 1024;
+const RECENT_UPLOAD_FILE_LIMIT_BYTES = Number(process.env.LAIG_RECENT_UPLOAD_FILE_LIMIT_MB || 256) * 1024 * 1024;
 const STATUS_CACHE_TTL_MS = 1800;
 const HOST_STATS_CACHE_TTL_MS = 8000;
 const STALE_CLEANUP_TTL_MS = 15000;
@@ -4473,6 +4474,269 @@ async function writeHistoryJsonAtomic(file, json) {
     await fs.promises.unlink(temporary).catch(()=>{});
   }
 }
+
+// Recent upload cache is deliberately file-backed. Keeping it alongside the configured
+// output directory means it survives a restart and avoids storing large video blobs in Chromium.
+const RECENT_UPLOAD_KINDS = new Set(['image', 'video', 'audio', 'reference_image']);
+const RECENT_UPLOAD_DEFAULT_LIMIT = 10;
+const RECENT_UPLOAD_MAX_LIMIT = 50;
+const recentUploadWriteChains = new Map();
+function recentUploadOwnerKey(owner = '') {
+  return cleanOwner(owner || 'local', false) || 'local';
+}
+function recentUploadStorageMeta(owner = '', cfg = readConfig()) {
+  const safeOwner = recentUploadOwnerKey(owner);
+  const outputRuntime = runtimeMirrorDir(cfg);
+  const root = outputRuntime
+    ? path.join(outputRuntime, 'recent_uploads', safeOwner)
+    : path.join(DATA_ROOT, 'data', 'recent_uploads', safeOwner);
+  return {
+    owner: safeOwner,
+    storage: outputRuntime ? 'output' : 'local',
+    root,
+    filesDir: path.join(root, 'files'),
+    indexFile: path.join(root, 'index.json')
+  };
+}
+function normalizeRecentUploadLimit(value, fallback = RECENT_UPLOAD_DEFAULT_LIMIT) {
+  const parsed = Math.round(Number(value));
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(1, Math.min(RECENT_UPLOAD_MAX_LIMIT, parsed));
+}
+function recentUploadSettings(payload = {}) {
+  const raw = payload && typeof payload === 'object' ? payload : {};
+  return {
+    image_limit: normalizeRecentUploadLimit(raw.image_limit, RECENT_UPLOAD_DEFAULT_LIMIT),
+    video_limit: normalizeRecentUploadLimit(raw.video_limit, RECENT_UPLOAD_DEFAULT_LIMIT),
+    audio_limit: normalizeRecentUploadLimit(raw.audio_limit, RECENT_UPLOAD_DEFAULT_LIMIT),
+    reference_image_limit: normalizeRecentUploadLimit(raw.reference_image_limit, RECENT_UPLOAD_DEFAULT_LIMIT)
+  };
+}
+function recentUploadLimitForKind(settings = {}, kind = '') {
+  const key = `${String(kind || '').trim()}_limit`;
+  return normalizeRecentUploadLimit(settings[key], RECENT_UPLOAD_DEFAULT_LIMIT);
+}
+function recentUploadFileName(value = '') {
+  const base = path.basename(String(value || ''));
+  return safeName(base, 'uploaded-file').slice(0, 120);
+}
+function recentUploadKindFrom(value = '') {
+  const kind = String(value || '').trim().toLowerCase();
+  return RECENT_UPLOAD_KINDS.has(kind) ? kind : '';
+}
+function recentUploadAllowedExtension(kind = '', name = '', mime = '') {
+  const ext = path.extname(String(name || '')).toLowerCase();
+  const allowed = kind === 'video'
+    ? new Set(['.mp4', '.mov', '.webm', '.m4v'])
+    : kind === 'audio'
+      ? new Set(['.mp3', '.wav', '.m4a', '.aac'])
+      : new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif']);
+  if (allowed.has(ext)) return ext;
+  const type = String(mime || '').toLowerCase();
+  if (kind === 'video') {
+    if (type.includes('quicktime')) return '.mov';
+    if (type.includes('webm')) return '.webm';
+    if (type.includes('m4v')) return '.m4v';
+    return '.mp4';
+  }
+  if (kind === 'audio') {
+    if (type.includes('wav')) return '.wav';
+    if (type.includes('aac')) return '.aac';
+    if (type.includes('mp4') || type.includes('m4a')) return '.m4a';
+    return '.mp3';
+  }
+  if (type.includes('jpeg')) return '.jpg';
+  if (type.includes('webp')) return '.webp';
+  if (type.includes('gif')) return '.gif';
+  return '.png';
+}
+function recentUploadMimeMatchesKind(kind = '', mime = '', name = '') {
+  const type = String(mime || '').toLowerCase();
+  const ext = path.extname(String(name || '')).toLowerCase();
+  if (kind === 'video') return type.startsWith('video/') || ['.mp4', '.mov', '.webm', '.m4v'].includes(ext);
+  if (kind === 'audio') return type.startsWith('audio/') || ['.mp3', '.wav', '.m4a', '.aac'].includes(ext);
+  return type.startsWith('image/') || ['.png', '.jpg', '.jpeg', '.webp', '.gif'].includes(ext);
+}
+function normalizeRecentUploadItem(item = {}) {
+  const kind = recentUploadKindFrom(item.kind);
+  const id = String(item.id || '').trim();
+  const file = path.basename(String(item.file || '').trim());
+  if (!kind || !id || !file || !/^recent_[a-z0-9_-]+\.[a-z0-9]+$/i.test(file)) return null;
+  return {
+    id: id.slice(0, 160),
+    kind,
+    source: String(item.source || '').trim().slice(0, 48),
+    name: recentUploadFileName(item.name || file),
+    mime_type: String(item.mime_type || contentType(file) || 'application/octet-stream').slice(0, 120),
+    size: Math.max(0, Number(item.size || 0)),
+    file,
+    created_at: Number(item.created_at || Date.now())
+  };
+}
+function normalizeRecentUploadIndex(payload = {}) {
+  const source = payload && typeof payload === 'object' ? payload : {};
+  const seen = new Set();
+  const items = (Array.isArray(source.items) ? source.items : [])
+    .map(normalizeRecentUploadItem)
+    .filter(item => item && !seen.has(item.id) && seen.add(item.id))
+    .sort((a, b) => Number(b.created_at || 0) - Number(a.created_at || 0));
+  return {
+    version: 1,
+    updated_at: nowISO(),
+    settings: recentUploadSettings(source.settings),
+    items
+  };
+}
+async function readRecentUploadIndex(meta) {
+  try {
+    return normalizeRecentUploadIndex(JSON.parse(await fs.promises.readFile(meta.indexFile, 'utf8')));
+  } catch {
+    return normalizeRecentUploadIndex({});
+  }
+}
+async function writeRecentUploadIndex(meta, payload) {
+  const normalized = normalizeRecentUploadIndex(payload);
+  await fs.promises.mkdir(meta.filesDir, { recursive:true });
+  await writeHistoryJsonAtomic(meta.indexFile, JSON.stringify(normalized, null, 2));
+  return normalized;
+}
+function trimRecentUploadIndex(index) {
+  const limits = recentUploadSettings(index.settings);
+  const kept = [];
+  const stale = [];
+  const counts = new Map();
+  for (const item of index.items || []) {
+    const count = counts.get(item.kind) || 0;
+    if (count < recentUploadLimitForKind(limits, item.kind)) {
+      counts.set(item.kind, count + 1);
+      kept.push(item);
+    } else {
+      stale.push(item);
+    }
+  }
+  index.items = kept;
+  index.settings = limits;
+  return stale;
+}
+async function removeRecentUploadFiles(meta, items = []) {
+  await Promise.all((items || []).map(item => {
+    const file = path.resolve(meta.filesDir, path.basename(String(item?.file || '')));
+    return isPathInside(meta.filesDir, file) ? fs.promises.rm(file, { force:true }).catch(()=>{}) : Promise.resolve();
+  }));
+}
+function queueRecentUploadWrite(meta, work) {
+  const key = pathKey(meta.root);
+  const previous = recentUploadWriteChains.get(key) || Promise.resolve();
+  const next = previous.catch(()=>{}).then(work);
+  recentUploadWriteChains.set(key, next);
+  return next.finally(() => {
+    if (recentUploadWriteChains.get(key) === next) recentUploadWriteChains.delete(key);
+  });
+}
+function recentUploadPublicItem(item = {}) {
+  const { file, ...publicItem } = item;
+  return {
+    ...publicItem,
+    source_url: `/api/recent_uploads/source?id=${encodeURIComponent(item.id)}`,
+    download_url: `/api/recent_uploads/source?id=${encodeURIComponent(item.id)}&download=1`
+  };
+}
+async function listRecentUploads(owner = '', cfg = readConfig()) {
+  const meta = recentUploadStorageMeta(owner, cfg);
+  const index = await readRecentUploadIndex(meta);
+  return {
+    ok:true,
+    storage:meta.storage,
+    storage_dir:meta.root,
+    settings:index.settings,
+    items:index.items.map(recentUploadPublicItem)
+  };
+}
+async function receiveRecentUpload(req, parsed, owner = '', cfg = readConfig()) {
+  const kind = recentUploadKindFrom(parsed.query.kind);
+  const requestedName = recentUploadFileName(parsed.query.name || 'uploaded-file');
+  const mime = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+  if (!kind) throw new Error('最近上传素材类型无效');
+  if (!recentUploadMimeMatchesKind(kind, mime, requestedName)) throw new Error('上传文件类型与最近上传分类不匹配');
+  const declared = Number(req.headers['content-length'] || 0);
+  if (declared > RECENT_UPLOAD_FILE_LIMIT_BYTES) throw payloadTooLargeError(RECENT_UPLOAD_FILE_LIMIT_BYTES);
+  const meta = recentUploadStorageMeta(owner, cfg);
+  await fs.promises.mkdir(meta.filesDir, { recursive:true });
+  const ext = recentUploadAllowedExtension(kind, requestedName, mime);
+  const id = uuid('recent_');
+  const file = `${id}${ext}`;
+  const filePath = path.join(meta.filesDir, file);
+  let bytes = 0;
+  const limiter = new Transform({
+    transform(chunk, encoding, callback) {
+      bytes += chunk.length;
+      if (bytes > RECENT_UPLOAD_FILE_LIMIT_BYTES) return callback(payloadTooLargeError(RECENT_UPLOAD_FILE_LIMIT_BYTES));
+      callback(null, chunk);
+    }
+  });
+  try {
+    await pipeline(req, limiter, fs.createWriteStream(filePath, { flags:'wx' }));
+    if (!bytes) throw new Error('上传的最近素材文件为空');
+    const item = normalizeRecentUploadItem({
+      id,
+      kind,
+      source: String(parsed.query.source || kind),
+      name: requestedName,
+      mime_type: mime || contentType(file),
+      size:bytes,
+      file,
+      created_at:Date.now()
+    });
+    return await queueRecentUploadWrite(meta, async () => {
+      const index = await readRecentUploadIndex(meta);
+      index.items = [item, ...(index.items || []).filter(row => row.id !== item.id)];
+      const stale = trimRecentUploadIndex(index);
+      const saved = await writeRecentUploadIndex(meta, index);
+      await removeRecentUploadFiles(meta, stale);
+      return { ok:true, item:recentUploadPublicItem(item), settings:saved.settings, storage:meta.storage, storage_dir:meta.root };
+    });
+  } catch (error) {
+    await fs.promises.rm(filePath, { force:true }).catch(()=>{});
+    throw error;
+  }
+}
+async function updateRecentUploadSettings(owner = '', body = {}, cfg = readConfig()) {
+  const raw = Number(body.image_limit);
+  if (!Number.isInteger(raw) || raw < 1 || raw > RECENT_UPLOAD_MAX_LIMIT) throw new Error(`最近上传图片数量必须是 1 到 ${RECENT_UPLOAD_MAX_LIMIT} 的整数`);
+  const meta = recentUploadStorageMeta(owner, cfg);
+  return queueRecentUploadWrite(meta, async () => {
+    const index = await readRecentUploadIndex(meta);
+    index.settings.image_limit = raw;
+    const stale = trimRecentUploadIndex(index);
+    const saved = await writeRecentUploadIndex(meta, index);
+    await removeRecentUploadFiles(meta, stale);
+    return { ok:true, settings:saved.settings, items:saved.items.map(recentUploadPublicItem), storage:meta.storage, storage_dir:meta.root };
+  });
+}
+async function clearRecentUploads(owner = '', kind = '', cfg = readConfig()) {
+  const normalizedKind = recentUploadKindFrom(kind);
+  if (!normalizedKind) throw new Error('需要指定要清空的最近上传素材类型');
+  const meta = recentUploadStorageMeta(owner, cfg);
+  return queueRecentUploadWrite(meta, async () => {
+    const index = await readRecentUploadIndex(meta);
+    const removed = (index.items || []).filter(item => item.kind === normalizedKind);
+    index.items = (index.items || []).filter(item => item.kind !== normalizedKind);
+    const saved = await writeRecentUploadIndex(meta, index);
+    await removeRecentUploadFiles(meta, removed);
+    return { ok:true, settings:saved.settings, items:saved.items.map(recentUploadPublicItem), cleared:removed.length, storage:meta.storage, storage_dir:meta.root };
+  });
+}
+async function streamRecentUploadSource(req, res, parsed, owner = '', cfg = readConfig()) {
+  const meta = recentUploadStorageMeta(owner, cfg);
+  const index = await readRecentUploadIndex(meta);
+  const item = (index.items || []).find(row => row.id === String(parsed.query.id || ''));
+  if (!item) return sendText(res, 'recent upload not found', 'text/plain', 404);
+  const file = path.resolve(meta.filesDir, path.basename(item.file || ''));
+  if (!isPathInside(meta.filesDir, file) || !fs.existsSync(file)) return sendText(res, 'recent upload source missing', 'text/plain', 404);
+  const download = String(parsed.query.download || '') === '1';
+  if (item.kind === 'video') return streamVideoFile(file, req, res, download);
+  return sendDiskFile(req, res, file, { download, filename:item.name || path.basename(file), type:item.mime_type || contentType(file) });
+}
 function normalizeAgentHistoryPayload(payload = {}) {
   const conversations = Array.isArray(payload.conversations) ? payload.conversations : [];
   return {
@@ -7699,6 +7963,11 @@ async function apiHandler(req, res, parsed) {
       uploaded.upload_ms = Date.now() - startedAt;
       return send(res, uploaded);
     }
+    if (method === 'GET' && p === '/api/recent_uploads') return send(res, await listRecentUploads(deviceOwner, cfg));
+    if (method === 'POST' && p === '/api/recent_uploads/upload') return send(res, await receiveRecentUpload(req, parsed, deviceOwner, cfg));
+    if (method === 'POST' && p === '/api/recent_uploads/settings') { const body = await readBody(req); return send(res, await updateRecentUploadSettings(deviceOwner, body, cfg)); }
+    if (method === 'POST' && p === '/api/recent_uploads/clear') { const body = await readBody(req); return send(res, await clearRecentUploads(deviceOwner, body.kind, cfg)); }
+    if (method === 'GET' && p === '/api/recent_uploads/source') return streamRecentUploadSource(req, res, parsed, deviceOwner, cfg);
     if (method === 'GET' && p === '/api/prompt_library') return send(res, promptLibraryResponse(local, cfg));
     if (method === 'POST' && p === '/api/prompt_library/group') { const body = await readBody(req); return send(res, upsertPromptGroup(body, local, cfg, deviceOwner)); }
     if (method === 'POST' && p === '/api/prompt_library/template') { const body = await readBody(req); return send(res, upsertPromptTemplate(body, local, cfg, deviceOwner)); }
@@ -8271,6 +8540,23 @@ ipcMain.on('start-image-drag', (event, payload = {}) => {
     const filePath = info.filePath;
     if (!filePath || filePath.startsWith('data:image/') || !fs.existsSync(filePath)) return;
     event.sender.startDrag({ file: filePath, icon: filePath });
+  } catch {}
+});
+
+// Asset-library drag-out must use the stored source file, never the preview thumbnail.
+// The renderer passes only an asset id; resolving it here keeps the actual disk path private.
+ipcMain.on('start-asset-drag', (event, payload = {}) => {
+  try {
+    const assetId = String(payload.id || '').trim();
+    if (!assetId) return;
+    const db = readAssetDb(readConfig());
+    const asset = (db.assets || []).find(row => String(row?.id || '') === assetId);
+    if (!asset?.local_path || !fs.existsSync(asset.local_path)) return;
+
+    const appIcon = path.join(__dirname, '..', 'assets', 'rocket.ico');
+    const iconPath = [asset.thumb_path, appIcon, asset.local_path].find(candidate => candidate && fs.existsSync(candidate));
+    const icon = nativeImage.createFromPath(iconPath || appIcon);
+    event.sender.startDrag({ file: asset.local_path, icon });
   } catch {}
 });
 
