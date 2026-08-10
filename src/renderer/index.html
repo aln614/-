@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>TENYING_AI 1.0</title>
-  <link rel="stylesheet" href="/static/style.css?v=1.0.66" />
+  <link rel="stylesheet" href="/static/style.css?v=1.0.67" />
 </head>
 <body>
   <div class="app-shell">
@@ -263,7 +263,7 @@
                 <h2 id="recentUploadTitle">最近上传图片</h2>
                 <span class="recent-upload-count" id="recentUploadCount">0 / 10</span>
               </div>
-              <p>仅保留本设备最近上传的图片。点击缩略图可再次添加为主图。</p>
+              <p>仅保留本设备最近上传的图片。单击预览，双击可再次添加为主图。</p>
             </div>
             <button class="recent-upload-settings-btn" id="recentUploadSettingsBtn" type="button" title="最近上传图片配置" aria-label="最近上传图片配置">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 1.2 2.4 2.7.4.5 2.7 2.3 1.5-1.5 2.3.4 2.7-2.4 1.2-1.2 2.4-2.7-.4-2.3 1.5-2.3-1.5-2.7.4-1.2-2.4.4-2.7-1.5-2.3 1.5-2.3-.4-2.7 2.4-1.2L12 3Z" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.65"/></svg>
@@ -384,7 +384,12 @@
         <section class="recent-video-upload-panel" id="recentVideoUploadPanel" aria-labelledby="recentVideoUploadTitle">
           <div class="recent-video-upload-head">
             <div><h2 id="recentVideoUploadTitle">最近上传素材</h2><p>点击素材可重新加入当前视频任务。</p></div>
-            <span class="recent-video-upload-count" id="recentVideoUploadCount">0 条</span>
+            <div class="recent-video-upload-head-actions">
+              <span class="recent-video-upload-count" id="recentVideoUploadCount">0 条</span>
+              <button class="recent-upload-settings-btn recent-video-upload-settings-btn" id="recentVideoUploadSettingsBtn" type="button" title="最近上传素材配置" aria-label="最近上传素材配置">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 1.2 2.4 2.7.4.5 2.7 2.3 1.5-1.5 2.3.4 2.7-2.4 1.2-1.2 2.4-2.7-.4-2.3 1.5-2.3-1.5-2.7.4-1.2-2.4.4-2.7-1.5-2.3 1.5-2.3-.4-2.7 2.4-1.2L12 3Z" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.65"/></svg>
+              </button>
+            </div>
           </div>
           <div class="recent-video-upload-lanes">
             <section class="recent-video-upload-lane" aria-labelledby="recentVideoUploadVideosTitle">
@@ -929,13 +934,33 @@
         <button class="recent-upload-modal-close" id="recentUploadSettingsCloseBtn" type="button" aria-label="关闭">×</button>
       </div>
       <label for="recentUploadLimitInput">只缓存最近 N 张上传的图</label>
-      <div class="recent-upload-limit-row"><input id="recentUploadLimitInput" type="number" min="1" max="50" step="1" value="10" inputmode="numeric" /><span>张</span></div>
-      <div class="recent-upload-settings-help" id="recentUploadSettingsHelp">默认保留最近 10 张；可设置为 1 到 50 张。</div>
+      <div class="recent-upload-limit-row"><input id="recentUploadLimitInput" type="number" min="1" step="1" value="10" inputmode="numeric" /><span>张</span></div>
+      <div class="recent-upload-settings-help" id="recentUploadSettingsHelp">默认保留最近 10 张；可设置任意正整数。</div>
       <div class="recent-upload-settings-actions">
         <button class="danger recent-upload-clear-btn" id="clearRecentUploadsBtn" type="button">清空最近上传的图片</button>
         <span class="recent-upload-settings-spacer"></span>
         <button class="secondary" id="cancelRecentUploadSettingsBtn" type="button">取消</button>
         <button class="primary" id="saveRecentUploadSettingsBtn" type="button">保存</button>
+      </div>
+    </section>
+  </div>
+  <div class="modal recent-upload-settings-modal" id="recentVideoUploadSettingsModal" aria-hidden="true">
+    <section class="recent-upload-settings-dialog glass-modal" role="dialog" aria-modal="true" aria-labelledby="recentVideoUploadSettingsTitle">
+      <div class="recent-upload-settings-head">
+        <div><h2 id="recentVideoUploadSettingsTitle">最近上传素材缓存</h2><p>缓存写入设置中心输出目录的“运行数据目录”；超过上限时自动清理各分类最旧素材。</p></div>
+        <button class="recent-upload-modal-close" id="recentVideoUploadSettingsCloseBtn" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="recent-video-upload-settings-grid">
+        <div><label for="recentVideoUploadLimitInput">只缓存最近 N 条视频</label><div class="recent-upload-limit-row"><input id="recentVideoUploadLimitInput" type="number" min="1" step="1" value="10" inputmode="numeric" /><span>条</span></div></div>
+        <div><label for="recentAudioUploadLimitInput">只缓存最近 N 条音频</label><div class="recent-upload-limit-row"><input id="recentAudioUploadLimitInput" type="number" min="1" step="1" value="10" inputmode="numeric" /><span>条</span></div></div>
+        <div><label for="recentVideoReferenceUploadLimitInput">只缓存最近 N 张参考图</label><div class="recent-upload-limit-row"><input id="recentVideoReferenceUploadLimitInput" type="number" min="1" step="1" value="10" inputmode="numeric" /><span>张</span></div></div>
+      </div>
+      <div class="recent-upload-settings-help" id="recentVideoUploadSettingsHelp">默认每类保留最近 10 条；可设置任意正整数。</div>
+      <div class="recent-upload-settings-actions">
+        <button class="danger recent-upload-clear-btn" id="clearRecentVideoUploadsBtn" type="button">清空视频、音频与参考图</button>
+        <span class="recent-upload-settings-spacer"></span>
+        <button class="secondary" id="cancelRecentVideoUploadSettingsBtn" type="button">取消</button>
+        <button class="primary" id="saveRecentVideoUploadSettingsBtn" type="button">保存</button>
       </div>
     </section>
   </div>
@@ -953,6 +978,6 @@
       </div>
     </div>
   </div>
-  <script src="/static/app.js?v=1.0.66"></script>
+  <script src="/static/app.js?v=1.0.67"></script>
 </body>
 </html>

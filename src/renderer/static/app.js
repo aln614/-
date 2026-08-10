@@ -3,11 +3,16 @@ const $$ = (s) => Array.from(document.querySelectorAll(s));
 let mainImages = [];
 let refImages = [];
 const RECENT_UPLOAD_DEFAULT_LIMIT = 10;
-const RECENT_UPLOAD_MAX_LIMIT = 50;
-let recentUploadSettings = { limit: RECENT_UPLOAD_DEFAULT_LIMIT };
+let recentUploadSettings = {
+  image_limit: RECENT_UPLOAD_DEFAULT_LIMIT,
+  video_limit: RECENT_UPLOAD_DEFAULT_LIMIT,
+  audio_limit: RECENT_UPLOAD_DEFAULT_LIMIT,
+  reference_image_limit: RECENT_UPLOAD_DEFAULT_LIMIT
+};
 let recentUploadItems = [];
 let recentUploadWriteChain = Promise.resolve();
 let recentVideoUploadItems = { video: [], audio: [], reference_image: [] };
+const recentUploadPreviewTimers = new Map();
 let batches = [];
 let historyBatches = [];
 let selectedImages = new Set();
@@ -3623,7 +3628,7 @@ function fileIcon(it){
 function normalizeRecentUploadLimit(value, fallback=RECENT_UPLOAD_DEFAULT_LIMIT){
   const parsed = Math.round(Number(value));
   if(!Number.isFinite(parsed)) return fallback;
-  return Math.max(1, Math.min(RECENT_UPLOAD_MAX_LIMIT, parsed));
+  return Math.max(1, Math.min(Number.MAX_SAFE_INTEGER, parsed));
 }
 function queueRecentUploadWrite(work){
   const next = recentUploadWriteChain.then(work, work);
@@ -3638,12 +3643,17 @@ function recentUploadSourceLabel(row={}){
 }
 function applyRecentUploadResponse(payload={}){
   const all = Array.isArray(payload.items) ? payload.items : [];
-  recentUploadSettings = { limit: normalizeRecentUploadLimit(payload.settings?.image_limit, RECENT_UPLOAD_DEFAULT_LIMIT) };
-  recentUploadItems = all.filter(row=>row?.kind === 'image').slice(0, recentUploadSettings.limit);
+  recentUploadSettings = {
+    image_limit: normalizeRecentUploadLimit(payload.settings?.image_limit, RECENT_UPLOAD_DEFAULT_LIMIT),
+    video_limit: normalizeRecentUploadLimit(payload.settings?.video_limit, RECENT_UPLOAD_DEFAULT_LIMIT),
+    audio_limit: normalizeRecentUploadLimit(payload.settings?.audio_limit, RECENT_UPLOAD_DEFAULT_LIMIT),
+    reference_image_limit: normalizeRecentUploadLimit(payload.settings?.reference_image_limit, RECENT_UPLOAD_DEFAULT_LIMIT)
+  };
+  recentUploadItems = all.filter(row=>row?.kind === 'image').slice(0, recentUploadSettings.image_limit);
   recentVideoUploadItems = {
-    video: all.filter(row=>row?.kind === 'video'),
-    audio: all.filter(row=>row?.kind === 'audio'),
-    reference_image: all.filter(row=>row?.kind === 'reference_image')
+    video: all.filter(row=>row?.kind === 'video').slice(0, recentUploadSettings.video_limit),
+    audio: all.filter(row=>row?.kind === 'audio').slice(0, recentUploadSettings.audio_limit),
+    reference_image: all.filter(row=>row?.kind === 'reference_image').slice(0, recentUploadSettings.reference_image_limit)
   };
   renderRecentUploadPanel();
   renderRecentVideoUploadPanel();
@@ -3652,7 +3662,7 @@ function renderRecentUploadPanel(){
   const grid = $('#recentUploadGrid');
   const count = $('#recentUploadCount');
   const clear = $('#clearRecentUploadsBtn');
-  if(count) count.textContent = `${recentUploadItems.length} / ${recentUploadSettings.limit}`;
+  if(count) count.textContent = `${recentUploadItems.length} / ${recentUploadSettings.image_limit}`;
   if(clear) clear.disabled = !recentUploadItems.length;
   if(!grid) return;
   if(!recentUploadItems.length){
@@ -3663,7 +3673,7 @@ function renderRecentUploadPanel(){
     const source = recentUploadSourceLabel(row);
     const src = recentUploadSourceUrl(row);
     const name = escapeHtml(row.name || 'uploaded-image.png');
-    return `<button class="recent-upload-item" type="button" data-recent-upload-id="${escapeHtml(row.id)}" title="${name} · 点击添加为主图"><span class="recent-upload-item-media"><img src="${src}" alt="${name}" loading="lazy" decoding="async" /></span><span class="recent-upload-item-source ${row.source === 'ref' ? 'is-ref' : ''}">${source}</span><span class="recent-upload-item-name">${name}</span></button>`;
+    return `<button class="recent-upload-item" type="button" data-recent-upload-id="${escapeHtml(row.id)}" title="${name} · 单击预览，双击添加为主图"><span class="recent-upload-item-media"><img src="${src}" alt="${name}" loading="lazy" decoding="async" draggable="false" /></span><span class="recent-upload-item-source ${row.source === 'ref' ? 'is-ref' : ''}">${source}</span><span class="recent-upload-item-name">${name}</span></button>`;
   }).join('');
 }
 function recentVideoUploadAudioIcon(){
@@ -3695,7 +3705,9 @@ function renderRecentVideoUploadPanel(){
   if(!panel) return;
   const total = Object.values(recentVideoUploadItems).reduce((sum, rows)=>sum + rows.length, 0);
   const count = $('#recentVideoUploadCount');
+  const clear = $('#clearRecentVideoUploadsBtn');
   if(count) count.textContent = `${total} 条`;
+  if(clear) clear.disabled = !total;
   renderRecentVideoUploadLane('video', '#recentVideoUploadVideos', '暂无最近上传视频');
   renderRecentVideoUploadLane('audio', '#recentVideoUploadAudios', '暂无最近上传音频');
   renderRecentVideoUploadLane('reference_image', '#recentVideoUploadReferences', '暂无最近上传参考图');
@@ -3751,6 +3763,25 @@ async function recentUploadFileFromRow(row={}){
     lastModified:Number(row.created_at || Date.now())
   });
 }
+function cancelRecentUploadPreview(id){
+  const timer = recentUploadPreviewTimers.get(id);
+  if(timer) window.clearTimeout(timer);
+  recentUploadPreviewTimers.delete(id);
+}
+function previewRecentUploadImage(id){
+  const row = recentUploadItems.find(item=>item.id === id);
+  const src = row ? recentUploadSourceUrl(row) : '';
+  if(!src){ toast('最近上传图片源文件不存在'); return; }
+  showPreview(src, { model:'最近上传图片', fullUrl:src, filename:row.name || 'uploaded-image.png' });
+}
+function scheduleRecentUploadPreview(id){
+  cancelRecentUploadPreview(id);
+  const timer = window.setTimeout(()=>{
+    recentUploadPreviewTimers.delete(id);
+    previewRecentUploadImage(id);
+  }, 220);
+  recentUploadPreviewTimers.set(id, timer);
+}
 async function addRecentUploadAsMain(id){
   const row = recentUploadItems.find(item=>item.id === id);
   if(!row) return;
@@ -3787,14 +3818,14 @@ async function clearRecentUploadedImages(){
 function setRecentUploadSettingsHelp(message='', isError=false){
   const help = $('#recentUploadSettingsHelp');
   if(!help) return;
-  help.textContent = message || `默认保留最近 ${RECENT_UPLOAD_DEFAULT_LIMIT} 张；可设置为 1 到 ${RECENT_UPLOAD_MAX_LIMIT} 张。`;
+  help.textContent = message || `默认保留最近 ${RECENT_UPLOAD_DEFAULT_LIMIT} 张；可设置任意正整数。`;
   help.classList.toggle('is-error', !!isError);
 }
 function openRecentUploadSettings(){
   const modal = $('#recentUploadSettingsModal');
   if(!modal) return;
   const input = $('#recentUploadLimitInput');
-  if(input) input.value = String(recentUploadSettings.limit);
+  if(input) input.value = String(recentUploadSettings.image_limit);
   setRecentUploadSettingsHelp();
   modal.classList.add('active');
   modal.setAttribute('aria-hidden', 'false');
@@ -3808,14 +3839,69 @@ function closeRecentUploadSettings(){
 async function saveRecentUploadLimit(){
   const raw = String($('#recentUploadLimitInput')?.value || '').trim();
   const value = Number(raw);
-  if(!Number.isInteger(value) || value < 1 || value > RECENT_UPLOAD_MAX_LIMIT){
-    setRecentUploadSettingsHelp(`请输入 1 到 ${RECENT_UPLOAD_MAX_LIMIT} 的整数。`, true);
+  if(!Number.isSafeInteger(value) || value < 1){
+    setRecentUploadSettingsHelp('请输入大于 0 的整数。', true);
     return;
   }
   const ret = await api('/api/recent_uploads/settings', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({image_limit:value})});
   applyRecentUploadResponse(ret);
   closeRecentUploadSettings();
   toast(`最近上传图片缓存已设置为 ${value} 张`);
+}
+function setRecentVideoUploadSettingsHelp(message='', isError=false){
+  const help = $('#recentVideoUploadSettingsHelp');
+  if(!help) return;
+  help.textContent = message || `默认每类保留最近 ${RECENT_UPLOAD_DEFAULT_LIMIT} 条；可设置任意正整数。`;
+  help.classList.toggle('is-error', !!isError);
+}
+function openRecentVideoUploadSettings(){
+  const modal = $('#recentVideoUploadSettingsModal');
+  if(!modal) return;
+  const fields = [
+    ['#recentVideoUploadLimitInput', 'video_limit'],
+    ['#recentAudioUploadLimitInput', 'audio_limit'],
+    ['#recentVideoReferenceUploadLimitInput', 'reference_image_limit']
+  ];
+  fields.forEach(([selector, key])=>{
+    const input = $(selector);
+    if(input) input.value = String(recentUploadSettings[key]);
+  });
+  setRecentVideoUploadSettingsHelp();
+  modal.classList.add('active');
+  modal.setAttribute('aria-hidden', 'false');
+  setTimeout(()=>$('#recentVideoUploadLimitInput')?.focus(), 0);
+}
+function closeRecentVideoUploadSettings(){
+  const modal = $('#recentVideoUploadSettingsModal');
+  modal?.classList.remove('active');
+  modal?.setAttribute('aria-hidden', 'true');
+}
+function recentVideoUploadSettingsPatch(){
+  const fields = [
+    ['#recentVideoUploadLimitInput', 'video_limit', '视频'],
+    ['#recentAudioUploadLimitInput', 'audio_limit', '音频'],
+    ['#recentVideoReferenceUploadLimitInput', 'reference_image_limit', '参考图']
+  ];
+  return fields.reduce((patch, [selector, key, label])=>{
+    const value = Number(String($(selector)?.value || '').trim());
+    if(!Number.isSafeInteger(value) || value < 1) throw new Error(`${label}缓存数量请输入大于 0 的整数。`);
+    patch[key] = value;
+    return patch;
+  }, {});
+}
+async function saveRecentVideoUploadSettings(){
+  const patch = recentVideoUploadSettingsPatch();
+  const ret = await api('/api/recent_uploads/settings', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(patch)});
+  applyRecentUploadResponse(ret);
+  closeRecentVideoUploadSettings();
+  toast('最近上传视频素材缓存已保存');
+}
+async function clearRecentVideoUploads(){
+  let ret = null;
+  for(const kind of ['video', 'audio', 'reference_image']){
+    ret = await api('/api/recent_uploads/clear', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({kind})});
+  }
+  if(ret) applyRecentUploadResponse(ret);
 }
 function setupRecentUploadPanel(){
   renderRecentUploadPanel();
@@ -3825,7 +3911,20 @@ function setupRecentUploadPanel(){
     grid.dataset.bound = '1';
     grid.addEventListener('click', event=>{
       const item = event.target.closest('[data-recent-upload-id]');
-      if(item) addRecentUploadAsMain(item.dataset.recentUploadId);
+      if(item && event.detail === 1) scheduleRecentUploadPreview(item.dataset.recentUploadId);
+    });
+    grid.addEventListener('dblclick', event=>{
+      const item = event.target.closest('[data-recent-upload-id]');
+      if(!item) return;
+      event.preventDefault();
+      cancelRecentUploadPreview(item.dataset.recentUploadId);
+      addRecentUploadAsMain(item.dataset.recentUploadId);
+    });
+    grid.addEventListener('keydown', event=>{
+      const item = event.target.closest('[data-recent-upload-id]');
+      if(!item || !['Enter', ' '].includes(event.key)) return;
+      event.preventDefault();
+      previewRecentUploadImage(item.dataset.recentUploadId);
     });
   }
   const videoPanel = $('#recentVideoUploadPanel');
@@ -3843,6 +3942,13 @@ function setupRecentUploadPanel(){
   $('#clearRecentUploadsBtn')?.addEventListener('click', ()=>clearRecentUploadedImages().then(()=>{ setRecentUploadSettingsHelp('已清空最近上传的图片。'); toast('最近上传图片已清空'); }).catch(error=>setRecentUploadSettingsHelp(error.message || '清空缓存失败', true)));
   $('#recentUploadLimitInput')?.addEventListener('keydown', event=>{ if(event.key === 'Enter'){ event.preventDefault(); saveRecentUploadLimit().catch(error=>setRecentUploadSettingsHelp(error.message || '保存缓存设置失败', true)); } });
   $('#recentUploadSettingsModal')?.addEventListener('click', event=>{ if(event.target === event.currentTarget) closeRecentUploadSettings(); });
+  $('#recentVideoUploadSettingsBtn')?.addEventListener('click', openRecentVideoUploadSettings);
+  $('#recentVideoUploadSettingsCloseBtn')?.addEventListener('click', closeRecentVideoUploadSettings);
+  $('#cancelRecentVideoUploadSettingsBtn')?.addEventListener('click', closeRecentVideoUploadSettings);
+  $('#saveRecentVideoUploadSettingsBtn')?.addEventListener('click', ()=>saveRecentVideoUploadSettings().catch(error=>setRecentVideoUploadSettingsHelp(error.message || '保存缓存设置失败', true)));
+  $('#clearRecentVideoUploadsBtn')?.addEventListener('click', ()=>clearRecentVideoUploads().then(()=>{ setRecentVideoUploadSettingsHelp('已清空最近上传的视频、音频与参考图。'); toast('最近上传视频素材已清空'); }).catch(error=>setRecentVideoUploadSettingsHelp(error.message || '清空缓存失败', true)));
+  $$('#recentVideoUploadSettingsModal input[type="number"]').forEach(input=>input.addEventListener('keydown', event=>{ if(event.key === 'Enter'){ event.preventDefault(); saveRecentVideoUploadSettings().catch(error=>setRecentVideoUploadSettingsHelp(error.message || '保存缓存设置失败', true)); } }));
+  $('#recentVideoUploadSettingsModal')?.addEventListener('click', event=>{ if(event.target === event.currentTarget) closeRecentVideoUploadSettings(); });
   refreshRecentUploadPanel();
 }
 

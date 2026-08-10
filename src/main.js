@@ -4479,7 +4479,6 @@ async function writeHistoryJsonAtomic(file, json) {
 // output directory means it survives a restart and avoids storing large video blobs in Chromium.
 const RECENT_UPLOAD_KINDS = new Set(['image', 'video', 'audio', 'reference_image']);
 const RECENT_UPLOAD_DEFAULT_LIMIT = 10;
-const RECENT_UPLOAD_MAX_LIMIT = 50;
 const recentUploadWriteChains = new Map();
 function recentUploadOwnerKey(owner = '') {
   return cleanOwner(owner || 'local', false) || 'local';
@@ -4501,7 +4500,7 @@ function recentUploadStorageMeta(owner = '', cfg = readConfig()) {
 function normalizeRecentUploadLimit(value, fallback = RECENT_UPLOAD_DEFAULT_LIMIT) {
   const parsed = Math.round(Number(value));
   if (!Number.isFinite(parsed)) return fallback;
-  return Math.max(1, Math.min(RECENT_UPLOAD_MAX_LIMIT, parsed));
+  return Math.max(1, Math.min(Number.MAX_SAFE_INTEGER, parsed));
 }
 function recentUploadSettings(payload = {}) {
   const raw = payload && typeof payload === 'object' ? payload : {};
@@ -4701,12 +4700,25 @@ async function receiveRecentUpload(req, parsed, owner = '', cfg = readConfig()) 
   }
 }
 async function updateRecentUploadSettings(owner = '', body = {}, cfg = readConfig()) {
-  const raw = Number(body.image_limit);
-  if (!Number.isInteger(raw) || raw < 1 || raw > RECENT_UPLOAD_MAX_LIMIT) throw new Error(`最近上传图片数量必须是 1 到 ${RECENT_UPLOAD_MAX_LIMIT} 的整数`);
+  const source = body && typeof body === 'object' ? body : {};
+  const labels = {
+    image_limit: '最近上传图片',
+    video_limit: '最近上传视频',
+    audio_limit: '最近上传音频',
+    reference_image_limit: '最近上传参考图'
+  };
+  const patch = {};
+  for (const key of Object.keys(labels)) {
+    if (!Object.prototype.hasOwnProperty.call(source, key)) continue;
+    const value = Number(source[key]);
+    if (!Number.isSafeInteger(value) || value < 1) throw new Error(`${labels[key]}数量必须是大于 0 的整数`);
+    patch[key] = value;
+  }
+  if (!Object.keys(patch).length) throw new Error('请至少设置一种最近上传素材的缓存数量');
   const meta = recentUploadStorageMeta(owner, cfg);
   return queueRecentUploadWrite(meta, async () => {
     const index = await readRecentUploadIndex(meta);
-    index.settings.image_limit = raw;
+    index.settings = { ...recentUploadSettings(index.settings), ...patch };
     const stale = trimRecentUploadIndex(index);
     const saved = await writeRecentUploadIndex(meta, index);
     await removeRecentUploadFiles(meta, stale);
