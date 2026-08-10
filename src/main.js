@@ -1121,6 +1121,7 @@ function updateCacheDir() {
 let softwareUpdateRuntime = {
   state: 'idle',
   message: '',
+  attempt_id: '',
   repo: '',
   version: '',
   asset_name: '',
@@ -1129,10 +1130,34 @@ let softwareUpdateRuntime = {
   total: 0,
   progress: 0,
   started_at: '',
+  last_progress_at: '',
   updated_at: ''
 };
+let activeSoftwareUpdateAttemptId = '';
 let lastSoftwareUpdateRuntimePersistAt = 0;
 const SOFTWARE_UPDATE_ACTIVE_STATES = new Set(['queued','checking','downloading','downloaded','verifying','installing']);
+const SOFTWARE_UPDATE_INTERRUPTED_STATES = new Set(['queued','checking','downloading']);
+const SOFTWARE_UPDATE_TOTAL_TIMEOUT_MS = 35 * 60 * 1000;
+const SOFTWARE_UPDATE_STALLED_DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000;
+
+function makeSoftwareUpdateAttemptId() {
+  return typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `update_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function isCurrentSoftwareUpdateAttempt(attemptId = '') {
+  return !!attemptId
+    && attemptId === activeSoftwareUpdateAttemptId
+    && attemptId === softwareUpdateRuntime.attempt_id;
+}
+
+function isLiveSoftwareUpdateRuntime(runtime = softwareUpdateRuntime) {
+  return !!runtime
+    && SOFTWARE_UPDATE_ACTIVE_STATES.has(String(runtime.state || ''))
+    && isCurrentSoftwareUpdateAttempt(runtime.attempt_id || '');
+}
+
 function setSoftwareUpdateRuntime(patch = {}, opts = {}) {
   softwareUpdateRuntime = { ...softwareUpdateRuntime, ...patch, updated_at: nowISO() };
   if (opts.persist !== false) {
@@ -1140,25 +1165,104 @@ function setSoftwareUpdateRuntime(patch = {}, opts = {}) {
   }
   return softwareUpdateRuntime;
 }
-function reportSoftwareUpdateDownloadProgress(patch = {}) {
-  const previousProgress = Number(softwareUpdateRuntime.progress || 0);
-  const nextProgress = Number(patch.progress || 0);
-  const shouldPersist = Math.abs(nextProgress - previousProgress) >= 1 || Date.now() - lastSoftwareUpdateRuntimePersistAt >= 5000;
-  return setSoftwareUpdateRuntime(patch, { persist: shouldPersist });
+
+function setSoftwareUpdateRuntimeForAttempt(attemptId = '', patch = {}, opts = {}) {
+  if (!isCurrentSoftwareUpdateAttempt(attemptId)) return null;
+  return setSoftwareUpdateRuntime(patch, opts);
 }
+
+function beginSoftwareUpdateAttempt(repo = '', message = '更新任务已排队，正在检查新版本...') {
+  const now = nowISO();
+  const attemptId = makeSoftwareUpdateAttemptId();
+  activeSoftwareUpdateAttemptId = attemptId;
+  return setSoftwareUpdateRuntime({
+    state: 'queued',
+    message,
+    attempt_id: attemptId,
+    repo,
+    version: '',
+    asset_name: '',
+    downloaded_path: '',
+    bytes: 0,
+    total: 0,
+    progress: 1,
+    started_at: now,
+    last_progress_at: now,
+    failed_at: '',
+    completed_at: ''
+  });
+}
+
+function finishSoftwareUpdateAttempt(attemptId = '') {
+  if (isCurrentSoftwareUpdateAttempt(attemptId)) activeSoftwareUpdateAttemptId = '';
+}
+
+function failSoftwareUpdateAttempt(attemptId = '', message = '软件更新失败') {
+  const failed = setSoftwareUpdateRuntimeForAttempt(attemptId, {
+    state: 'failed',
+    message,
+    progress: 0,
+    failed_at: nowISO()
+  });
+  finishSoftwareUpdateAttempt(attemptId);
+  return failed;
+}
+
+function reportSoftwareUpdateDownloadProgress(patch = {}, attemptId = '') {
+  if (attemptId && !isCurrentSoftwareUpdateAttempt(attemptId)) return null;
+  const previousProgress = Number(softwareUpdateRuntime.progress || 0);
+  const previousBytes = Number(softwareUpdateRuntime.bytes || 0);
+  const nextProgress = Number(patch.progress || 0);
+  const nextBytes = Number(patch.bytes || 0);
+  const bytesAdvanced = nextBytes > previousBytes;
+  const shouldPersist = Math.abs(nextProgress - previousProgress) >= 1 || Date.now() - lastSoftwareUpdateRuntimePersistAt >= 5000;
+  const nextPatch = bytesAdvanced ? { ...patch, last_progress_at: nowISO() } : patch;
+  return attemptId
+    ? setSoftwareUpdateRuntimeForAttempt(attemptId, nextPatch, { persist: shouldPersist })
+    : setSoftwareUpdateRuntime(nextPatch, { persist: shouldPersist });
+}
+
+function recoverInterruptedSoftwareUpdateRuntime(runtime = {}) {
+  const recovered = {
+    ...runtime,
+    state: 'failed',
+    message: '上一次更新在软件关闭后未完成，请重新点击更新。',
+    progress: 0,
+    failed_at: nowISO(),
+    updated_at: nowISO()
+  };
+  softwareUpdateRuntime = recovered;
+  activeSoftwareUpdateAttemptId = '';
+  try { saveConfig({ update_runtime: recovered }); } catch {}
+  return recovered;
+}
+
 function getSoftwareUpdateStatus() {
   const cfg = readConfig();
-  // The live runtime is authoritative while the updater process is active. The
-  // persisted copy is only a recovery record after the application restarts.
-  const liveRuntime = softwareUpdateRuntime || {};
-  const runtime = (liveRuntime.updated_at && SOFTWARE_UPDATE_ACTIVE_STATES.has(liveRuntime.state))
-    ? liveRuntime
-    : (cfg.update_runtime || liveRuntime);
-  if (['queued','downloading'].includes(runtime.state) && runtime.updated_at) {
-    const ts = Date.parse(runtime.updated_at);
-    if (Number.isFinite(ts) && Date.now() - ts > 35 * 60 * 1000) {
-      return { ok:true, ...setSoftwareUpdateRuntime({ state:'failed', message:'更新下载超过 35 分钟仍未完成，已停止。请重新点击更新。', progress:0 }), last_check: cfg.update_last_check || null };
+  // Only an attempt owned by this Electron process is allowed to run watchdogs.
+  // update_runtime is persisted for recovery, so it must never make a fresh
+  // click look as if it had already spent half an hour downloading.
+  if (isLiveSoftwareUpdateRuntime()) {
+    const runtime = softwareUpdateRuntime;
+    if (runtime.state === 'downloading') {
+      const startedAt = Date.parse(runtime.started_at || runtime.updated_at || '');
+      const lastProgressAt = Date.parse(runtime.last_progress_at || runtime.started_at || runtime.updated_at || '');
+      const elapsed = Number.isFinite(startedAt) ? Date.now() - startedAt : 0;
+      const stalled = Number.isFinite(lastProgressAt) ? Date.now() - lastProgressAt : 0;
+      if (elapsed > SOFTWARE_UPDATE_TOTAL_TIMEOUT_MS) {
+        const failed = failSoftwareUpdateAttempt(runtime.attempt_id, '更新下载超过 35 分钟仍未完成，已停止。请重新点击更新。');
+        return { ok:true, ...(failed || softwareUpdateRuntime), last_check: cfg.update_last_check || null };
+      }
+      if (stalled > SOFTWARE_UPDATE_STALLED_DOWNLOAD_TIMEOUT_MS) {
+        const failed = failSoftwareUpdateAttempt(runtime.attempt_id, '更新下载已超过 5 分钟没有进度，已停止。请检查网络后重新点击更新。');
+        return { ok:true, ...(failed || softwareUpdateRuntime), last_check: cfg.update_last_check || null };
+      }
     }
+    return { ok:true, ...runtime, last_check: cfg.update_last_check || null };
+  }
+  const runtime = cfg.update_runtime || softwareUpdateRuntime;
+  if (SOFTWARE_UPDATE_INTERRUPTED_STATES.has(String(runtime.state || ''))) {
+    return { ok:true, ...recoverInterruptedSoftwareUpdateRuntime(runtime), last_check: cfg.update_last_check || null };
   }
   return { ok:true, ...runtime, last_check: cfg.update_last_check || null };
 }
@@ -1382,99 +1486,131 @@ async function checkSoftwareUpdate(repoInput = '', cfg = readConfig()) {
   saveConfig({ update_repo: repo, update_last_check: info });
   return { ok:true, ...info };
 }
-async function downloadSoftwareUpdate(repoInput = '', cfg = readConfig()) {
-  const info = await checkSoftwareUpdate(repoInput, cfg);
-  if (!info.asset_url) throw new Error('最新 Release 没有找到 Windows EXE 附件，请先在 GitHub Release 上传单文件 EXE。');
-  const assetName = path.basename(String(info.asset_name || `LocalApiImageGenerator-${info.latest_version}-win-x64.exe`));
-  const dest = ensureInside(updateCacheDir(), path.join(updateCacheDir(), assetName));
+async function downloadSoftwareUpdate(repoInput = '', cfg = readConfig(), attemptId = '') {
+  let currentAttemptId = attemptId;
+  if (currentAttemptId && !isCurrentSoftwareUpdateAttempt(currentAttemptId)) {
+    throw new Error('更新任务已取消，请重新点击更新。');
+  }
+  if (!currentAttemptId) {
+    if (isLiveSoftwareUpdateRuntime()) throw new Error('更新任务已经在后台运行，请等待完成。');
+    const repo = normalizeUpdateRepo(repoInput || cfg.update_repo || DEFAULT_UPDATE_REPO);
+    currentAttemptId = beginSoftwareUpdateAttempt(repo, '正在准备下载新版 EXE...').attempt_id;
+  }
+  const setForAttempt = patch => setSoftwareUpdateRuntimeForAttempt(currentAttemptId, patch);
+  const ensureCurrentAttempt = () => {
+    if (!isCurrentSoftwareUpdateAttempt(currentAttemptId)) throw new Error('更新任务已取消，请重新点击更新。');
+  };
   try {
-    const existingSize = fs.existsSync(dest) ? fs.statSync(dest).size : 0;
-    if (existingSize > 0 && (!info.asset_size || existingSize === Number(info.asset_size))) {
-      const next = { ...info, downloaded_path: dest, downloaded_at: nowISO() };
-      saveConfig({ update_repo: info.repo, update_last_check: next });
-      setSoftwareUpdateRuntime({ state:'downloaded', message:'已复用已完成的新版 EXE，准备安装...', downloaded_path:dest, bytes:existingSize, total:info.asset_size || existingSize, progress:100 });
-      return { ok:true, ...next };
-    }
-  } catch {}
-  setSoftwareUpdateRuntime({ state:'downloading', message:'正在下载新版 EXE...', repo:info.repo, version:info.latest_version, asset_name:assetName, downloaded_path:'', bytes:0, total:info.asset_size || 0, progress:0, started_at:nowISO() });
-  const downloadErrors = [];
-  let downloaded = false;
-  for (const proxy of updateDownloadProxyCandidates(cfg)) {
-    const route = proxy ? '本机网络代理' : '直连 GitHub';
+    const info = await checkSoftwareUpdate(repoInput, cfg);
+    ensureCurrentAttempt();
+    if (!info.asset_url) throw new Error('最新 Release 没有找到 Windows EXE 附件，请先在 GitHub Release 上传单文件 EXE。');
+    const assetName = path.basename(String(info.asset_name || `LocalApiImageGenerator-${info.latest_version}-win-x64.exe`));
+    const dest = ensureInside(updateCacheDir(), path.join(updateCacheDir(), assetName));
     try {
-      setSoftwareUpdateRuntime({ state:'downloading', message:`正在通过${route}下载新版 EXE...`, progress:1 });
-      await downloadUrlToFileWithSystemCurl(info.asset_url, dest, {
-        timeoutMs: 30 * 60 * 1000,
-        idleTimeoutMs: 4 * 60 * 1000,
-        total: info.asset_size || 0,
-        proxy,
-        onProgress: p => {
-          const total = p.total || info.asset_size || 0;
-          const progress = total ? Math.max(1, Math.min(99, Math.round(p.bytes / total * 100))) : 1;
-          reportSoftwareUpdateDownloadProgress({ state:'downloading', message:`正在通过${route}下载新版 EXE${total ? ` ${progress}%` : ''}`, bytes:p.bytes, total, progress });
-        }
-      });
-      if (proxy) markGoodApimartProxy(proxy);
-      downloaded = true;
-      break;
-    } catch (error) {
-      const message = error?.message || String(error);
-      downloadErrors.push(`[${route}] ${message}`);
-      addLog(`软件更新${route}失败，尝试下一条网络链路：${message}`, { level:'warn' });
+      const existingSize = fs.existsSync(dest) ? fs.statSync(dest).size : 0;
+      if (existingSize > 0 && (!info.asset_size || existingSize === Number(info.asset_size))) {
+        const next = { ...info, downloaded_path: dest, downloaded_at: nowISO() };
+        saveConfig({ update_repo: info.repo, update_last_check: next });
+        setForAttempt({ state:'downloaded', message:'已复用已完成的新版 EXE，准备安装...', downloaded_path:dest, bytes:existingSize, total:info.asset_size || existingSize, progress:100 });
+        return { ok:true, ...next };
+      }
+    } catch {}
+    setForAttempt({ state:'downloading', message:'正在下载新版 EXE...', repo:info.repo, version:info.latest_version, asset_name:assetName, downloaded_path:'', bytes:0, total:info.asset_size || 0, progress:0 });
+    const downloadErrors = [];
+    let downloaded = false;
+    for (const proxy of updateDownloadProxyCandidates(cfg)) {
+      ensureCurrentAttempt();
+      const route = proxy ? '本机网络代理' : '直连 GitHub';
+      try {
+        setForAttempt({ state:'downloading', message:`正在通过${route}下载新版 EXE...`, progress:1 });
+        await downloadUrlToFileWithSystemCurl(info.asset_url, dest, {
+          timeoutMs: 30 * 60 * 1000,
+          idleTimeoutMs: 4 * 60 * 1000,
+          total: info.asset_size || 0,
+          proxy,
+          onProgress: p => {
+            const total = p.total || info.asset_size || 0;
+            const progress = total ? Math.max(1, Math.min(99, Math.round(p.bytes / total * 100))) : 1;
+            reportSoftwareUpdateDownloadProgress({ state:'downloading', message:`正在通过${route}下载新版 EXE${total ? ` ${progress}%` : ''}`, bytes:p.bytes, total, progress }, currentAttemptId);
+          }
+        });
+        ensureCurrentAttempt();
+        if (proxy) markGoodApimartProxy(proxy);
+        downloaded = true;
+        break;
+      } catch (error) {
+        const message = error?.message || String(error);
+        downloadErrors.push(`[${route}] ${message}`);
+        addLog(`软件更新${route}失败，尝试下一条网络链路：${message}`, { level:'warn' });
+      }
     }
-  }
-  if (!downloaded) {
-    try {
-      setSoftwareUpdateRuntime({ state:'downloading', message:'系统下载器不可用，已切换内置下载...', progress:1 });
-      await downloadUrlToFileRobust(info.asset_url, dest, {
-        timeoutMs: 30 * 60 * 1000,
-        idleTimeoutMs: 4 * 60 * 1000,
-        onProgress: p => {
-          const total = p.total || info.asset_size || 0;
-          const progress = total ? Math.max(1, Math.min(99, Math.round(p.bytes / total * 100))) : 0;
-          reportSoftwareUpdateDownloadProgress({ state:'downloading', message:`正在下载新版 EXE${total ? ` ${progress}%` : ''}`, bytes:p.bytes, total, progress });
-        }
-      });
-      downloaded = true;
-    } catch (fallbackError) {
-      downloadErrors.push(`[内置下载] ${fallbackError?.message || fallbackError}`);
-      throw new Error(`新版 EXE 下载失败：${downloadErrors.join(' | ')}`);
+    if (!downloaded) {
+      try {
+        ensureCurrentAttempt();
+        setForAttempt({ state:'downloading', message:'系统下载器不可用，已切换内置下载...', progress:1 });
+        await downloadUrlToFileRobust(info.asset_url, dest, {
+          timeoutMs: 30 * 60 * 1000,
+          idleTimeoutMs: 4 * 60 * 1000,
+          onProgress: p => {
+            const total = p.total || info.asset_size || 0;
+            const progress = total ? Math.max(1, Math.min(99, Math.round(p.bytes / total * 100))) : 0;
+            reportSoftwareUpdateDownloadProgress({ state:'downloading', message:`正在下载新版 EXE${total ? ` ${progress}%` : ''}`, bytes:p.bytes, total, progress }, currentAttemptId);
+          }
+        });
+        ensureCurrentAttempt();
+        downloaded = true;
+      } catch (fallbackError) {
+        downloadErrors.push(`[内置下载] ${fallbackError?.message || fallbackError}`);
+        throw new Error(`新版 EXE 下载失败：${downloadErrors.join(' | ')}`);
+      }
     }
+    const next = { ...info, downloaded_path: dest, downloaded_at: nowISO() };
+    saveConfig({ update_repo: info.repo, update_last_check: next });
+    setForAttempt({ state:'downloaded', message:'新版 EXE 下载完成，准备安装...', downloaded_path:dest, progress:100 });
+    return { ok:true, ...next };
+  } catch (error) {
+    if (isCurrentSoftwareUpdateAttempt(currentAttemptId)) {
+      failSoftwareUpdateAttempt(currentAttemptId, error?.message || String(error));
+    }
+    throw error;
   }
-  const next = { ...info, downloaded_path: dest, downloaded_at: nowISO() };
-  saveConfig({ update_repo: info.repo, update_last_check: next });
-  setSoftwareUpdateRuntime({ state:'downloaded', message:'新版 EXE 下载完成，准备安装...', downloaded_path:dest, progress:100 });
-  return { ok:true, ...next };
 }
 async function applyLatestSoftwareUpdate(repoInput = '', cfg = readConfig()) {
-  if (SOFTWARE_UPDATE_ACTIVE_STATES.has(softwareUpdateRuntime.state)) {
+  if (isLiveSoftwareUpdateRuntime()) {
     return { ok:true, update_runtime:softwareUpdateRuntime, message:'更新任务已经在后台运行，请等待完成。' };
   }
   const repo = normalizeUpdateRepo(repoInput || cfg.update_repo || DEFAULT_UPDATE_REPO);
-  setSoftwareUpdateRuntime({ state:'queued', message:'更新任务已排队，正在检查新版本...', repo, version:'', asset_name:'', bytes:0, total:0, progress:1, started_at:nowISO() });
+  const runtime = beginSoftwareUpdateAttempt(repo);
+  const attemptId = runtime.attempt_id;
   setImmediate(async () => {
     try {
-      setSoftwareUpdateRuntime({ state:'checking', message:'正在检查 GitHub Release 与安装包...', progress:3 });
+      if (!isCurrentSoftwareUpdateAttempt(attemptId)) return;
+      setSoftwareUpdateRuntimeForAttempt(attemptId, { state:'checking', message:'正在检查 GitHub Release 与安装包...', progress:3 });
       const info = await checkSoftwareUpdate(repo, readConfig());
+      if (!isCurrentSoftwareUpdateAttempt(attemptId)) return;
       if (!info.has_update) {
-        setSoftwareUpdateRuntime({ state:'completed', message:'当前已是最新版本，无需更新。', version:info.current_version || '', progress:100 });
+        setSoftwareUpdateRuntimeForAttempt(attemptId, { state:'completed', message:'当前已是最新版本，无需更新。', version:info.current_version || '', progress:100, completed_at:nowISO() });
+        finishSoftwareUpdateAttempt(attemptId);
         return;
       }
       if (!info.asset_url) throw new Error('检测到新版本，但 GitHub Release 尚未上传 Windows EXE 附件，请稍后重试。');
-      setSoftwareUpdateRuntime({ state:'queued', message:'已确认新版本，准备下载更新包...', repo:info.repo, version:info.latest_version, asset_name:info.asset_name, bytes:0, total:info.asset_size || 0, progress:5 });
-      const downloaded = await downloadSoftwareUpdate(info.repo, readConfig());
+      setSoftwareUpdateRuntimeForAttempt(attemptId, { state:'queued', message:'已确认新版本，准备下载更新包...', repo:info.repo, version:info.latest_version, asset_name:info.asset_name, bytes:0, total:info.asset_size || 0, progress:5 });
+      const downloaded = await downloadSoftwareUpdate(info.repo, readConfig(), attemptId);
+      if (!isCurrentSoftwareUpdateAttempt(attemptId)) return;
       const downloadedPath = downloaded.downloaded_path || '';
       const downloadedSize = fs.statSync(downloadedPath).size;
       if (info.asset_size && downloadedSize !== Number(info.asset_size)) throw new Error('更新包大小校验失败：' + downloadedSize + '/' + info.asset_size);
-      setSoftwareUpdateRuntime({ state:'verifying', message:'更新包下载完成，正在校验并准备替换...', progress:100, downloaded_path:downloadedPath, bytes:downloadedSize, total:info.asset_size || downloadedSize });
-      setSoftwareUpdateRuntime({ state:'installing', message:'校验完成，正在替换并自动重启软件...', progress:100, downloaded_path:downloadedPath });
+      setSoftwareUpdateRuntimeForAttempt(attemptId, { state:'verifying', message:'更新包下载完成，正在校验并准备替换...', progress:100, downloaded_path:downloadedPath, bytes:downloadedSize, total:info.asset_size || downloadedSize });
+      setSoftwareUpdateRuntimeForAttempt(attemptId, { state:'installing', message:'校验完成，正在替换并自动重启软件...', progress:100, downloaded_path:downloadedPath });
       installSoftwareUpdate(downloadedPath, readConfig());
     } catch (e) {
-      setSoftwareUpdateRuntime({ state:'failed', message:e.message || String(e), progress:0 });
+      if (isCurrentSoftwareUpdateAttempt(attemptId)) {
+        failSoftwareUpdateAttempt(attemptId, e.message || String(e));
+      }
       addLog(`软件更新失败：${e.message || e}`, { level:'error' });
     }
   });
-  return { ok:true, repo, update_runtime:softwareUpdateRuntime, message:'更新任务已开始，将显示实时下载进度并在完成后自动重启。' };
+  return { ok:true, repo, update_runtime:runtime, message:'更新任务已开始，将显示实时下载进度并在完成后自动重启。' };
 }
 function vbsString(value = '') {
   return '"' + String(value || '').replace(/"/g, '""') + '"';
@@ -1547,17 +1683,26 @@ function installSoftwareUpdate(downloadedPath = '', cfg = readConfig()) {
 function reconcileSoftwareUpdateAfterRestart() {
   const cfg = readConfig();
   const runtime = cfg.update_runtime || {};
+  const state = String(runtime.state || '');
   const targetVersion = String(runtime.version || '').trim();
-  if (!['downloaded','verifying','installing'].includes(String(runtime.state || ''))) return;
+  // A persisted active state belongs to the previous Electron process. It must
+  // not continue to drive timeout calculations in the freshly launched app.
+  if (SOFTWARE_UPDATE_INTERRUPTED_STATES.has(state)) {
+    recoverInterruptedSoftwareUpdateRuntime(runtime);
+    return;
+  }
+  if (!['downloaded','verifying','installing'].includes(state)) return;
   if (targetVersion && compareVersions(getAppVersion(), targetVersion) >= 0) {
     const completed = { ...runtime, state:'completed', message:'已成功更新到 ' + getAppVersion() + '。', progress:100, updated_at:nowISO() };
     softwareUpdateRuntime = completed;
+    activeSoftwareUpdateAttemptId = '';
     const lastCheck = { ...(cfg.update_last_check || {}), current_version:getAppVersion(), latest_version:getAppVersion(), has_update:false, update_ready:false, update_status:'latest', message:completed.message };
     saveConfig({ update_runtime:completed, update_last_check:lastCheck });
     return;
   }
   const failed = { ...runtime, state:'failed', message:'上一次更新未能完成替换，请重新检查更新后再试。', progress:0, updated_at:nowISO() };
   softwareUpdateRuntime = failed;
+  activeSoftwareUpdateAttemptId = '';
   saveConfig({ update_runtime:failed });
 }
 function dataUrlToFile(item, owner) {

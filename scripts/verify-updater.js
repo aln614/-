@@ -1,5 +1,7 @@
 const fs = require('fs');
 const path = require('path');
+const vm = require('vm');
+const crypto = require('crypto');
 
 const mainPath = path.join(__dirname, '..', 'src', 'main.js');
 const source = fs.readFileSync(mainPath, 'utf8');
@@ -31,6 +33,56 @@ assertIncludes('35 * 60 * 1000', 'Updater stale-download recovery timeout is too
 assertIncludes('update_auto_check: true', 'Startup update check setting default is missing.');
 assertIncludes('SOFTWARE_UPDATE_ACTIVE_STATES', 'Updater active-state tracking is missing.');
 assertIncludes('reconcileSoftwareUpdateAfterRestart', 'Updater restart reconciliation is missing.');
+assertIncludes('attempt_id', 'Updater attempts are not tracked independently.');
+assertIncludes('last_progress_at', 'Updater does not track the last real download progress.');
+assertIncludes('beginSoftwareUpdateAttempt', 'Updater does not reset runtime fields for a fresh update attempt.');
+assertIncludes('isLiveSoftwareUpdateRuntime', 'Updater does not distinguish the current process from persisted runtime state.');
+assertIncludes('recoverInterruptedSoftwareUpdateRuntime', 'Interrupted updater state is not recovered after restart.');
+assertIncludes('SOFTWARE_UPDATE_STALLED_DOWNLOAD_TIMEOUT_MS', 'Updater stalled-download watchdog is missing.');
+
+const statusStart = source.indexOf('function getSoftwareUpdateStatus');
+const statusEnd = source.indexOf('\nfunction httpJson', statusStart);
+const statusSource = source.slice(statusStart, statusEnd);
+if (!statusSource.includes('if (isLiveSoftwareUpdateRuntime())')) throw new Error('Persisted updater state can still be treated as a live download.');
+if (!statusSource.includes('runtime.last_progress_at')) throw new Error('Update watchdog does not use a real progress timestamp.');
+if (!statusSource.includes('recoverInterruptedSoftwareUpdateRuntime(runtime)')) throw new Error('Stale persisted download states are not converted to a recoverable result.');
+
+const runtimeStart = source.indexOf('let softwareUpdateRuntime = {');
+const runtimeEnd = source.indexOf('\nfunction httpJson', runtimeStart);
+if (runtimeStart < 0 || runtimeEnd < 0) throw new Error('Updater runtime block is missing.');
+let fakeNow = Date.parse('2026-08-10T08:00:00.000Z');
+let persistedConfig = {
+  update_runtime: {
+    state: 'downloading',
+    attempt_id: 'interrupted-attempt',
+    started_at: '2026-08-10T06:00:00.000Z',
+    updated_at: '2026-08-10T06:00:00.000Z',
+    bytes: 0,
+    total: 81600000,
+    progress: 0
+  },
+  update_last_check: { latest_version: '1.0.68' }
+};
+const runtimeSandbox = {
+  crypto,
+  Date: class MockDate extends Date {
+    constructor(...args) { super(args.length ? args[0] : fakeNow); }
+    static now() { return fakeNow; }
+    static parse(value) { return Date.parse(value); }
+  },
+  nowISO: () => new Date(fakeNow).toISOString(),
+  readConfig: () => persistedConfig,
+  saveConfig: patch => { persistedConfig = { ...persistedConfig, ...patch }; },
+  Math,
+  Number,
+  String,
+  Set
+};
+vm.createContext(runtimeSandbox);
+vm.runInContext(`${source.slice(runtimeStart, runtimeEnd)}\nstaleUpdateStatus = getSoftwareUpdateStatus();\nfreshUpdateRuntime = beginSoftwareUpdateAttempt('aln614/-');\nsoftwareUpdateRuntime = { ...softwareUpdateRuntime, state:'downloading' };\nfreshUpdateStatus = getSoftwareUpdateStatus();`, runtimeSandbox);
+if (runtimeSandbox.staleUpdateStatus.state !== 'failed') throw new Error('An interrupted persisted update is not recovered on the next launch.');
+if (runtimeSandbox.freshUpdateStatus.state !== 'downloading') throw new Error('A fresh update attempt does not own its live runtime state.');
+if (runtimeSandbox.freshUpdateStatus.attempt_id === 'interrupted-attempt') throw new Error('A fresh update attempt reused stale persisted timing.');
 
 const installStart = source.indexOf('function installSoftwareUpdate');
 const installEnd = source.indexOf('function reconcileSoftwareUpdateAfterRestart', installStart);
