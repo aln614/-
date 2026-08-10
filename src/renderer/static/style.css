@@ -2915,6 +2915,45 @@ body.theme-dark .software-update-line a{
 body.theme-dark .software-update-notes{
   background:rgba(255,255,255,.06);
 }
+.software-update-progress{
+  margin-top:14px;
+  padding:13px 14px;
+  border:1px solid rgba(34,211,238,.25);
+  border-radius:16px;
+  background:rgba(34,211,238,.07);
+}
+.software-update-progress[hidden]{display:none!important}
+.software-update-progress-head{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  color:var(--text);
+  font-size:13px;
+  font-weight:800;
+}
+.software-update-progress-head span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.software-update-progress-head b{color:#0891b2;font-variant-numeric:tabular-nums}
+.software-update-progress-track{
+  height:7px;
+  margin-top:10px;
+  overflow:hidden;
+  border-radius:999px;
+  background:rgba(148,163,184,.22);
+  box-shadow:inset 0 1px 2px rgba(15,23,42,.08);
+}
+.software-update-progress-track i{
+  display:block;
+  width:0;
+  height:100%;
+  border-radius:inherit;
+  background:linear-gradient(90deg,#14b8a6,#22d3ee,#3b82f6);
+  box-shadow:0 0 14px rgba(34,211,238,.42);
+  transition:width .25s ease;
+}
+.software-update-progress-bytes{min-height:16px;margin-top:7px;color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums}
+body.theme-dark .software-update-progress{background:rgba(34,211,238,.10);border-color:rgba(103,232,249,.24)}
+body.theme-dark .software-update-progress-head b{color:#67e8f9}
 .software-update-actions{
   display:flex;
   justify-content:flex-end;

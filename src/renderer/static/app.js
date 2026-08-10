@@ -75,6 +75,7 @@ let softwareUpdateInfo = null;
 let softwareUpdateBusy = false;
 let softwareUpdateModalVisible = false;
 let softwareUpdatePollTimer = null;
+let softwareUpdateAutoCheckScheduled = false;
 const mjRegionState = { meta:null, button:null, drawing:false, erase:false, brushSize:42, zoom:1, fitScale:1, panX:0, panY:0, panning:false, panPointerId:null, panStartX:0, panStartY:0, panOriginX:0, panOriginY:0, spacePressed:false, cursorVisible:false, submitting:false, undoStack:[], redoStack:[], strokeChanged:false };
 
 function normalizeAnnouncementItems(items=[], opts={}){
@@ -401,6 +402,15 @@ function ensureSoftwareUpdateModal(){
   modal.id = 'softwareUpdateModal';
   modal.className = 'modal software-update-modal';
   modal.innerHTML = `<div class="software-update-dialog glass-modal"><div class="software-update-head"><div><h2 id="softwareUpdateModalTitle">版本更新</h2><div class="software-update-sub" id="softwareUpdateModalSub">检查更新后会在这里显示新版本内容。</div></div><div class="software-update-badge" id="softwareUpdateBadge">-</div></div><div class="software-update-body"><div class="software-update-line"><span>当前版本</span><b id="softwareUpdateCurrentVersion">-</b></div><div class="software-update-line"><span>最新版本</span><b id="softwareUpdateLatestVersion">-</b></div><div class="software-update-line"><span>Release</span><a id="softwareUpdateReleaseUrl" href="#" target="_blank" rel="noreferrer">-</a></div><div class="software-update-line"><span>EXE</span><b id="softwareUpdateAssetName">-</b></div><div class="software-update-notes" id="softwareUpdateNotes">暂无更新内容。</div></div><div class="software-update-actions"><button class="secondary" id="softwareUpdateModalCloseBtn" type="button">关闭</button><button class="danger" id="softwareUpdateModalInstallBtn" type="button">立即更新</button></div></div>`;
+  const updateBody = modal.querySelector('.software-update-body');
+  if(updateBody && !modal.querySelector('#softwareUpdateProgress')){
+    const progress = document.createElement('div');
+    progress.className = 'software-update-progress';
+    progress.id = 'softwareUpdateProgress';
+    progress.hidden = true;
+    progress.innerHTML = '<div class="software-update-progress-head"><span id="softwareUpdateProgressStage">等待开始更新</span><b id="softwareUpdateProgressPercent">0%</b></div><div class="software-update-progress-track"><i id="softwareUpdateProgressFill"></i></div><div class="software-update-progress-bytes" id="softwareUpdateProgressBytes"></div>';
+    updateBody.insertAdjacentElement('afterend', progress);
+  }
   document.body.appendChild(modal);
   return bindSoftwareUpdateModal(modal);
 }
@@ -441,6 +451,28 @@ function normalizeSoftwareUpdateInfo(info = null){
     asset_url: assetUrl
   };
 }
+function isSoftwareUpdateActiveState(state = ''){
+  return ['queued','checking','downloading','downloaded','verifying','installing'].includes(String(state || ''));
+}
+function softwareUpdateActionLabel(state = '', progress = 0){
+  const labels = {
+    queued: '正在准备...',
+    checking: '正在检查...',
+    downloading: progress > 0 ? `下载中 ${Math.round(progress)}%` : '正在下载...',
+    downloaded: '下载完成，准备校验...',
+    verifying: '正在校验...',
+    installing: '正在替换并重启...'
+  };
+  return labels[String(state || '')] || '正在更新...';
+}
+function formatSoftwareUpdateBytes(bytes = 0){
+  const value = Number(bytes || 0);
+  if(!Number.isFinite(value) || value <= 0) return '0 B';
+  const units = ['B','KB','MB','GB'];
+  const index = Math.min(units.length - 1, Math.floor(Math.log(value) / Math.log(1024)));
+  const scaled = value / Math.pow(1024, index);
+  return (scaled >= 100 || index === 0 ? scaled.toFixed(0) : scaled.toFixed(1)) + ' ' + units[index];
+}
 function renderSoftwareUpdateModal(info = null){
   const modal = ensureSoftwareUpdateModal();
   info = normalizeSoftwareUpdateInfo(info);
@@ -465,15 +497,36 @@ function renderSoftwareUpdateModal(info = null){
   const ready = !!(has && info?.asset_url && info?.update_status !== 'waiting_asset');
   const runtime = info?.update_runtime || info?.runtime || null;
   const runtimeFailed = runtime?.state === 'failed';
+  const runtimeActive = isSoftwareUpdateActiveState(runtime?.state);
   if(asset) asset.textContent = info?.asset_name || (has ? '安装包未就绪，等待 GitHub Actions 上传 EXE' : '-');
-  if(badge) badge.textContent = info ? (has ? (runtimeFailed ? '更新失败' : (ready ? '发现新版本' : '构建中')) : '当前最新') : '-';
+  if(badge) badge.textContent = info ? (runtimeFailed ? '更新失败' : (runtimeActive ? '更新中' : (has ? (ready ? '发现新版本' : '构建中') : '当前最新'))) : '-';
   if(sub) sub.textContent = runtime?.message || info?.message || (info ? (has ? (ready ? '检测到新版本，确认后即可直接下载并原地更新。' : '检测到新版本，但安装包还未上传完成，请稍后再检查。') : '当前软件已经是最新版本。') : '检查更新后会在这里显示新版本内容。');
+  const progressWrap = $('#softwareUpdateProgress');
+  const progressStage = $('#softwareUpdateProgressStage');
+  const progressPercent = $('#softwareUpdateProgressPercent');
+  const progressFill = $('#softwareUpdateProgressFill');
+  const progressBytes = $('#softwareUpdateProgressBytes');
+  const progress = Math.max(0, Math.min(100, Number(runtime?.progress || 0)));
+  const showProgress = !!has || runtimeActive || runtimeFailed;
+  if(progressWrap) progressWrap.hidden = !showProgress;
+  if(progressStage) progressStage.textContent = runtime?.message || (has ? '等待开始更新' : '');
+  if(progressPercent) progressPercent.textContent = String(Math.round(progress)) + '%';
+  if(progressFill) progressFill.style.width = String(progress) + '%';
+  if(progressBytes){
+    const bytes = Number(runtime?.bytes || 0);
+    const total = Number(runtime?.total || 0);
+    progressBytes.textContent = total ? (formatSoftwareUpdateBytes(bytes) + ' / ' + formatSoftwareUpdateBytes(total)) : (bytes ? formatSoftwareUpdateBytes(bytes) : '');
+  }
   const updateBtn = $('#softwareUpdateModalInstallBtn');
   if(updateBtn){
+    if(runtimeActive){
+      updateBtn.disabled = true;
+      updateBtn.textContent = softwareUpdateActionLabel(runtime?.state, progress);
+      updateBtn.classList.add('loading');
+      return;
+    }
     updateBtn.disabled = (softwareUpdateBusy && !runtimeFailed) || !ready;
-    const progress = Number(runtime?.progress || 0);
-    const state = runtime?.state || '';
-    updateBtn.textContent = runtimeFailed ? '重新更新' : (softwareUpdateBusy ? (progress ? `下载中 ${progress}%` : (state === 'installing' ? '正在安装...' : '正在更新...')) : (has ? (ready ? '立即更新' : '等待安装包') : '已是最新版本'));
+    updateBtn.textContent = runtimeFailed ? '重新更新' : (has ? (ready ? '立即更新' : '等待安装包') : '已是最新版本');
     updateBtn.classList.toggle('loading', softwareUpdateBusy && !runtimeFailed);
   }
 }
@@ -496,7 +549,8 @@ function renderSoftwareUpdateError(message){
   renderSoftwareUpdateModal(info);
   openSoftwareUpdateModal();
 }
-async function checkSoftwareUpdate(){
+async function checkSoftwareUpdate(options = {}){
+  const auto = options?.auto === true;
   const repo = softwareUpdateInfo?.repo || '';
   try{
     const btn = $('#checkUpdateBtn');
@@ -504,13 +558,17 @@ async function checkSoftwareUpdate(){
     const info = await api('/api/update/check', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({repo})});
     softwareUpdateInfo = info;
     renderSoftwareUpdateInfo(info);
-    openSoftwareUpdateModal();
-    toast(info.has_update ? '发现新版本' : '当前已是最新版本');
+    if(!auto || info.has_update){
+      openSoftwareUpdateModal();
+      toast(info.has_update ? '发现新版本' : '当前已是最新版本');
+    }
   }catch(e){
-    softwareUpdateInfo = null;
-    renderSoftwareUpdateError(e.message || '检查更新失败');
-    openSoftwareUpdateModal();
-    toast(e.message || '检查更新失败');
+    if(!auto){
+      softwareUpdateInfo = null;
+      renderSoftwareUpdateError(e.message || '检查更新失败');
+      openSoftwareUpdateModal();
+      toast(e.message || '检查更新失败');
+    }else console.warn('[update] startup check failed:', e);
   }
   finally{ const btn = $('#checkUpdateBtn'); if(btn) btn.disabled = false; }
 }
@@ -525,7 +583,7 @@ async function pollSoftwareUpdateStatus(){
     const status = await api('/api/update/status');
     const base = softwareUpdateInfo || status.last_check || {};
     softwareUpdateInfo = { ...base, update_runtime:status, runtime:status };
-    softwareUpdateBusy = ['queued','downloading','downloaded','installing'].includes(status.state);
+    softwareUpdateBusy = isSoftwareUpdateActiveState(status.state);
     renderSoftwareUpdateInfo(softwareUpdateInfo);
     if(status.state === 'failed'){
       stopSoftwareUpdatePolling();
@@ -559,7 +617,7 @@ async function applySoftwareUpdateOta(){
     $('#checkUpdateBtn')?.toggleAttribute('disabled', true);
     renderSoftwareUpdateInfo(softwareUpdateInfo);
     const info = await api('/api/update/apply_latest', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({repo})});
-    softwareUpdateInfo = { ...info, update_runtime:info.update_runtime || info.runtime || null };
+    softwareUpdateInfo = { ...(softwareUpdateInfo || {}), ...info, update_runtime:info.update_runtime || info.runtime || null };
     renderSoftwareUpdateInfo(softwareUpdateInfo);
     openSoftwareUpdateModal();
     toast(info.message || '更新已开始，下载完成后会自动替换并重启');
@@ -929,6 +987,11 @@ function normalizeFlow2ApiBaseModel(model=''){
 function platformConfigKey(platform='apimart'){ return IMAGE_PLATFORM_CONFIG_PREFIX + normalizeImagePlatformValue(platform); }
 function loadLegacyClientConfig(){
   try{ return removeInvalidStoredApiKey(JSON.parse(localStorage.getItem(CLIENT_CONFIG_KEY) || '{}'), CLIENT_CONFIG_KEY); }catch(e){ return {}; }
+}
+function scheduleStartupSoftwareUpdateCheck(){
+  if(softwareUpdateAutoCheckScheduled || !isLocalClient || runtimeConfigSnapshot?.update_auto_check === false) return;
+  softwareUpdateAutoCheckScheduled = true;
+  setTimeout(()=>checkSoftwareUpdate({auto:true}), 1200);
 }
 function readClientSettings(){
   try{
@@ -3404,6 +3467,7 @@ async function loadConfig(){
   if($('#announcementUrl')) $('#announcementUrl').value = c.announcement_url || 'https://apimart.ai/zh/log-updates';
   if($('#announcementCustomEnabled')) $('#announcementCustomEnabled').checked = c.announcement_custom_enabled === true;
   if($('#appVersionText')) $('#appVersionText').textContent = c.app_version || c.version || '-';
+  if($('#updateAutoCheck')) $('#updateAutoCheck').checked = c.update_auto_check !== false;
   if(c.update_last_check){
     softwareUpdateInfo = c.update_last_check;
     renderSoftwareUpdateInfo(c.update_last_check);
@@ -3807,6 +3871,7 @@ function collectConfig(){
     announcement_custom_items: announcementItems,
     announcement_custom_title: announcementItems[0]?.title || '',
     announcement_custom_content: announcementItems[0]?.content || '',
+    update_auto_check: $('#updateAutoCheck') ? $('#updateAutoCheck').checked : true,
     mj_settings: collectMjCurrentSettings(),
     mj_tab: mjState?.tab || 'imagine',
     output_dir: $('#outputDir').value.trim(),
@@ -9825,6 +9890,7 @@ async function startup(){
     setupAnnouncements();
     initMidjourneyPage();
     initMjRegionModal();
+    scheduleStartupSoftwareUpdateCheck();
   }catch(e){
     const msg = String(e.message || e);
     if(msg.includes('公网访问密码') || msg.includes('密码') || msg.includes('403')) showPublicLogin(msg);

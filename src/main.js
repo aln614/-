@@ -555,6 +555,7 @@ const DEFAULT_CONFIG = {
   shortcuts_enabled: true,
   shortcut_settings: { ...DEFAULT_SHORTCUT_SETTINGS },
   update_repo: DEFAULT_UPDATE_REPO,
+  update_auto_check: true,
   update_last_check: null
 };
 
@@ -777,6 +778,7 @@ function readConfig() {
     const shortcutConfig = validateShortcutConfiguration(migrated);
     migrated.shortcuts_enabled = shortcutConfig.shortcuts_enabled;
     migrated.shortcut_settings = shortcutConfig.shortcut_settings;
+    migrated.update_auto_check = migrated.update_auto_check !== false;
     migrated.skin_id = ['starlight','cloud','sakura','academy','hangar','classic'].includes(String(migrated.skin_id || '').toLowerCase())
       ? String(migrated.skin_id).toLowerCase()
       : 'classic';
@@ -822,6 +824,7 @@ function saveConfig(partial) {
   const shortcutConfig = validateShortcutConfiguration(next);
   next.shortcuts_enabled = shortcutConfig.shortcuts_enabled;
   next.shortcut_settings = shortcutConfig.shortcut_settings;
+  next.update_auto_check = next.update_auto_check !== false;
   delete next.repaired;
   next.announcement_custom_enabled = next.announcement_custom_enabled === true;
   next.skin_id = ['starlight','cloud','sakura','academy','hangar','classic'].includes(String(next.skin_id || '').toLowerCase())
@@ -1128,6 +1131,7 @@ let softwareUpdateRuntime = {
   updated_at: ''
 };
 let lastSoftwareUpdateRuntimePersistAt = 0;
+const SOFTWARE_UPDATE_ACTIVE_STATES = new Set(['queued','checking','downloading','downloaded','verifying','installing']);
 function setSoftwareUpdateRuntime(patch = {}, opts = {}) {
   softwareUpdateRuntime = { ...softwareUpdateRuntime, ...patch, updated_at: nowISO() };
   if (opts.persist !== false) {
@@ -1146,7 +1150,7 @@ function getSoftwareUpdateStatus() {
   // The live runtime is authoritative while the updater process is active. The
   // persisted copy is only a recovery record after the application restarts.
   const liveRuntime = softwareUpdateRuntime || {};
-  const runtime = (liveRuntime.updated_at && ['queued','downloading','downloaded','installing'].includes(liveRuntime.state))
+  const runtime = (liveRuntime.updated_at && SOFTWARE_UPDATE_ACTIVE_STATES.has(liveRuntime.state))
     ? liveRuntime
     : (cfg.update_runtime || liveRuntime);
   if (['queued','downloading'].includes(runtime.state) && runtime.updated_at) {
@@ -1330,10 +1334,18 @@ function downloadUrlToFileWithSystemCurl(target, dest, opts = {}) {
 }
 function pickWindowsExeAsset(release) {
   const assets = Array.isArray(release.assets) ? release.assets : [];
+  const wantsLanClient = /(?:lan[_\s-]*client|_lan_)/i.test(path.basename(process.execPath || ''));
   const exeAssets = assets
     .filter(a => /\.exe$/i.test(a.name || '') && (!a.state || a.state === 'uploaded') && Number(a.size || 0) > 0)
     .sort((a, b) => {
-      const score = x => (/tenying|localapi|image|generator/i.test(x.name || '') ? 8 : 0) + (/win|windows/i.test(x.name || '') ? 4 : 0) + (/x64|portable/i.test(x.name || '') ? 2 : 0);
+      const score = x => {
+        const name = String(x.name || '');
+        const isLanClient = /(?:lan[_\s-]*client|_lan_)/i.test(name);
+        return (isLanClient === wantsLanClient ? 100 : 0)
+          + (/tenying|localapi|image|generator/i.test(name) ? 8 : 0)
+          + (/win|windows/i.test(name) ? 4 : 0)
+          + (/x64|portable/i.test(name) ? 2 : 0);
+      };
       return score(b) - score(a);
     });
   return exeAssets[0] || null;
@@ -1434,25 +1446,37 @@ async function downloadSoftwareUpdate(repoInput = '', cfg = readConfig()) {
   return { ok:true, ...next };
 }
 async function applyLatestSoftwareUpdate(repoInput = '', cfg = readConfig()) {
-  const info = await checkSoftwareUpdate(repoInput, cfg);
-  if (!info.has_update) return { ok:true, ...info, message:'当前已是最新版本' };
-  if (!info.asset_url) throw new Error('最新 Release 没有找到 Windows EXE 附件，请先等待 GitHub Actions 构建完成。');
-  if (softwareUpdateRuntime.state === 'downloading' || softwareUpdateRuntime.state === 'installing') {
-    return { ok:true, ...info, update_runtime:softwareUpdateRuntime, message:'更新任务已经在后台运行，请等待完成。' };
+  if (SOFTWARE_UPDATE_ACTIVE_STATES.has(softwareUpdateRuntime.state)) {
+    return { ok:true, update_runtime:softwareUpdateRuntime, message:'更新任务已经在后台运行，请等待完成。' };
   }
-  setSoftwareUpdateRuntime({ state:'queued', message:'更新任务已排队，准备下载...', repo:info.repo, version:info.latest_version, asset_name:info.asset_name, bytes:0, total:info.asset_size || 0, progress:0, started_at:nowISO() });
-  const nextCfg = readConfig();
+  const repo = normalizeUpdateRepo(repoInput || cfg.update_repo || DEFAULT_UPDATE_REPO);
+  setSoftwareUpdateRuntime({ state:'queued', message:'更新任务已排队，正在检查新版本...', repo, version:'', asset_name:'', bytes:0, total:0, progress:1, started_at:nowISO() });
   setImmediate(async () => {
     try {
-      const downloaded = await downloadSoftwareUpdate(repoInput, nextCfg);
-      setSoftwareUpdateRuntime({ state:'installing', message:'下载完成，正在替换并重启软件...', progress:100, downloaded_path:downloaded.downloaded_path || '' });
-      installSoftwareUpdate(downloaded.downloaded_path || '', readConfig());
+      setSoftwareUpdateRuntime({ state:'checking', message:'正在检查 GitHub Release 与安装包...', progress:3 });
+      const info = await checkSoftwareUpdate(repo, readConfig());
+      if (!info.has_update) {
+        setSoftwareUpdateRuntime({ state:'completed', message:'当前已是最新版本，无需更新。', version:info.current_version || '', progress:100 });
+        return;
+      }
+      if (!info.asset_url) throw new Error('检测到新版本，但 GitHub Release 尚未上传 Windows EXE 附件，请稍后重试。');
+      setSoftwareUpdateRuntime({ state:'queued', message:'已确认新版本，准备下载更新包...', repo:info.repo, version:info.latest_version, asset_name:info.asset_name, bytes:0, total:info.asset_size || 0, progress:5 });
+      const downloaded = await downloadSoftwareUpdate(info.repo, readConfig());
+      const downloadedPath = downloaded.downloaded_path || '';
+      const downloadedSize = fs.statSync(downloadedPath).size;
+      if (info.asset_size && downloadedSize !== Number(info.asset_size)) throw new Error('更新包大小校验失败：' + downloadedSize + '/' + info.asset_size);
+      setSoftwareUpdateRuntime({ state:'verifying', message:'更新包下载完成，正在校验并准备替换...', progress:100, downloaded_path:downloadedPath, bytes:downloadedSize, total:info.asset_size || downloadedSize });
+      setSoftwareUpdateRuntime({ state:'installing', message:'校验完成，正在替换并自动重启软件...', progress:100, downloaded_path:downloadedPath });
+      installSoftwareUpdate(downloadedPath, readConfig());
     } catch (e) {
       setSoftwareUpdateRuntime({ state:'failed', message:e.message || String(e), progress:0 });
       addLog(`软件更新失败：${e.message || e}`, { level:'error' });
     }
   });
-  return { ok:true, ...info, message:'更新任务已在后台开始，下载完成后会自动替换并重启。' };
+  return { ok:true, repo, update_runtime:softwareUpdateRuntime, message:'更新任务已开始，将显示实时下载进度并在完成后自动重启。' };
+}
+function vbsString(value = '') {
+  return '"' + String(value || '').replace(/"/g, '""') + '"';
 }
 function installSoftwareUpdate(downloadedPath = '', cfg = readConfig()) {
   const file = String(downloadedPath || (cfg.update_last_check && cfg.update_last_check.downloaded_path) || '').trim();
@@ -1461,46 +1485,79 @@ function installSoftwareUpdate(downloadedPath = '', cfg = readConfig()) {
   const updateFile = ensureInside(updateCacheDir(), file);
   if (path.extname(updateFile).toLowerCase() !== '.exe') throw new Error('更新文件必须是 EXE');
   const target = process.execPath;
-  const bat = path.join(os.tmpdir(), `LAIG_update_${Date.now()}.bat`);
-  const backup = path.join(updateCacheDir(), `backup_${path.basename(target)}`);
-  const log = path.join(updateCacheDir(), 'last_update_install.log');
-  const script = [
-    '@echo off',
-    'chcp 65001 >nul',
-    'setlocal EnableExtensions EnableDelayedExpansion',
-    `set "SRC=${updateFile}"`,
-    `set "TARGET=${target}"`,
-    `set "BACKUP=${backup}"`,
-    `set "LOG=${log}"`,
-    'echo [%date% %time%] updater started>"%LOG%"',
-    'timeout /t 1 /nobreak >nul',
-    'if exist "%TARGET%" copy /Y "%TARGET%" "%BACKUP%" >>"%LOG%" 2>&1',
-    'set /a TRY=0',
-    ':RETRY_COPY',
-    'set /a TRY+=1',
-    'copy /Y "%SRC%" "%TARGET%" >>"%LOG%" 2>&1',
-    'if !ERRORLEVEL! EQU 0 goto LAUNCH_NEW',
-    'if !TRY! GEQ 60 goto ROLLBACK',
-    'timeout /t 1 /nobreak >nul',
-    'goto RETRY_COPY',
-    ':LAUNCH_NEW',
-    'echo [%date% %time%] update copied after !TRY! tries>>"%LOG%"',
-    'start "" "%TARGET%"',
-    'timeout /t 2 /nobreak >nul',
-    'del /f /q "%SRC%" >>"%LOG%" 2>&1',
-    'del "%~f0"',
-    'exit /b 0',
-    ':ROLLBACK',
-    'echo [%date% %time%] update failed, rolling back>>"%LOG%"',
-    'if exist "%BACKUP%" copy /Y "%BACKUP%" "%TARGET%" >>"%LOG%" 2>&1',
-    'start "" "%TARGET%"',
-    'del "%~f0"',
-    'exit /b 1'
+  if (process.platform !== 'win32') throw new Error('当前自动更新仅支持 Windows EXE');
+  const helper = path.join(os.tmpdir(), 'LAIG_update_' + Date.now() + '.vbs');
+  const helperBackup = path.join(updateCacheDir(), 'backup_' + path.basename(target));
+  const helperLog = path.join(updateCacheDir(), 'last_update_install.log');
+  const helperScript = [
+    'Option Explicit',
+    'Dim fso, shell, src, target, backup, logFile, i, ok, lastError',
+    'Set fso = CreateObject("Scripting.FileSystemObject")',
+    'Set shell = CreateObject("WScript.Shell")',
+    'src = ' + vbsString(updateFile),
+    'target = ' + vbsString(target),
+    'backup = ' + vbsString(helperBackup),
+    'logFile = ' + vbsString(helperLog),
+    'Sub WriteLog(text)',
+    '  Dim stream',
+    '  Set stream = fso.OpenTextFile(logFile, 8, True, -1)',
+    '  stream.WriteLine Now & " " & text',
+    '  stream.Close',
+    'End Sub',
+    'WriteLog "updater started"',
+    'WScript.Sleep 900',
+    'On Error Resume Next',
+    'If fso.FileExists(target) Then fso.CopyFile target, backup, True',
+    'Err.Clear',
+    'ok = False',
+    'lastError = ""',
+    'For i = 1 To 90',
+    '  Err.Clear',
+    '  fso.CopyFile src, target, True',
+    '  If Err.Number = 0 Then',
+    '    ok = True',
+    '    Exit For',
+    '  End If',
+    '  lastError = Err.Description',
+    '  WScript.Sleep 1000',
+    'Next',
+    'If ok Then',
+    '  WriteLog "update copied after " & i & " tries"',
+    '  shell.Run Chr(34) & target & Chr(34), 1, False',
+    '  WScript.Sleep 1200',
+    '  If fso.FileExists(src) Then fso.DeleteFile src, True',
+    'Else',
+    '  WriteLog "update failed: " & lastError',
+    '  Err.Clear',
+    '  If fso.FileExists(backup) Then fso.CopyFile backup, target, True',
+    '  shell.Run Chr(34) & target & Chr(34), 1, False',
+    'End If',
+    'On Error Resume Next',
+    'fso.DeleteFile WScript.ScriptFullName, True'
   ].join('\r\n');
-  fs.writeFileSync(bat, script, 'utf8');
-  spawn('cmd.exe', ['/c', 'start', '', bat], { detached:true, stdio:'ignore', windowsHide:true }).unref();
-  setTimeout(()=>app.quit(), 500);
+  fs.writeFileSync(helper, helperScript, 'utf8');
+  spawn('wscript.exe', ['//B', '//NoLogo', helper], { detached:true, stdio:'ignore', windowsHide:true }).unref();
+  setTimeout(()=>{
+    isAppQuitting = true;
+    app.quit();
+  }, 250);
   return { ok:true, message:'正在原地更新并重启软件...' };
+}
+function reconcileSoftwareUpdateAfterRestart() {
+  const cfg = readConfig();
+  const runtime = cfg.update_runtime || {};
+  const targetVersion = String(runtime.version || '').trim();
+  if (!['downloaded','verifying','installing'].includes(String(runtime.state || ''))) return;
+  if (targetVersion && compareVersions(getAppVersion(), targetVersion) >= 0) {
+    const completed = { ...runtime, state:'completed', message:'已成功更新到 ' + getAppVersion() + '。', progress:100, updated_at:nowISO() };
+    softwareUpdateRuntime = completed;
+    const lastCheck = { ...(cfg.update_last_check || {}), current_version:getAppVersion(), latest_version:getAppVersion(), has_update:false, update_ready:false, update_status:'latest', message:completed.message };
+    saveConfig({ update_runtime:completed, update_last_check:lastCheck });
+    return;
+  }
+  const failed = { ...runtime, state:'failed', message:'上一次更新未能完成替换，请重新检查更新后再试。', progress:0, updated_at:nowISO() };
+  softwareUpdateRuntime = failed;
+  saveConfig({ update_runtime:failed });
 }
 function dataUrlToFile(item, owner) {
   if (!item) return '';
@@ -8251,6 +8308,7 @@ function createWindow() {
 app.whenReady().then(() => {
   hardResetDataDirsBeforeInit();
   initConfig();
+  reconcileSoftwareUpdateAfterRestart();
   const restoredOutputMirror = restoreStoreFromOutputMirrorIfCurrentEmpty();
   const restoredLegacyStore = restoredOutputMirror ? false : restoreStoreFromLegacyIfCurrentEmpty();
   if (!restoredLegacyStore) rememberHistoricalOutputRootsFromStoreFile(path.join(DATA_ROOT, 'data', 'store.json'));
