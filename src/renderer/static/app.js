@@ -847,10 +847,15 @@ async function handleGeneratedImageDrop(e, target){
     saveChatConfig();
   }else if(target === 'main'){
     mainImages.push(item); renderThumbs(); calcEstimate(); prestagePublicBatchMedia([item]);
-  }else{
+  }else if(target === 'video_ref'){
+    videoRefImages.push(item); renderVideoInputs();
+    toast('已作为视频参考图加入（原图）');
+  }else if(target === 'ref'){
     refImages.push(item); renderThumbs(); calcEstimate(); prestagePublicBatchMedia([item]);
+  }else{
+    return false;
   }
-  toast(target === 'main' ? '已作为主图加入（原图）' : target === 'ref' ? '已作为参考图加入（原图）' : '已加入聊天附件（原图）');
+  if(target !== 'video_ref') toast(target === 'main' ? '已作为主图加入（原图）' : target === 'ref' ? '已作为参考图加入（原图）' : '已加入聊天附件（原图）');
   return true;
 }
 
@@ -3674,7 +3679,7 @@ function renderRecentUploadPanel(){
     const source = recentUploadSourceLabel(row);
     const src = recentUploadSourceUrl(row);
     const name = escapeHtml(row.name || 'uploaded-image.png');
-    return `<button class="recent-upload-item" type="button" data-recent-upload-id="${escapeHtml(row.id)}" title="${name} · 单击预览，双击添加为主图"><span class="recent-upload-item-media"><img src="${src}" alt="${name}" loading="lazy" decoding="async" draggable="false" /></span><span class="recent-upload-item-source ${row.source === 'ref' ? 'is-ref' : ''}">${source}</span><span class="recent-upload-item-name">${name}</span></button>`;
+    return `<button class="recent-upload-item" type="button" draggable="true" data-recent-upload-id="${escapeHtml(row.id)}" title="${name} · 可拖到图片上传区复用，单击预览，双击添加为主图"><span class="recent-upload-item-media"><img src="${src}" alt="${name}" loading="lazy" decoding="async" draggable="false" /></span><span class="recent-upload-item-source ${row.source === 'ref' ? 'is-ref' : ''}">${source}</span><span class="recent-upload-item-name">${name}</span></button>`;
   }).join('');
 }
 function recentVideoUploadAudioIcon(){
@@ -3692,12 +3697,12 @@ function renderRecentVideoUploadLane(kind, selector, emptyText){
     const name = escapeHtml(row.name || 'uploaded-media');
     const source = recentUploadSourceUrl(row);
     if(kind === 'video'){
-      return `<button class="recent-video-upload-item is-video" type="button" data-recent-video-upload-id="${escapeHtml(row.id)}" title="${name} · 单击预览，双击加入主任务视频"><span class="recent-video-upload-media"><span class="video-first-frame" data-src="${source}"><span class="video-lazy-icon">▶</span><small>加载封面</small></span><span class="recent-video-upload-badge">视频</span></span><span class="recent-video-upload-name">${name}</span></button>`;
+      return `<button class="recent-video-upload-item is-video" type="button" draggable="true" data-recent-video-upload-id="${escapeHtml(row.id)}" title="${name} · 可拖到主任务视频区复用，单击预览，双击加入主任务视频"><span class="recent-video-upload-media"><span class="video-first-frame" data-src="${source}"><span class="video-lazy-icon">▶</span><small>加载封面</small></span><span class="recent-video-upload-badge">视频</span></span><span class="recent-video-upload-name">${name}</span></button>`;
     }
     if(kind === 'audio'){
-      return `<button class="recent-video-upload-item is-audio" type="button" data-recent-video-upload-id="${escapeHtml(row.id)}" title="${name} · 单击预览，双击加入参考音频"><span class="recent-video-upload-media recent-video-upload-audio">${recentVideoUploadAudioIcon()}<span class="recent-video-upload-badge">音频</span></span><span class="recent-video-upload-name">${name}</span></button>`;
+      return `<button class="recent-video-upload-item is-audio" type="button" draggable="true" data-recent-video-upload-id="${escapeHtml(row.id)}" title="${name} · 可拖到主任务视频区作为参考音频，单击预览，双击加入参考音频"><span class="recent-video-upload-media recent-video-upload-audio">${recentVideoUploadAudioIcon()}<span class="recent-video-upload-badge">音频</span></span><span class="recent-video-upload-name">${name}</span></button>`;
     }
-    return `<button class="recent-video-upload-item is-reference" type="button" data-recent-video-upload-id="${escapeHtml(row.id)}" title="${name} · 单击预览，双击加入参考图"><span class="recent-video-upload-media"><img src="${source}" alt="${name}" loading="lazy" decoding="async" /><span class="recent-video-upload-badge">参考图</span></span><span class="recent-video-upload-name">${name}</span></button>`;
+    return `<button class="recent-video-upload-item is-reference" type="button" draggable="true" data-recent-video-upload-id="${escapeHtml(row.id)}" title="${name} · 可拖到参考图区复用，单击预览，双击加入参考图"><span class="recent-video-upload-media"><img src="${source}" alt="${name}" loading="lazy" decoding="async" draggable="false" /><span class="recent-video-upload-badge">参考图</span></span><span class="recent-video-upload-name">${name}</span></button>`;
   }).join('');
   if(kind === 'video') initLazyVideoFirstFrames(grid);
 }
@@ -3763,6 +3768,91 @@ async function recentUploadFileFromRow(row={}){
     type:blob.type || row.mime_type || 'application/octet-stream',
     lastModified:Number(row.created_at || Date.now())
   });
+}
+function recentUploadDragPayload(dataTransfer){
+  try{
+    const raw = dataTransfer?.getData('application/x-laig-recent-upload') || '';
+    const payload = raw ? JSON.parse(raw) : null;
+    return payload && payload.id ? payload : null;
+  }catch{ return null; }
+}
+function recentUploadDragRowById(id=''){
+  const needle = String(id || '');
+  if(!needle) return null;
+  return recentUploadItems.find(row=>String(row?.id || '') === needle)
+    || recentVideoUploadRowById(needle)
+    || null;
+}
+function setRecentUploadDragData(event, row={}){
+  const source = recentUploadSourceUrl(row);
+  const name = String(row.name || 'recent-upload');
+  const kind = String(row.kind || '').trim();
+  if(!source || !kind || !event?.dataTransfer) return false;
+  const payload = JSON.stringify({ id:String(row.id || ''), kind, name });
+  try{ event.dataTransfer.setData('application/x-laig-recent-upload', payload); }catch{}
+  try{ event.dataTransfer.setData('text/uri-list', withPublicAccess(source)); }catch{}
+  try{ event.dataTransfer.setData('text/plain', withPublicAccess(source)); }catch{}
+  try{
+    const mime = row.mime_type || (kind === 'audio' ? 'audio/*' : kind === 'video' ? 'video/*' : 'image/*');
+    event.dataTransfer.setData('DownloadURL', `${mime}:${name}:${new URL(withPublicAccess(source), location.href).href}`);
+  }catch{}
+  if(kind === 'image' || kind === 'reference_image'){
+    setImageDragData(event, { fullUrl:source, filename:name, skipNativeDrag:true });
+    showDragOriginalBadge(event);
+  }else{
+    try{ event.dataTransfer.effectAllowed = 'copy'; }catch{}
+    toast('拖动中：将使用原始素材');
+  }
+  return true;
+}
+async function handleRecentUploadDrop(event, target=''){
+  const payload = recentUploadDragPayload(event?.dataTransfer);
+  if(!payload) return false;
+  event.preventDefault();
+  const row = recentUploadDragRowById(payload.id);
+  if(!row){
+    toast('该最近上传素材已过期或已被清理');
+    return true;
+  }
+  const kind = String(row.kind || '');
+  const isImage = kind === 'image' || kind === 'reference_image';
+  try{
+    if(target === 'main' || target === 'ref'){
+      if(!isImage){
+        toast('视频和音频请拖到视频编辑的主任务视频区');
+        return true;
+      }
+      const before = target === 'main' ? mainImages.length : refImages.length;
+      await addFiles([await recentUploadFileFromRow(row)], target, {cache:false});
+      if((target === 'main' ? mainImages.length : refImages.length) > before) toast(`已将“${row.name || '图片'}”加入${target === 'main' ? '主图' : '参考图'}`);
+      return true;
+    }
+    if(target === 'video'){
+      if(kind !== 'video' && kind !== 'audio'){
+        toast('图片请拖到视频编辑的参考图区');
+        return true;
+      }
+      const before = kind === 'video' ? videoFilesData.length : videoAudioFilesData.length;
+      await handleVideoFile([await recentUploadFileFromRow(row)], {cache:false});
+      const after = kind === 'video' ? videoFilesData.length : videoAudioFilesData.length;
+      if(after > before) toast(`已将“${row.name || '素材'}”加入${kind === 'video' ? '主任务视频' : '参考音频'}`);
+      return true;
+    }
+    if(target === 'video_ref'){
+      if(!isImage){
+        toast('视频和音频请拖到主任务视频区');
+        return true;
+      }
+      const before = videoRefImages.length;
+      await handleVideoRefs([await recentUploadFileFromRow(row)], {cache:false, silent:true});
+      if(videoRefImages.length > before) toast(`已将“${row.name || '图片'}”加入视频参考图`);
+      return true;
+    }
+  }catch(error){
+    toast(error.message || '读取最近上传素材失败');
+    return true;
+  }
+  return false;
 }
 function cancelRecentUploadPreview(id){
   const timer = recentUploadPreviewTimers.get(id);
@@ -3975,6 +4065,17 @@ function setupRecentUploadPanel(){
   const grid = $('#recentUploadGrid');
   if(grid && grid.dataset.bound !== '1'){
     grid.dataset.bound = '1';
+    grid.addEventListener('dragstart', event=>{
+      const item = event.target.closest('[data-recent-upload-id]');
+      if(!item) return;
+      const row = recentUploadItems.find(entry=>entry.id === item.dataset.recentUploadId);
+      if(!setRecentUploadDragData(event, row)) event.preventDefault();
+      else item.classList.add('dragging');
+    });
+    grid.addEventListener('dragend', event=>{
+      event.target.closest('[data-recent-upload-id]')?.classList.remove('dragging');
+      hideDragOriginalBadge();
+    });
     grid.addEventListener('click', event=>{
       const item = event.target.closest('[data-recent-upload-id]');
       if(item && event.detail === 1) scheduleRecentUploadPreview(item.dataset.recentUploadId);
@@ -3996,6 +4097,17 @@ function setupRecentUploadPanel(){
   const videoPanel = $('#recentVideoUploadPanel');
   if(videoPanel && videoPanel.dataset.bound !== '1'){
     videoPanel.dataset.bound = '1';
+    videoPanel.addEventListener('dragstart', event=>{
+      const item = event.target.closest('[data-recent-video-upload-id]');
+      if(!item) return;
+      const row = recentVideoUploadRowById(item.dataset.recentVideoUploadId);
+      if(!setRecentUploadDragData(event, row)) event.preventDefault();
+      else item.classList.add('dragging');
+    });
+    videoPanel.addEventListener('dragend', event=>{
+      event.target.closest('[data-recent-video-upload-id]')?.classList.remove('dragging');
+      hideDragOriginalBadge();
+    });
     videoPanel.addEventListener('click', event=>{
       const item = event.target.closest('[data-recent-video-upload-id]');
       if(item && event.detail === 1) scheduleRecentVideoUploadPreview(item.dataset.recentVideoUploadId);
@@ -4034,14 +4146,14 @@ function setupRecentUploadPanel(){
   refreshRecentUploadPanel();
 }
 
-async function addFiles(files, target){
+async function addFiles(files, target, options={}){
   const imageFiles = [...files].filter(f => f.type.startsWith('image/'));
   const arr = await Promise.all(imageFiles.map(batchImageFileToItem));
   if(!arr.length) return;
   if(target === 'main') mainImages.push(...arr); else refImages.push(...arr);
   renderThumbs(); calcEstimate();
   prestagePublicBatchMedia(arr);
-  cacheRecentUploadedFiles(imageFiles, target);
+  if(options.cache !== false) cacheRecentUploadedFiles(imageFiles, target);
 }
 
 function renderThumbs(){
@@ -4137,7 +4249,7 @@ function setupDrop(id, inputId, target){
   const dz = $(id), input = $(inputId);
   dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drag'); });
   dz.addEventListener('dragleave', () => dz.classList.remove('drag'));
-  dz.addEventListener('drop', async e => { e.preventDefault(); dz.classList.remove('drag'); if(await handleGeneratedImageDrop(e, target)) return; addFiles(e.dataTransfer.files, target); });
+  dz.addEventListener('drop', async e => { e.preventDefault(); dz.classList.remove('drag'); if(await handleRecentUploadDrop(e, target)) return; if(await handleGeneratedImageDrop(e, target)) return; addFiles(e.dataTransfer.files, target); });
   input.addEventListener('change', () => addFiles(input.files, target));
 }
 setupDrop('#mainDrop', '#mainFiles', 'main');
@@ -8494,7 +8606,14 @@ function setupVideoPage(){
     const el=$('#'+id); if(!el) return;
     el.addEventListener('dragover', e=>{e.preventDefault(); el.classList.add('drag');});
     el.addEventListener('dragleave', ()=>el.classList.remove('drag'));
-    el.addEventListener('drop', e=>{e.preventDefault(); el.classList.remove('drag'); id==='videoDrop'?handleVideoFile(e.dataTransfer.files):handleVideoRefs(e.dataTransfer.files);});
+    el.addEventListener('drop', async e=>{
+      e.preventDefault();
+      el.classList.remove('drag');
+      const target = id === 'videoDrop' ? 'video' : 'video_ref';
+      if(await handleRecentUploadDrop(e, target)) return;
+      if(target === 'video_ref' && await handleGeneratedImageDrop(e, target)) return;
+      id === 'videoDrop' ? handleVideoFile(e.dataTransfer.files) : handleVideoRefs(e.dataTransfer.files);
+    });
   });
 }
 
