@@ -1237,6 +1237,16 @@ function recoverInterruptedSoftwareUpdateRuntime(runtime = {}) {
   return recovered;
 }
 
+// Older builds persisted UTC timestamps without a timezone suffix.  Parsing
+// them as local time makes a just-started update look hours old in UTC+ zones.
+function parseSoftwareUpdateRuntimeTimestamp(value = '') {
+  const raw = String(value || '').trim();
+  if (!raw) return NaN;
+  if (/(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw)) return Date.parse(raw);
+  const normalized = raw.includes('T') ? raw : raw.replace(' ', 'T');
+  return Date.parse(`${normalized}Z`);
+}
+
 function getSoftwareUpdateStatus() {
   const cfg = readConfig();
   // Only an attempt owned by this Electron process is allowed to run watchdogs.
@@ -1245,8 +1255,8 @@ function getSoftwareUpdateStatus() {
   if (isLiveSoftwareUpdateRuntime()) {
     const runtime = softwareUpdateRuntime;
     if (runtime.state === 'downloading') {
-      const startedAt = Date.parse(runtime.started_at || runtime.updated_at || '');
-      const lastProgressAt = Date.parse(runtime.last_progress_at || runtime.started_at || runtime.updated_at || '');
+      const startedAt = parseSoftwareUpdateRuntimeTimestamp(runtime.started_at || runtime.updated_at || '');
+      const lastProgressAt = parseSoftwareUpdateRuntimeTimestamp(runtime.last_progress_at || runtime.started_at || runtime.updated_at || '');
       const elapsed = Number.isFinite(startedAt) ? Date.now() - startedAt : 0;
       const stalled = Number.isFinite(lastProgressAt) ? Date.now() - lastProgressAt : 0;
       if (elapsed > SOFTWARE_UPDATE_TOTAL_TIMEOUT_MS) {
@@ -1385,10 +1395,13 @@ function downloadUrlToFileWithSystemCurl(target, dest, opts = {}) {
     const args = [
       '-L', '--fail', '--retry', '3', '--retry-delay', '2',
       '--connect-timeout', '30', '--max-time', String(Math.ceil(Number(opts.timeoutMs || 30 * 60 * 1000) / 1000)),
-      '--speed-time', String(Math.ceil(Math.max(240000, Number(opts.idleTimeoutMs || 4 * 60 * 1000)) / 1000)), '--speed-limit', '1',
+      '--speed-time', String(Math.ceil(Math.max(60000, Number(opts.idleTimeoutMs || 4 * 60 * 1000)) / 1000)), '--speed-limit', '1',
       '--continue-at', '-'
     ];
+    // Do not let curl silently inherit an unrelated system proxy on the
+    // direct route.  Explicit updater proxies are tried as separate routes.
     if (proxy) args.push('--proxy', proxy);
+    else args.push('--noproxy', '*');
     args.push('--output', tmp, target);
     const child = spawn('curl.exe', args, { windowsHide:true, stdio:['ignore', 'ignore', 'pipe'] });
     let stderr = '';
@@ -1412,7 +1425,7 @@ function downloadUrlToFileWithSystemCurl(target, dest, opts = {}) {
       try { bytes = fs.existsSync(tmp) ? fs.statSync(tmp).size : 0; } catch {}
       if (bytes > lastBytes) { lastBytes = bytes; lastGrowAt = Date.now(); }
       if (onProgress) onProgress({ bytes, total:Number(opts.total || 0), source:'system' });
-      if (Date.now() - lastGrowAt > Math.max(240000, Number(opts.idleTimeoutMs || 4 * 60 * 1000))) {
+      if (Date.now() - lastGrowAt > Math.max(60000, Number(opts.idleTimeoutMs || 4 * 60 * 1000))) {
         finishReject(new Error('系统下载器长时间没有下载进度，切换内置下载'));
       }
     }, 1000);
@@ -1520,12 +1533,12 @@ async function downloadSoftwareUpdate(repoInput = '', cfg = readConfig(), attemp
     let downloaded = false;
     for (const proxy of updateDownloadProxyCandidates(cfg)) {
       ensureCurrentAttempt();
-      const route = proxy ? '本机网络代理' : '直连 GitHub';
+      const route = proxy ? '更新代理' : '直连 GitHub';
       try {
         setForAttempt({ state:'downloading', message:`正在通过${route}下载新版 EXE...`, progress:1 });
         await downloadUrlToFileWithSystemCurl(info.asset_url, dest, {
           timeoutMs: 30 * 60 * 1000,
-          idleTimeoutMs: 4 * 60 * 1000,
+          idleTimeoutMs: 75 * 1000,
           total: info.asset_size || 0,
           proxy,
           onProgress: p => {
@@ -1535,7 +1548,6 @@ async function downloadSoftwareUpdate(repoInput = '', cfg = readConfig(), attemp
           }
         });
         ensureCurrentAttempt();
-        if (proxy) markGoodApimartProxy(proxy);
         downloaded = true;
         break;
       } catch (error) {
@@ -1550,7 +1562,7 @@ async function downloadSoftwareUpdate(repoInput = '', cfg = readConfig(), attemp
         setForAttempt({ state:'downloading', message:'系统下载器不可用，已切换内置下载...', progress:1 });
         await downloadUrlToFileRobust(info.asset_url, dest, {
           timeoutMs: 30 * 60 * 1000,
-          idleTimeoutMs: 4 * 60 * 1000,
+          idleTimeoutMs: 75 * 1000,
           onProgress: p => {
             const total = p.total || info.asset_size || 0;
             const progress = total ? Math.max(1, Math.min(99, Math.round(p.bytes / total * 100))) : 0;
@@ -1621,8 +1633,17 @@ function installSoftwareUpdate(downloadedPath = '', cfg = readConfig()) {
   if (!app.isPackaged) throw new Error('当前是开发调试模式，不能覆盖安装；打包后的 EXE 才可以原地更新。');
   const updateFile = ensureInside(updateCacheDir(), file);
   if (path.extname(updateFile).toLowerCase() !== '.exe') throw new Error('更新文件必须是 EXE');
-  const target = process.execPath;
+  // electron-builder portable apps run from a temporary extraction directory.
+  // PORTABLE_EXECUTABLE_FILE points at the original user-facing EXE that must
+  // be replaced for the update to survive the next launch.
+  const portableTarget = String(process.env.PORTABLE_EXECUTABLE_FILE || '').trim();
+  const target = portableTarget && /\.exe$/i.test(portableTarget) && fs.existsSync(portableTarget)
+    ? portableTarget
+    : process.execPath;
   if (process.platform !== 'win32') throw new Error('当前自动更新仅支持 Windows EXE');
+  if (!target || path.extname(target).toLowerCase() !== '.exe' || !fs.existsSync(target)) {
+    throw new Error('未找到可替换的原始程序 EXE，请从 GitHub Release 手动下载安装包。');
+  }
   const helper = path.join(os.tmpdir(), 'LAIG_update_' + Date.now() + '.vbs');
   const helperBackup = path.join(updateCacheDir(), 'backup_' + path.basename(target));
   const helperLog = path.join(updateCacheDir(), 'last_update_install.log');
@@ -1726,12 +1747,14 @@ function updateDownloadProxyCandidates(cfg = readConfig()) {
     const proxy = normalizeProxyUrl(value || '');
     if (proxy && !candidates.includes(proxy)) candidates.push(proxy);
   };
-  add(lastGoodApimartProxy);
+  // GitHub release downloads try direct access first.  The APIMart proxy is
+  // retained only as a final compatibility fallback for networks where GitHub
+  // is blocked but the user's existing local proxy can reach release assets.
+  candidates.push('');
   add(cfg.update_proxy_url);
-  add(cfg.apimart_proxy_url);
   add(process.env.HTTPS_PROXY);
   add(process.env.HTTP_PROXY);
-  candidates.push('');
+  add(cfg.apimart_proxy_url);
   return candidates;
 }
 function batchMediaUploadDir(owner='local') {
