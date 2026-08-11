@@ -45,7 +45,7 @@ for (const group of pickerBlock.matchAll(/\['[^']+',\s*\[([^\]]+)\]\]/g)) {
   for (const model of group[1].matchAll(/'([^']+)'/g)) picker.add(model[1].toLowerCase());
 }
 
-assert(backend.size === 43, `Expected 43 official backend models, found ${backend.size}`);
+assert(backend.size === 44, `Expected 44 official backend models, found ${backend.size}`);
 assert(picker.size === backend.size, `Model picker/backend count mismatch: picker=${picker.size}, backend=${backend.size}`);
 for (const model of picker) assert(backend.has(model), `Model picker has no backend rule: ${model}`);
 for (const model of backend.keys()) assert(picker.has(model), `Backend model is missing from picker: ${model}`);
@@ -62,7 +62,8 @@ for (const [model, backendLine] of backend) {
 assert(/'doubao-seedance-1-0-pro-fast'[\s\S]*?durationRange:\s*\[2,12\],\s*defaultDuration:\s*5/.test(main), 'Seedance 1.0 Pro Fast must support 2-12 seconds with default 5');
 assert(/'doubao-seedance-1-0-pro-quality'[\s\S]*?durationRange:\s*\[2,12\],\s*defaultDuration:\s*5/.test(main), 'Seedance 1.0 Pro Quality must support 2-12 seconds with default 5');
 assert(/model:'doubao-seedance-1-5-pro'[^\n]*durationRange:\[4,12\][^\n]*audioParam:'audio'/.test(main), 'Seedance 1.5 Pro must support 4-12 seconds and audio');
-assert(/model:'doubao-seedance-2\.0'[^\n]*aspectParam:'size'[^\n]*durationRange:\[4,15\][^\n]*videoParam:'video_urls'/.test(main), 'Seedance 2.0 must use size and support video references');
+assert(/model:'doubao-seedance-2\.0'[^\n]*aspectParam:'size'[^\n]*durationRange:\[4,15\][^\n]*videoParam:'video_urls'[^\n]*disallowFrameReferenceMix:true/.test(main), 'Seedance 2.0 must use size, 4-15 seconds, and reject frame/video reference mixes');
+assert(/model:'doubao-seedance-2\.0-fast'[^\n]*durationRange:\[4,15\][^\n]*disallowFrameReferenceMix:true/.test(main) && /model:'doubao-seedance-2\.0-mini'[^\n]*durationRange:\[4,15\][^\n]*disallowFrameReferenceMix:true/.test(main), 'Seedance 2.0 Fast and Mini must preserve the documented 4-15 second multimodal constraints');
 assert(/model:'doubao-seedance-2\.5'[^\n]*resolutions:\['480p','720p'\][^\n]*durationRange:\[4,30\][^\n]*supportsAutoDuration:true[^\n]*maxImageCount:30[^\n]*maxVideoCount:10/.test(main), 'Seedance 2.5 must support its documented resolution, duration, and reference limits');
 assert(/model:'doubao-seedance-2\.5'[^\n]*audioReferenceParam:'audio_urls'[^\n]*maxAudioCount:10[^\n]*audioMinDuration:2[^\n]*audioTotalDuration:30/.test(main), 'Seedance 2.5 must support up to ten 2-30 second audio references');
 assert(/model:'doubao-seedance-2\.5'[^\n]*imageRolesBecomeReferencesWithMedia:true[^\n]*outputFormatParam:'output_format'[^\n]*outputFormats:\['mp4','mov'\][^\n]*forceAdaptiveForVideoEdit:true/.test(main), 'Seedance 2.5 must send documented output format and task constraints');
@@ -70,11 +71,11 @@ assert(/imageRolesBecomeReferencesWithMedia && \(videoUrls\.length \|\| audioUrl
 assert(/model:'doubao-seedance-2\.5'[^\n]*durationMin:4,\s*durationMax:30[^\n]*supportsAutoDuration:true[^\n]*maxVideoCount:10/.test(app), 'Seedance 2.5 slider and multi-video UI rule must be registered');
 assert(/seedance25OutputFormat/.test(app) && /seedance25AutoDuration/.test(app), 'Seedance 2.5 advanced controls must be available in the video editor');
 assert(/payload\[rule\.outputFormatParam\]/.test(main) && /body\.output_format/.test(app), 'Video output format must be passed through to APIMart');
-assert(/model:'grok-imagine-1\.5-video-apimart'[^\n]*durationRange:\[6,30\],\s*defaultDuration:6/.test(main), 'Grok Imagine 1.5 Video must support 6-30 seconds with default 6');
-assert(/model:'grok-imagine-1\.5-video-apimart'[^\n]*durationMin:6,\s*durationMax:30,\s*defaultDuration:6/.test(app), 'Grok Imagine 1.5 Video slider must support 6-30 seconds with default 6');
+assert(/model:'grok-imagine-1\.5-video-apimart'[^\n]*durationRange:\[6,15\],\s*defaultDuration:6/.test(main), 'Grok Imagine 1.5 Video must support 6-15 seconds with default 6');
+assert(/model:'grok-imagine-1\.5-video-apimart'[^\n]*durationMin:6,\s*durationMax:15,\s*defaultDuration:6/.test(app), 'Grok Imagine 1.5 Video slider must support 6-15 seconds with default 6');
 assert(/model:'grok-imagine-1\.5-video-apimart'[^\n]*resolutionParam:'quality'[^\n]*aspectParam:'size'/.test(main), 'Grok must submit quality and size fields');
 assert(/model:'sora-2'[^\n]*durations:\[4,8,12,16,20\],\s*defaultDuration:4/.test(main), 'Sora 2 default duration must be 4 seconds');
-assert(/model:'sora-2'[^\n]*supportsImageUrls:true,\s*maxImageCount:1\s*\}/.test(main), 'Sora 2 must submit the documented image_urls and aspect_ratio fields together');
+assert(/model:'sora-2'[^\n]*supportsImageUrls:true,\s*maxImageCount:1,\s*omitAspectWithImages:true/.test(main), 'Sora 2 must submit image_urls and omit aspect_ratio when an image determines orientation');
 assert(/model:'veo3\.1-fast'[^\n]*durations:\[8\]/.test(main) && /model:'veo3\.1-quality'[^\n]*durations:\[8\]/.test(main), 'VEO3.1 generation must be fixed to 8 seconds');
 assert(/model:'veo3\.1-lite'[^\n]*supportsImageUrls:false/.test(main), 'VEO3.1 Lite must reject reference images');
 assert(/model:'wan2\.7-videoedit'[^\n]*durations:\[0,2,3,4,5,6,7,8,9,10\][^\n]*durationWithVideo:true/.test(main), 'Wan2.7 VideoEdit must allow 0 or 2-10 seconds and send duration with video');
@@ -83,15 +84,22 @@ assert(/model:'kling-v3-motion-control'[^\n]*supportsDuration:false/.test(main),
 assert(/model:'kling-video-o1'[^\n]*durations:\[5,10\]/.test(main), 'Kling Video O1 only supports 5 or 10 seconds');
 assert(/model:'MiniMax-Hailuo-02'[^\n]*resolutions:\['512p','768p','1080p'\][^\n]*resolutionDurationRules:\{'1080p':\[5\]\}/.test(main), 'Hailuo 02 1080p must be fixed to 5 seconds');
 assert(/model:'MiniMax-Hailuo-2\.3'[^\n]*durations:\[6,10\][^\n]*resolutionDurationRules:\{'1080p':\[6\]\}/.test(main), 'Hailuo 2.3 1080p must be fixed to 6 seconds');
-assert(/model:'MiniMax-H3'[^\n]*resolutions:\['2K','768P'\][^\n]*durationRange:\[4,15\][^\n]*maxImageCount:9[^\n]*maxVideoCount:3/.test(main), 'MiniMax H3 must use official 2K/768P, 4-15 seconds, and reference limits');
+assert(/model:'MiniMax-H3'[^\n]*resolutions:\['2K','768P'\][^\n]*durationRange:\[4,15\][^\n]*maxImageCount:9[^\n]*maxVideoCount:3[^\n]*referenceVideoDurationRange:\[2,15\][^\n]*referenceVideoTotalDurationMax:15[^\n]*audioMinDuration:2[^\n]*audioTotalDuration:15/.test(main), 'MiniMax H3 must use official 2K/768P and the documented multimodal duration limits');
 assert(/model:'MiniMax-H3'[^\n]*durationMin:4,\s*durationMax:15[^\n]*supportsVideo:true/.test(app), 'MiniMax H3 slider and video-reference UI rule must be registered');
 assert(/model:'skyreels-v4-fast'[^\n]*durationRange:\[3,15\][^\n]*videoParam:'ref_videos'/.test(main), 'SkyReels V4 must support 3-15 seconds and tagged video references');
 assert(/model:'skyreels-v4-fast'[^\n]*omitAspectWithImageModes:\['first_frame','first_last_frame'\][^\n]*omitAspectWithVideo:true/.test(main), 'SkyReels must only omit aspect ratio for I2V or video reference modes');
 assert(/videoReferenceType[^\n]*extend/.test(app) && /video_reference_type:currentVideoReferenceType\(\)/.test(app), 'SkyReels reference and extension mode must reach the backend');
 assert(/model:'happyhorse-1\.0'[^\n]*resolutions:\['720P','1080P'\][^\n]*aspectParam:'size'/.test(main), 'HappyHorse must preserve uppercase quality values and use size');
+assert(/model:'happyhorse-1\.0'[^\n]*audioSettingParam:'audio_setting'[^\n]*promptOptionalModes:\['first_frame'\]/.test(main), 'HappyHorse 1.0 must expose documented edit-audio settings and only allow prompt omission for first-frame I2V');
+assert(/keep_original_sound:'no'/.test(main), 'Kling Omni and Video O1 must use the documented default of not keeping reference-video audio');
 assert(/model:'wan2\.5-preview'[^\n]*durations:\[5,10\]/.test(main), 'Wan2.5 must support 5 or 10 seconds');
 assert(/model:'wan2\.6'[^\n]*durations:\[5,10,15\]/.test(main), 'Wan2.6 must support 5, 10, or 15 seconds');
 assert(/model:'wan2\.7-r2v'[^\n]*videoDurationRange:\[2,10\][^\n]*maxReferenceCount:5/.test(main), 'Wan2.7 R2V must constrain video edits to 2-10 seconds and five references');
+assert(/model:'wan2\.7'[^\n]*allowedImageCounts:\[0,1,2\][^\n]*maxImageCount:2/.test(main), 'Wan2.7 must only accept zero, one, or two input images');
+assert(/model:'wan2\.7-videoedit'[^\n]*referenceVideoDurationRange:\[2,10\][^\n]*outputDurationAtMostReferenceVideo:true[^\n]*audioSettingParam:'audio_setting'/.test(main), 'Wan2.7 VideoEdit must constrain source/output duration and submit its audio setting');
+assert(/if \(rule\.audioSettingParam\)[\s\S]{0,520}payload\.metadata[\s\S]{0,260}\[rule\.audioSettingParam\]/.test(main), 'Wan2.7 VideoEdit audio setting must be nested in metadata');
+assert(/id="videoSourceAudioSettingRow"/.test(html) && /id="videoSourceAudioSetting"/.test(html), 'Wan2.7 VideoEdit must expose its source-audio setting');
+assert(/function updateVideoSourceAudioSettingControl\(/.test(app) && /audio_setting:\$\('#videoSourceAudioSetting'\)\?\.value/.test(app), 'The VideoEdit audio setting must be shown only when supported and reach the backend');
 assert(/model:'kling-v2-6'[^\n]*durations:\[5,10\][^\n]*modeFromResolution:true/.test(main), 'Kling 2.6 must support 5 or 10 seconds and map quality mode');
 assert(/model:'kling-v3'[^\n]*durationRange:\[3,15\]/.test(main), 'Kling v3 must support 3-15 seconds');
 assert(/model:'viduq3'[^\n]*durationRange:\[3,16\][^\n]*minImageCount:1/.test(main), 'Vidu Q3 standard must require images and support 3-16 seconds');
@@ -102,7 +110,7 @@ assert(/model:'flux-3-video'[^\n]*resolutions:\['hd','fhd'\][^\n]*durationRange:
 assert(/model:'veo3\.1-fast-official'[^\n]*durations:\[4,6,8\][^\n]*imageParam:'first_frame_image'/.test(main), 'VEO3 official Fast must use its documented frame controls');
 assert(/model:'doubao-seedance-2\.0'[^\n]*aspectParam:'size'/.test(main), 'Seedance 2.0 must submit size instead of aspect_ratio');
 const videoModelPicker = app.slice(app.indexOf('const APIMART_VIDEO_MODEL_GROUPS_UI'), app.indexOf('function apimartVideoModelOptionsHtml'));
-assert(!/doubao-seedance-2\.0-face|doubao-seedance-2\.0-fast-face|wan2\.6-i2v/.test(videoModelPicker), 'Undocumented legacy model variants must not appear in the model picker');
+assert(!/(?:doubao-seedance-2\.0-face|doubao-seedance-2\.0-fast-face|['"]wan2\.6-i2v['"])/.test(videoModelPicker), 'Undocumented legacy model variants must not appear in the model picker');
 assert(/flux-3-video/.test(videoModelPicker), 'FLUX 3 Video must appear in the video model picker');
 assert(/id="videoDuration"\s+type="range"/.test(html), 'Video duration must use a range input');
 assert(!/<select\s+id="videoDuration"/.test(html), 'Legacy video duration select must not return');

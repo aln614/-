@@ -26,11 +26,16 @@ assert(/addRecentVideoUploadToInputs\(/.test(app), 'Recent video panel must rest
 assert(/openRecentVideoUploadSettings\(/.test(app) && /saveRecentVideoUploadSettings\(/.test(app), 'Video recent-upload settings must be configurable');
 assert(/previewRecentUploadImage\([\s\S]{0,500}showPreview\(/.test(app), 'Recent uploaded images must support single-click preview');
 assert(/grid\.addEventListener\('dblclick',[\s\S]{0,400}addRecentUploadAsMain/.test(app), 'Recent uploaded images must add to the main image list on double-click');
+assert(/function showRecentAudioPreview\(/.test(app) && /function closeRecentAudioPreview\(/.test(app), 'Recent uploaded audio needs a dedicated single-click preview');
+assert(/row\.kind === 'audio'[\s\S]{0,160}showRecentAudioPreview\(/.test(app), 'Recent audio must open the audio player rather than being added on a single click');
+assert(/videoPanel\.addEventListener\('dblclick',[\s\S]{0,360}addRecentVideoUploadToInputs/.test(app) && /if\(row\.kind === 'reference_image'\)[\s\S]{0,160}else await handleVideoFile\(\[file\], \{cache:false\}\)/.test(app), 'Recent audio must only be attached to the task through the double-click restore flow');
 assert(/id="recentVideoUploadPanel"/.test(html), 'Video editor recent-upload panel is missing');
 assert(/id="recentVideoUploadVideos"/.test(html) && /id="recentVideoUploadAudios"/.test(html) && /id="recentVideoUploadReferences"/.test(html), 'All three recent media lanes are required');
 assert(/id="recentVideoUploadSettingsBtn"/.test(html) && /id="recentVideoUploadSettingsModal"/.test(html), 'Video recent-upload settings UI is missing');
+assert(/id="recentAudioPreviewModal"/.test(html) && /id="recentAudioPreviewPlayer"/.test(html), 'Recent audio preview modal is missing');
 assert(!/id="recentUploadLimitInput"[^>]*max=/.test(html) && !/id="recentVideoUploadLimitInput"[^>]*max=/.test(html), 'Recent-upload cache limits must not have an artificial maximum');
 assert(/\.recent-video-upload-panel\{/.test(css), 'Recent video upload panel needs its CSS');
+assert(/\.recent-audio-preview-card\{/.test(css) && /\.recent-audio-preview-head\{/.test(css), 'Recent audio preview modal needs its CSS');
 assert(/#mainThumbs \.thumb,[\s\S]{0,180}object-fit:contain!important/.test(css), 'Uploaded image thumbnails must use contain sizing rather than cropping');
 
 console.log('[verify-recent-upload-cache] OK: output-directory cache and video/audio/reference reuse panel are wired.');

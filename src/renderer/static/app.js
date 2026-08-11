@@ -13,6 +13,7 @@ let recentUploadItems = [];
 let recentUploadWriteChain = Promise.resolve();
 let recentVideoUploadItems = { video: [], audio: [], reference_image: [] };
 const recentUploadPreviewTimers = new Map();
+const recentVideoUploadPreviewTimers = new Map();
 let batches = [];
 let historyBatches = [];
 let selectedImages = new Set();
@@ -3691,12 +3692,12 @@ function renderRecentVideoUploadLane(kind, selector, emptyText){
     const name = escapeHtml(row.name || 'uploaded-media');
     const source = recentUploadSourceUrl(row);
     if(kind === 'video'){
-      return `<button class="recent-video-upload-item is-video" type="button" data-recent-video-upload-id="${escapeHtml(row.id)}" title="${name} · 点击重新加入主任务视频"><span class="recent-video-upload-media"><span class="video-first-frame" data-src="${source}"><span class="video-lazy-icon">▶</span><small>加载封面</small></span><span class="recent-video-upload-badge">视频</span></span><span class="recent-video-upload-name">${name}</span></button>`;
+      return `<button class="recent-video-upload-item is-video" type="button" data-recent-video-upload-id="${escapeHtml(row.id)}" title="${name} · 单击预览，双击加入主任务视频"><span class="recent-video-upload-media"><span class="video-first-frame" data-src="${source}"><span class="video-lazy-icon">▶</span><small>加载封面</small></span><span class="recent-video-upload-badge">视频</span></span><span class="recent-video-upload-name">${name}</span></button>`;
     }
     if(kind === 'audio'){
-      return `<button class="recent-video-upload-item is-audio" type="button" data-recent-video-upload-id="${escapeHtml(row.id)}" title="${name} · 点击重新加入参考音频"><span class="recent-video-upload-media recent-video-upload-audio">${recentVideoUploadAudioIcon()}<span class="recent-video-upload-badge">音频</span></span><span class="recent-video-upload-name">${name}</span></button>`;
+      return `<button class="recent-video-upload-item is-audio" type="button" data-recent-video-upload-id="${escapeHtml(row.id)}" title="${name} · 单击预览，双击加入参考音频"><span class="recent-video-upload-media recent-video-upload-audio">${recentVideoUploadAudioIcon()}<span class="recent-video-upload-badge">音频</span></span><span class="recent-video-upload-name">${name}</span></button>`;
     }
-    return `<button class="recent-video-upload-item is-reference" type="button" data-recent-video-upload-id="${escapeHtml(row.id)}" title="${name} · 点击重新加入参考图"><span class="recent-video-upload-media"><img src="${source}" alt="${name}" loading="lazy" decoding="async" /><span class="recent-video-upload-badge">参考图</span></span><span class="recent-video-upload-name">${name}</span></button>`;
+    return `<button class="recent-video-upload-item is-reference" type="button" data-recent-video-upload-id="${escapeHtml(row.id)}" title="${name} · 单击预览，双击加入参考图"><span class="recent-video-upload-media"><img src="${source}" alt="${name}" loading="lazy" decoding="async" /><span class="recent-video-upload-badge">参考图</span></span><span class="recent-video-upload-name">${name}</span></button>`;
   }).join('');
   if(kind === 'video') initLazyVideoFirstFrames(grid);
 }
@@ -3797,10 +3798,75 @@ async function addRecentUploadAsMain(id){
     toast(error.message || '读取最近上传图片失败');
   }
 }
-async function addRecentVideoUploadToInputs(id){
-  const row = ['video','audio','reference_image']
+function recentVideoUploadRowById(id){
+  return ['video','audio','reference_image']
     .flatMap(kind=>recentVideoUploadItems[kind] || [])
-    .find(item=>item.id === id);
+    .find(item=>item.id === id) || null;
+}
+function cancelRecentVideoUploadPreview(id){
+  const timer = recentVideoUploadPreviewTimers.get(id);
+  if(timer) window.clearTimeout(timer);
+  recentVideoUploadPreviewTimers.delete(id);
+}
+function closeRecentAudioPreview(){
+  const player = $('#recentAudioPreviewPlayer');
+  if(player){
+    player.pause?.();
+    player.removeAttribute('src');
+    player.load?.();
+  }
+  const modal = $('#recentAudioPreviewModal');
+  modal?.classList.remove('active');
+  modal?.setAttribute('aria-hidden', 'true');
+}
+function showRecentAudioPreview(row={}){
+  const source = recentUploadSourceUrl(row);
+  if(!source){ toast('最近上传音频源文件不存在'); return; }
+  const player = $('#recentAudioPreviewPlayer');
+  const name = $('#recentAudioPreviewName');
+  if(name) name.textContent = row.name || '最近上传音频';
+  if(player){
+    player.pause?.();
+    player.src = source;
+    player.load?.();
+  }
+  const modal = $('#recentAudioPreviewModal');
+  modal?.classList.add('active');
+  modal?.setAttribute('aria-hidden', 'false');
+}
+function previewRecentVideoUpload(id){
+  const row = recentVideoUploadRowById(id);
+  const source = row ? recentUploadSourceUrl(row) : '';
+  if(!row || !source){ toast('最近上传素材源文件不存在'); return; }
+  if(row.kind === 'video'){
+    showVideoPreview({
+      url:source,
+      stream_url:source,
+      download_url:source,
+      status:'最近上传素材',
+      progress_text:'单击预览，双击加入当前任务',
+      model:'最近上传视频',
+      filename:row.name || 'uploaded-video',
+      created_at:row.created_at
+    });
+    return;
+  }
+  if(row.kind === 'audio'){
+    showRecentAudioPreview(row);
+    return;
+  }
+  showPreview(source, { model:'最近上传参考图', fullUrl:source, filename:row.name || 'uploaded-reference.png' });
+}
+function scheduleRecentVideoUploadPreview(id){
+  cancelRecentVideoUploadPreview(id);
+  const timer = window.setTimeout(()=>{
+    recentVideoUploadPreviewTimers.delete(id);
+    previewRecentVideoUpload(id);
+  }, 220);
+  recentVideoUploadPreviewTimers.set(id, timer);
+}
+async function addRecentVideoUploadToInputs(id){
+  const row = recentVideoUploadRowById(id);
   if(!row) return;
   try{
     const file = await recentUploadFileFromRow(row);
@@ -3932,7 +3998,21 @@ function setupRecentUploadPanel(){
     videoPanel.dataset.bound = '1';
     videoPanel.addEventListener('click', event=>{
       const item = event.target.closest('[data-recent-video-upload-id]');
-      if(item) addRecentVideoUploadToInputs(item.dataset.recentVideoUploadId);
+      if(item && event.detail === 1) scheduleRecentVideoUploadPreview(item.dataset.recentVideoUploadId);
+    });
+    videoPanel.addEventListener('dblclick', event=>{
+      const item = event.target.closest('[data-recent-video-upload-id]');
+      if(!item) return;
+      event.preventDefault();
+      cancelRecentVideoUploadPreview(item.dataset.recentVideoUploadId);
+      addRecentVideoUploadToInputs(item.dataset.recentVideoUploadId);
+    });
+    videoPanel.addEventListener('keydown', event=>{
+      const item = event.target.closest('[data-recent-video-upload-id]');
+      if(!item || !['Enter', ' '].includes(event.key)) return;
+      event.preventDefault();
+      cancelRecentVideoUploadPreview(item.dataset.recentVideoUploadId);
+      previewRecentVideoUpload(item.dataset.recentVideoUploadId);
     });
   }
   $('#recentUploadSettingsBtn')?.addEventListener('click', openRecentUploadSettings);
@@ -3949,6 +4029,8 @@ function setupRecentUploadPanel(){
   $('#clearRecentVideoUploadsBtn')?.addEventListener('click', ()=>clearRecentVideoUploads().then(()=>{ setRecentVideoUploadSettingsHelp('已清空最近上传的视频、音频与参考图。'); toast('最近上传视频素材已清空'); }).catch(error=>setRecentVideoUploadSettingsHelp(error.message || '清空缓存失败', true)));
   $$('#recentVideoUploadSettingsModal input[type="number"]').forEach(input=>input.addEventListener('keydown', event=>{ if(event.key === 'Enter'){ event.preventDefault(); saveRecentVideoUploadSettings().catch(error=>setRecentVideoUploadSettingsHelp(error.message || '保存缓存设置失败', true)); } }));
   $('#recentVideoUploadSettingsModal')?.addEventListener('click', event=>{ if(event.target === event.currentTarget) closeRecentVideoUploadSettings(); });
+  $('#closeRecentAudioPreview')?.addEventListener('click', closeRecentAudioPreview);
+  $('#recentAudioPreviewModal')?.addEventListener('click', event=>{ if(event.target === event.currentTarget) closeRecentAudioPreview(); });
   refreshRecentUploadPanel();
 }
 
@@ -6572,15 +6654,27 @@ function registerApimartVideoUiRules(items = []){
       supportsAutoDuration:item.supportsAutoDuration === true,
       supportsAspect:item.supportsAspect !== false,
       videoDurationRange:item.videoDurationRange || null,
+      referenceVideoDurationRange:item.referenceVideoDurationRange || null,
+      referenceVideoTotalDurationMin:Number(item.referenceVideoTotalDurationMin || 0),
+      referenceVideoTotalDurationMax:Number(item.referenceVideoTotalDurationMax || 0),
       firstLastDurations:item.firstLastDurations || null,
       resolutionDurationRules:item.resolutionDurationRules || null,
+      resolutionAspectRatios:item.resolutionAspectRatios || null,
       supportsImages:item.supportsImages !== false,
       supportsVideo:item.supportsVideo === true,
       maxVideoCount:Number(item.maxVideoCount || 1),
       minImageCount:Number(item.minImageCount || 0),
       maxImageCount:Number(item.maxImageCount || 0),
+      allowedImageCounts:Array.isArray(item.allowedImageCounts) ? item.allowedImageCounts.map(Number).filter(Number.isFinite) : null,
+      videoMaxImageCount:Number(item.videoMaxImageCount || 0),
       requiredVideo:item.requiredVideo === true,
+      disallowFrameReferenceMix:item.disallowFrameReferenceMix === true,
+      outputDurationAtMostReferenceVideo:item.outputDurationAtMostReferenceVideo === true,
+      supportsSourceAudioSetting:item.supportsSourceAudioSetting === true,
+      promptOptionalWithMedia:item.promptOptionalWithMedia === true,
+      promptOptionalModes:Array.isArray(item.promptOptionalModes) ? item.promptOptionalModes.map(String) : [],
       characterOrientation:item.characterOrientation === true,
+      referenceVideoDurationRangeByOrientation:item.referenceVideoDurationRangeByOrientation || null,
       supportsAudioReference:item.supportsAudioReference === true,
       maxAudioCount:Number(item.maxAudioCount || 0),
       audioReferenceParam:item.audioReferenceParam || '',
@@ -6591,6 +6685,13 @@ function registerApimartVideoUiRules(items = []){
       audioTotalDuration:Number(item.audioTotalDuration || 0),
       audioDurationAtMostVideo:item.audioDurationAtMostVideo === true,
       audioDisallowsVideo:item.audioDisallowsVideo === true,
+      audioDisallowsImages:item.audioDisallowsImages === true,
+      audioRequiresResolution:item.audioRequiresResolution || '',
+      audioDisallowsLastFrame:item.audioDisallowsLastFrame === true,
+      supportsGeneratedAudio:item.supportsGeneratedAudio === true,
+      defaultGeneratedAudio:item.defaultGeneratedAudio !== false,
+      forceGeneratedAudio:item.forceGeneratedAudio === true,
+      lastFrameRequiresResolution:item.lastFrameRequiresResolution || '',
       forceAdaptiveForVideoEdit:item.forceAdaptiveForVideoEdit === true,
       forceAdaptiveForFrameModes:item.forceAdaptiveForFrameModes === true,
       forceAutoDurationForVideoEdit:item.forceAutoDurationForVideoEdit === true,
@@ -6645,20 +6746,23 @@ registerApimartVideoUiRules([
 // APIMart official video documentation overrides. Keep this list aligned with the
 // backend rule table; these values drive the duration slider and client validation.
 registerApimartVideoUiRules([
-  { model:'gemini-omni-flash-preview', label:'Gemini Omni Flash Preview', resolutions:['720p'], defaultResolution:'720p', aspects:['16:9','9:16'], defaultAspect:'16:9', supportsDuration:false, supportsVideo:true, maxImageCount:16, note:'720p / 24fps; duration is selected automatically by the model (3-10 seconds).' },
+  { model:'gemini-omni-flash-preview', label:'Gemini Omni Flash Preview', resolutions:['720p'], defaultResolution:'720p', aspects:['16:9','9:16'], defaultAspect:'16:9', supportsDuration:false, supportsVideo:true, maxImageCount:16, promptOptionalWithMedia:true, note:'720p / 24fps; duration is selected automatically by the model (3-10 seconds).' },
   { model:'omni-flash-ext', label:'Omni Flash Ext', resolutions:['720p','1080p','4k'], defaultResolution:'720p', aspects:['16:9','9:16'], defaultAspect:'16:9', durations:[4,6,8,10], defaultDuration:6, supportsVideo:true },
   { model:'doubao-seedance-1-0-pro-fast', label:'Doubao Seedance 1.0 Pro Fast', resolutions:['480p','720p','1080p'], defaultResolution:'1080p', aspects:['16:9','9:16','1:1','4:3','3:4','21:9'], defaultAspect:'16:9', durationMin:2, durationMax:12, defaultDuration:5, maxImageCount:1 },
   { model:'doubao-seedance-1-0-pro-quality', label:'Doubao Seedance 1.0 Pro Quality', resolutions:['480p','720p','1080p'], defaultResolution:'1080p', aspects:['16:9','9:16','1:1','4:3','3:4','21:9'], defaultAspect:'16:9', durationMin:2, durationMax:12, defaultDuration:5, maxImageCount:2 },
   { model:'doubao-seedance-1-5-pro', label:'Doubao Seedance 1.5 Pro', resolutions:['480p','720p','1080p'], defaultResolution:'720p', aspects:['16:9','9:16','1:1','4:3','3:4','21:9'], durationMin:4, durationMax:12, defaultDuration:5, maxImageCount:2 },
-  { model:'doubao-seedance-2.0', label:'Doubao Seedance 2.0', resolutions:['480p','720p','1080p','4k'], aspects:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'], durationMin:4, durationMax:15, defaultDuration:5, supportsVideo:true, durationWithVideo:true, maxImageCount:9, maxVideoCount:3, supportsAudioReference:true, maxAudioCount:3, audioReferenceParam:'audio_urls', audioRequiresReference:true, audioMaxDuration:15, audioTotalDuration:15 },
-  { model:'doubao-seedance-2.0-fast', label:'Doubao Seedance 2.0 Fast', resolutions:['480p','720p'], aspects:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'], durationMin:4, durationMax:15, defaultDuration:5, supportsVideo:true, durationWithVideo:true, maxImageCount:9, maxVideoCount:3, supportsAudioReference:true, maxAudioCount:3, audioReferenceParam:'audio_urls', audioRequiresReference:true, audioMaxDuration:15, audioTotalDuration:15 },
-  { model:'doubao-seedance-2.0-mini', label:'Doubao Seedance 2.0 Mini', resolutions:['480p','720p'], aspects:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'], durationMin:4, durationMax:15, defaultDuration:5, supportsVideo:true, durationWithVideo:true, maxImageCount:9, maxVideoCount:3, supportsAudioReference:true, maxAudioCount:3, audioReferenceParam:'audio_urls', audioRequiresReference:true, audioMaxDuration:15, audioTotalDuration:15 },
+  { model:'doubao-seedance-2.0', label:'Doubao Seedance 2.0', resolutions:['480p','720p','1080p','4k'], aspects:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'], durationMin:4, durationMax:15, defaultDuration:5, supportsVideo:true, durationWithVideo:true, maxImageCount:9, maxVideoCount:3, supportsAudioReference:true, maxAudioCount:3, audioReferenceParam:'audio_urls', audioRequiresReference:true, audioMaxDuration:15, audioTotalDuration:15, promptOptionalWithMedia:true },
+  { model:'doubao-seedance-2.0-fast', label:'Doubao Seedance 2.0 Fast', resolutions:['480p','720p'], aspects:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'], durationMin:4, durationMax:15, defaultDuration:5, supportsVideo:true, durationWithVideo:true, maxImageCount:9, maxVideoCount:3, supportsAudioReference:true, maxAudioCount:3, audioReferenceParam:'audio_urls', audioRequiresReference:true, audioMaxDuration:15, audioTotalDuration:15, promptOptionalWithMedia:true },
+  { model:'doubao-seedance-2.0-mini', label:'Doubao Seedance 2.0 Mini', resolutions:['480p','720p'], aspects:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'], durationMin:4, durationMax:15, defaultDuration:5, supportsVideo:true, durationWithVideo:true, maxImageCount:9, maxVideoCount:3, supportsAudioReference:true, maxAudioCount:3, audioRequiresReference:true, audioMaxDuration:15, audioTotalDuration:15, promptOptionalWithMedia:true },
   { model:'doubao-seedance-2.5', label:'Doubao Seedance 2.5', resolutions:['480p','720p'], defaultResolution:'720p', aspects:['16:9','4:3','1:1','3:4','9:16','21:9','adaptive'], defaultAspect:'adaptive', durationMin:4, durationMax:30, defaultDuration:5, supportsAutoDuration:true, supportsVideo:true, durationWithVideo:true, maxImageCount:30, maxVideoCount:10, supportsAudioReference:true, maxAudioCount:10, audioReferenceParam:'audio_urls', audioMinDuration:2, audioMaxDuration:30, audioTotalDuration:30, forceAdaptiveForVideoEdit:true, forceAdaptiveForFrameModes:true, forceAutoDurationForVideoEdit:true, outputFormats:['mp4','mov'], note:'Supports text, image, video, and audio references. Video editing automatically uses adaptive size and automatic duration.' },
   { model:'sora-2', label:'Sora 2', resolutions:['720p'], aspects:['16:9','9:16'], durations:[4,8,12,16,20], defaultDuration:4, maxImageCount:1 },
   { model:'sora-2-pro', label:'Sora 2 Pro', resolutions:['720p','1024p','1080p'], aspects:['16:9','9:16'], durations:[4,8,12,16,20], defaultDuration:4, maxImageCount:1 },
   { model:'veo3.1-fast', label:'VEO3.1 Fast', resolutions:['720p','1080p','4k'], aspects:['16:9','9:16'], durations:[8], defaultDuration:8, maxImageCount:3 },
-  { model:'veo3.1-quality', label:'VEO3.1 Quality', resolutions:['720p','1080p','4k'], aspects:['16:9','9:16'], durations:[8], defaultDuration:8, maxImageCount:3 },
+  { model:'veo3.1-quality', label:'VEO3.1 Quality', resolutions:['720p','1080p','4k'], aspects:['16:9','9:16'], durations:[8], defaultDuration:8, maxImageCount:2 },
   { model:'veo3.1-lite', label:'VEO3.1 Lite', resolutions:['720p','1080p','4k'], aspects:['16:9','9:16'], durations:[8], defaultDuration:8, supportsImages:false },
+  { model:'veo3.1-fast-official', label:'VEO3.1 Official Fast', resolutions:['720p','1080p','4k'], defaultResolution:'720p', aspects:['16:9','9:16'], durations:[4,6,8], defaultDuration:8, maxImageCount:2 },
+  { model:'veo3.1-quality-official', label:'VEO3.1 Official Quality', resolutions:['720p','1080p','4k'], defaultResolution:'720p', aspects:['16:9','9:16'], durations:[4,6,8], defaultDuration:8, maxImageCount:2 },
+  { model:'flux-3-video', label:'FLUX 3 Video', resolutions:['hd','fhd'], defaultResolution:'hd', aspects:['auto','21:9','2:1','16:9','4:3','3:4','9:16'], defaultAspect:'auto', durationMin:5, durationMax:20, defaultDuration:5, supportsVideo:true, durationWithVideo:true, maxImageCount:10, maxVideoCount:1, note:'Supports text, 1-10 keyframe images, and one video continuation.' },
   { model:'MiniMax-Hailuo-02', label:'MiniMax Hailuo 02', resolutions:['512p','768p','1080p'], defaultResolution:'768p', supportsAspect:false, durations:[5,10], defaultDuration:5, maxImageCount:2, resolutionDurationRules:{'1080p':[5]} },
   { model:'MiniMax-Hailuo-2.3', label:'MiniMax Hailuo 2.3', resolutions:['768p','1080p'], defaultResolution:'768p', supportsAspect:false, durations:[6,10], defaultDuration:6, maxImageCount:1, resolutionDurationRules:{'1080p':[6]} },
   { model:'MiniMax-Hailuo-2.3-Fast', label:'MiniMax Hailuo 2.3 Fast', resolutions:['768p','1080p'], defaultResolution:'768p', supportsAspect:false, durations:[6,10], defaultDuration:6, resolutionDurationRules:{'1080p':[6]}, minImageCount:1, maxImageCount:1 },
@@ -6686,11 +6790,76 @@ registerApimartVideoUiRules([
   { model:'grok-imagine-1.5-video-apimart', label:'Grok Imagine 1.5 Video', resolutions:['480p','720p'], defaultResolution:'480p', aspects:['16:9','9:16','1:1','3:2','2:3'], durationMin:6, durationMax:30, defaultDuration:6, maxImageCount:7 },
   { model:'pixverse-v6', label:'Pixverse v6', resolutions:['360p','540p','720p','1080p'], defaultResolution:'540p', aspects:['16:9','4:3','1:1','3:4','9:16','2:3','3:2','21:9'], durationMin:1, durationMax:15, defaultDuration:5, firstLastDurations:[5,8], maxImageCount:7 }
 ]);
+// Documentation deltas added after the initial series rollout. This final layer is
+// intentionally explicit: it prevents stale UI defaults from drifting from backend validation.
+registerApimartVideoUiRules([
+  { model:'gemini-omni-flash-preview', label:'Gemini Omni Flash Preview', resolutions:['720p'], defaultResolution:'720p', aspects:['16:9','9:16'], defaultAspect:'16:9', supportsDuration:false, supportsVideo:true, maxImageCount:16, promptOptionalWithMedia:true, note:'720p / 24fps; duration is model-controlled (3-10 seconds).' },
+  { model:'veo3.1-fast', label:'VEO3.1 Fast', resolutions:['720p','1080p','4k'], aspects:['16:9','9:16'], durations:[8], defaultDuration:8, maxImageCount:3 },
+  { model:'veo3.1-quality', label:'VEO3.1 Quality', resolutions:['720p','1080p','4k'], aspects:['16:9','9:16'], durations:[8], defaultDuration:8, maxImageCount:2 },
+  { model:'veo3.1-fast-official', label:'VEO3.1 Official Fast', resolutions:['720p','1080p','4k'], defaultResolution:'720p', aspects:['16:9','9:16'], durations:[4,6,8], defaultDuration:8, maxImageCount:2 },
+  { model:'veo3.1-quality-official', label:'VEO3.1 Official Quality', resolutions:['720p','1080p','4k'], defaultResolution:'720p', aspects:['16:9','9:16'], durations:[4,6,8], defaultDuration:8, maxImageCount:2 },
+  { model:'flux-3-video', label:'FLUX 3 Video', resolutions:['hd','fhd'], defaultResolution:'hd', aspects:['auto','21:9','2:1','16:9','4:3','3:4','9:16'], defaultAspect:'auto', durationMin:5, durationMax:20, defaultDuration:5, supportsVideo:true, durationWithVideo:true, maxImageCount:10, maxVideoCount:1, note:'Supports text, 1-10 ordered keyframes, and one video continuation.' },
+  { model:'happyhorse-1.0', label:'HappyHorse 1.0', resolutions:['720P','1080P'], defaultResolution:'1080P', aspects:['16:9','9:16','1:1','4:3','3:4'], durationMin:3, durationMax:15, defaultDuration:5, supportsVideo:true, maxImageCount:9, videoMaxImageCount:5, promptOptionalWithMedia:true },
+  { model:'wan2.5-preview', label:'Wan2.5 Preview', resolutions:['480p','720p','1080p'], defaultResolution:'720p', aspects:['16:9','9:16','1:1','4:3','3:4'], resolutionAspectRatios:{'480p':['16:9','9:16','1:1']}, durations:[5,10], defaultDuration:5, maxImageCount:1, supportsAudioReference:true, maxAudioCount:1, audioReferenceParam:'audio_url', audioMinDuration:3, audioMaxDuration:30, promptOptionalWithMedia:true },
+  { model:'wan2.6', label:'Wan2.6', resolutions:['720p','1080p'], defaultResolution:'720p', aspects:['16:9','9:16','1:1','4:3','3:4'], durations:[5,10,15], defaultDuration:5, maxImageCount:1, supportsAudioReference:true, maxAudioCount:1, audioReferenceParam:'audio_url', audioDurationAtMostVideo:true, promptOptionalWithMedia:true },
+  { model:'wan2.6-i2v-flash', label:'Wan2.6 I2V Flash', resolutions:['720p','1080p'], defaultResolution:'1080p', supportsAspect:false, durationMin:2, durationMax:15, defaultDuration:5, minImageCount:1, maxImageCount:1, supportsAudioReference:true, maxAudioCount:1, audioReferenceParam:'audio_url', audioMinDuration:3, audioMaxDuration:30, promptOptionalWithMedia:true, note:'First-frame image is required; output ratio follows the uploaded image.' },
+  { model:'wan2.7', label:'Wan2.7', resolutions:['720P','1080P'], defaultResolution:'1080P', aspects:['16:9','9:16','1:1','4:3','3:4'], durationMin:2, durationMax:15, defaultDuration:5, supportsVideo:true, durationWithVideo:true, supportsAudioReference:true, maxAudioCount:1, audioReferenceParam:'audio_url', audioMinDuration:2, audioMaxDuration:30, audioDisallowsVideo:true, audioDisallowsImages:true, promptOptionalWithMedia:true },
+  { model:'wan2.7-videoedit', label:'Wan2.7 VideoEdit', resolutions:['720P','1080P'], defaultResolution:'1080P', aspects:['16:9','9:16','1:1','4:3','3:4'], durations:[0,2,3,4,5,6,7,8,9,10], defaultDuration:0, supportsVideo:true, durationWithVideo:true, requiredVideo:true, maxImageCount:4, promptOptionalWithMedia:true },
+  { model:'kling-v2-6', label:'Kling 2.6', resolutions:['720p','1080p'], aspects:['16:9','9:16','1:1'], durations:[5,10], defaultDuration:5, maxImageCount:2, lastFrameRequiresResolution:'1080p', audioRequiresResolution:'1080p', audioDisallowsLastFrame:true, note:'Two-image first/last-frame and generated audio both require 1080p Pro; they cannot be combined.' },
+  { model:'kling-v2-6-motion-control', label:'Kling 2.6 Motion Control', resolutions:['720p','1080p'], supportsAspect:false, supportsDuration:false, supportsVideo:true, requiredVideo:true, minImageCount:1, maxImageCount:1, characterOrientation:true, referenceVideoDurationRangeByOrientation:{image:[3,10],video:[3,30]} },
+  { model:'kling-v3-motion-control', label:'Kling v3 Motion Control', resolutions:['720p','1080p'], supportsAspect:false, supportsDuration:false, supportsVideo:true, requiredVideo:true, minImageCount:1, maxImageCount:1, characterOrientation:true, referenceVideoDurationRangeByOrientation:{image:[3,10],video:[3,30]} },
+  { model:'kling-v3-omni', label:'Kling v3 Omni', resolutions:['720p','1080p','4k'], aspects:['16:9','9:16','1:1'], durationMin:3, durationMax:15, defaultDuration:5, supportsVideo:true, audioDisallowsVideo:true },
+  { model:'kling-video-o1', label:'Kling Video O1', resolutions:['720p','1080p'], aspects:['16:9','9:16','1:1'], durations:[5,10], defaultDuration:5, maxImageCount:2, supportsVideo:true },
+  { model:'viduq3-pro', label:'Vidu Q3 Pro', resolutions:['540p','720p','1080p'], aspects:['16:9','9:16','4:3','3:4','1:1'], durationMin:1, durationMax:16, defaultDuration:5, maxImageCount:2, promptOptionalWithMedia:true },
+  { model:'viduq3-turbo', label:'Vidu Q3 Turbo', resolutions:['540p','720p','1080p'], aspects:['16:9','9:16','4:3','3:4','1:1'], durationMin:1, durationMax:16, defaultDuration:5, maxImageCount:2, promptOptionalWithMedia:true },
+  { model:'grok-imagine-1.5-video-apimart', label:'Grok Imagine 1.5 Video', resolutions:['480p','720p'], defaultResolution:'480p', aspects:['16:9','9:16','1:1','3:2','2:3'], durationMin:6, durationMax:15, defaultDuration:6, maxImageCount:7 },
+  { model:'pixverse-v6', label:'Pixverse v6', resolutions:['360p','540p','720p','1080p'], defaultResolution:'540p', aspects:['16:9','4:3','1:1','3:4','9:16','2:3','3:2','21:9'], durationMin:1, durationMax:15, defaultDuration:5, firstLastDurations:[5,8], maxImageCount:7 }
+]);
+// Per-model media limits and generated-audio behavior from the current APIMart
+// documentation. These patch the normalized UI entries above without reintroducing
+// stale model variants into the picker.
+function applyApimartVideoUiDocumentDeltas(items=[]){
+  items.forEach(item=>{
+    const key = String(item?.model || '').toLowerCase();
+    const rule = APIMART_VIDEO_MODEL_RULES_UI[key];
+    if(rule) Object.assign(rule, item);
+  });
+}
+applyApimartVideoUiDocumentDeltas([
+  {model:'gemini-omni-flash-preview', referenceVideoDurationRange:[1,24]},
+  {model:'omni-flash-ext', allowedImageCounts:[0,1,3], maxVideoCount:1},
+  {model:'doubao-seedance-1-5-pro', supportsGeneratedAudio:true, defaultGeneratedAudio:true},
+  {model:'doubao-seedance-2.0', supportsGeneratedAudio:true, defaultGeneratedAudio:true, referenceVideoTotalDurationMin:1.8, referenceVideoTotalDurationMax:15.2, disallowFrameReferenceMix:true},
+  {model:'doubao-seedance-2.0-fast', supportsGeneratedAudio:true, defaultGeneratedAudio:true, referenceVideoTotalDurationMin:1.8, referenceVideoTotalDurationMax:15.2, disallowFrameReferenceMix:true},
+  {model:'doubao-seedance-2.0-mini', supportsGeneratedAudio:true, defaultGeneratedAudio:true, referenceVideoTotalDurationMin:1.8, referenceVideoTotalDurationMax:15.2, disallowFrameReferenceMix:true},
+  {model:'doubao-seedance-2.5', supportsGeneratedAudio:true, defaultGeneratedAudio:true, referenceVideoDurationRange:[2,30], referenceVideoTotalDurationMax:30},
+  {model:'veo3.1-fast-official', supportsGeneratedAudio:true, defaultGeneratedAudio:false},
+  {model:'veo3.1-quality-official', supportsGeneratedAudio:true, defaultGeneratedAudio:false},
+  {model:'flux-3-video', supportsGeneratedAudio:true, defaultGeneratedAudio:true},
+  {model:'MiniMax-H3', referenceVideoDurationRange:[2,15], referenceVideoTotalDurationMax:15, audioMinDuration:2},
+  {model:'happyhorse-1.0', promptOptionalWithMedia:false, promptOptionalModes:['first_frame'], referenceVideoDurationRange:[3,60], supportsSourceAudioSetting:true},
+  {model:'happyhorse-1.1', promptOptionalWithMedia:false},
+  {model:'wan2.5-preview', supportsGeneratedAudio:true, defaultGeneratedAudio:true, forceGeneratedAudio:true},
+  {model:'wan2.6', supportsGeneratedAudio:true, defaultGeneratedAudio:true},
+  {model:'wan2.6-i2v-flash', supportsGeneratedAudio:true, defaultGeneratedAudio:true},
+  {model:'wan2.7', allowedImageCounts:[0,1,2], maxImageCount:2, referenceVideoDurationRange:[2,10]},
+  {model:'wan2.7-r2v', referenceVideoDurationRange:[1,30]},
+  {model:'wan2.7-videoedit', promptOptionalWithMedia:true, referenceVideoDurationRange:[2,10], outputDurationAtMostReferenceVideo:true, supportsSourceAudioSetting:true},
+  {model:'kling-v2-6', supportsGeneratedAudio:true, defaultGeneratedAudio:false},
+  {model:'kling-v2-6-motion-control', promptOptionalWithMedia:true},
+  {model:'kling-v3', supportsGeneratedAudio:true, defaultGeneratedAudio:false},
+  {model:'kling-v3-motion-control', promptOptionalWithMedia:true},
+  {model:'kling-v3-omni', supportsGeneratedAudio:true, defaultGeneratedAudio:false, referenceVideoDurationRange:[3,10]},
+  {model:'kling-video-o1', referenceVideoDurationRange:[3,10]},
+  {model:'viduq3-pro', supportsGeneratedAudio:true, defaultGeneratedAudio:true},
+  {model:'viduq3-turbo', supportsGeneratedAudio:true, defaultGeneratedAudio:true},
+  {model:'pixverse-v6', supportsGeneratedAudio:true, defaultGeneratedAudio:false}
+]);
 const APIMART_VIDEO_MODEL_GROUPS_UI = [
   ['Omni / Google / FLUX', ['gemini-omni-flash-preview','omni-flash-ext','veo3.1-fast','veo3.1-quality','veo3.1-lite','veo3.1-fast-official','veo3.1-quality-official','flux-3-video']],
   ['Doubao Seedance', ['doubao-seedance-1-0-pro-fast','doubao-seedance-1-0-pro-quality','doubao-seedance-1-5-pro','doubao-seedance-2.0','doubao-seedance-2.0-fast','doubao-seedance-2.0-mini','doubao-seedance-2.5']],
   ['Sora / MiniMax / SkyReels', ['sora-2','sora-2-pro','MiniMax-Hailuo-02','MiniMax-Hailuo-2.3','MiniMax-Hailuo-2.3-Fast','MiniMax-H3','skyreels-v4-fast','skyreels-v4-std']],
-  ['HappyHorse / Wan', ['happyhorse-1.0','happyhorse-1.1','wan2.5-preview','wan2.6','wan2.7','wan2.7-r2v','wan2.7-videoedit']],
+  ['HappyHorse / Wan', ['happyhorse-1.0','happyhorse-1.1','wan2.5-preview','wan2.6','wan2.6-i2v-flash','wan2.7','wan2.7-r2v','wan2.7-videoedit']],
   ['Kling', ['kling-v2-6','kling-v2-6-motion-control','kling-v3','kling-v3-motion-control','kling-v3-omni','kling-video-o1','kling-3.0-turbo']],
   ['Vidu / Grok / Pixverse', ['viduq3','viduq3-mix','viduq3-pro','viduq3-turbo','grok-imagine-1.5-video-apimart','pixverse-v6']]
 ];
@@ -6766,6 +6935,55 @@ function updateSeedance25Options(){
   }
   return changed;
 }
+function updateVideoGeneratedAudioControl(){
+  const row = $('#videoGeneratedAudioRow');
+  const input = $('#videoGenerateAudio');
+  const help = $('#videoGeneratedAudioHelp');
+  const note = $('#videoGeneratedAudioRule');
+  if(!row || !input) return;
+  const rule = currentApimartVideoRule();
+  const isDedicatedSeedanceControl = isSeedance25VideoModel();
+  const supported = currentVideoPlatform() === 'apimart' && rule.supportsGeneratedAudio === true && !isDedicatedSeedanceControl;
+  row.classList.toggle('hidden', !supported);
+  if(!supported) return;
+  const modelKey = String($('#videoModel')?.value || '').toLowerCase();
+  if(input.dataset.audioModel !== modelKey){
+    input.checked = rule.defaultGeneratedAudio !== false;
+    input.dataset.audioModel = modelKey;
+  }
+  const hasVideo = hasReferenceVideo();
+  const forced = rule.forceGeneratedAudio === true;
+  const blockedByVideo = rule.audioDisallowsVideo === true && hasVideo;
+  input.checked = forced ? true : input.checked;
+  input.disabled = forced || blockedByVideo;
+  input.title = forced
+    ? '当前模型仅支持生成音频。'
+    : (blockedByVideo ? '当前模型使用参考视频时不能同时生成音频。' : '');
+  if(help) help.textContent = forced
+    ? '当前模型的音频必须开启。'
+    : (blockedByVideo ? '上传参考视频时，该模型不能同时生成音频。' : '可关闭以生成静音视频。');
+  if(note){
+    const limits = [];
+    if(rule.audioRequiresResolution) limits.push(`仅 ${rule.audioRequiresResolution}`);
+    if(rule.audioDisallowsLastFrame) limits.push('不能与首尾帧并用');
+    if(rule.audioDisallowsVideo) limits.push('不能与参考视频并用');
+    note.textContent = limits.length ? `生成音频：${limits.join('；')}。` : '生成音频规则已按当前模型配置。';
+  }
+}
+function updateVideoSourceAudioSettingControl(){
+  const row = $('#videoSourceAudioSettingRow');
+  const input = $('#videoSourceAudioSetting');
+  const note = $('#videoSourceAudioSettingNote');
+  if(!row || !input) return;
+  const rule = currentApimartVideoRule();
+  const supported = currentVideoPlatform() === 'apimart' && rule.supportsSourceAudioSetting === true && hasReferenceVideo();
+  row.classList.toggle('hidden', !supported);
+  input.disabled = !supported;
+  if(!['auto','origin'].includes(input.value)) input.value = 'auto';
+  if(note) note.textContent = supported
+    ? '自动：AI 根据编辑后画面重建匹配音频；保留原音轨：强制保留源视频声音。'
+    : '';
+}
 function videoModeLabel(v){
   return ({auto:`自动识别：${videoModeAutoLabel()}`,text_to_video:'文生视频',first_frame:'首帧生成',first_last_frame:'首尾帧生成',multi_reference:'多素材生成',video_edit:'上传视频编辑'})[v || 'auto'] || videoModeAutoLabel();
 }
@@ -6793,8 +7011,8 @@ function rebuildVideoPlatformOptions(){
     const rule = currentApimartVideoRule();
     if(aspect) aspect.innerHTML = rule.aspects.map(v=>`<option value="${v}" ${v===rule.defaultAspect?'selected':''}>${v}</option>`).join('');
   }
-  updateVideoDurationOptions();
   updateVideoResolutionOptions();
+  updateVideoDurationOptions();
 }
 
 function normalizedVideoDurationValues(values=[]){
@@ -6909,8 +7127,10 @@ function updateVideoResolutionOptions(){
     if(aspect){
       aspect.closest('div')?.classList.toggle('hidden', rule.supportsAspect === false);
       const oldAspect = aspect.value;
-      aspect.innerHTML = rule.aspects.map(v=>`<option value="${v}">${v}</option>`).join('');
-      aspect.value = [...aspect.options].some(o=>o.value===oldAspect) ? oldAspect : rule.defaultAspect;
+      const aspects = rule.resolutionAspectRatios?.[resolution.value] || rule.aspects;
+      const fallbackAspect = aspects.includes(rule.defaultAspect) ? rule.defaultAspect : aspects[0];
+      aspect.innerHTML = aspects.map(v=>`<option value="${v}">${v}</option>`).join('');
+      aspect.value = [...aspect.options].some(o=>o.value===oldAspect) ? oldAspect : fallbackAspect;
     }
     return;
   }
@@ -6948,6 +7168,8 @@ function updateVideoModeUI(){
   const hasVideo = hasReferenceVideo();
   syncFlow2VideoEditModel();
   if(updateSeedance25Options()) updateVideoDurationOptions();
+  updateVideoGeneratedAudioControl();
+  updateVideoSourceAudioSettingControl();
   const images = videoRefImages.length;
   const selectedMode = currentVideoModeValue();
   let mode = selectedMode === 'auto' ? videoModeAutoLabel() : videoModeLabel(selectedMode);
@@ -7207,19 +7429,37 @@ async function submitVideoTask(opts = {}){
   const platform = currentVideoPlatform();
   const apiKey = ($('#videoApiKey')?.value || '').trim();
   if(!apiKey) return reject(`请先填写${platform === 'flow2api' ? ' Flow2API' : '首页 APIMart'} API Key，填写后才能开始生成视频`);
+  const refVideoMode = hasReferenceVideo();
+  const apimartRule = platform === 'apimart' ? currentApimartVideoRule() : null;
+  const seedance25 = isSeedance25VideoModel();
+  const selectedVideoMode = currentVideoModeValue();
+  const hasReferenceMedia = refVideoMode || videoRefImages.length > 0 || videoAudioFilesData.length > 0;
+  const promptOptionalForCurrentMode = apimartRule?.promptOptionalModes?.includes(selectedVideoMode === 'auto' && !refVideoMode && videoRefImages.length === 1 ? 'first_frame' : selectedVideoMode);
   const prompts = splitVideoPromptInput();
-  if(!prompts.length) return reject('请输入视频提示词');
+  if(!prompts.length && !(platform === 'apimart' && (apimartRule?.promptOptionalWithMedia && hasReferenceMedia || promptOptionalForCurrentMode))) return reject('请输入视频提示词');
   // V14.5.5：取消前端提交前硬拦截，避免元数据误读导致 5 秒视频被拒。
   // 视频真实可用性由 APIMart 远端返回结果决定，本地只负责提交与显示真实错误。
   localStorage.setItem(`${CLIENT_CONFIG_KEY}_video_key_${platform}`, apiKey);
-  const refVideoMode = hasReferenceVideo();
-  const apimartRule = platform === 'apimart' ? currentApimartVideoRule() : null;
   if(apimartRule){
     if(videoRefImages.length && !apimartRule.supportsImages) return reject(`${apimartRule.label} 不支持参考图输入`);
+    if(Array.isArray(apimartRule.allowedImageCounts) && !apimartRule.allowedImageCounts.includes(videoRefImages.length)) return reject(`${apimartRule.label} 的参考图数量仅支持 ${apimartRule.allowedImageCounts.join(' / ')} 张，当前为 ${videoRefImages.length} 张`);
     if(apimartRule.minImageCount > videoRefImages.length) return reject(`${apimartRule.label} 至少需要 ${apimartRule.minImageCount} 张参考图`);
     if(apimartRule.maxImageCount > 0 && videoRefImages.length > apimartRule.maxImageCount) return reject(`${apimartRule.label} 最多支持 ${apimartRule.maxImageCount} 张参考图`);
     if(refVideoMode && !apimartRule.supportsVideo) return reject(`${apimartRule.label} 不支持上传视频，请切换支持视频输入的模型`);
     if(apimartRule.requiredVideo && !refVideoMode) return reject(`${apimartRule.label} 必须上传视频或填写公开视频 URL`);
+    if(refVideoMode && apimartRule.disallowFrameReferenceMix && ['first_frame','first_last_frame'].includes(selectedVideoMode)) return reject(`${apimartRule.label} 的首帧 / 首尾帧模式不能与参考视频同时使用，请切换为自动识别或多素材生成`);
+    if(refVideoMode && apimartRule.videoMaxImageCount > 0 && videoRefImages.length > apimartRule.videoMaxImageCount) return reject(`${apimartRule.label} 的视频编辑最多支持 ${apimartRule.videoMaxImageCount} 张参考图`);
+    const sourceVideoDurations = videoFilesData.map(item=>Number(item.duration_seconds)).filter(value=>Number.isFinite(value) && value > 0);
+    if(sourceVideoDurations.length){
+      const range = apimartRule.referenceVideoDurationRange;
+      if(Array.isArray(range) && sourceVideoDurations.some(value=>value < Number(range[0]) || value > Number(range[1]))) return reject(`${apimartRule.label} 的参考视频时长需为 ${range[0]}-${range[1]} 秒`);
+      const sourceVideoTotal = sourceVideoDurations.reduce((sum,value)=>sum + value, 0);
+      const isCombinedReference = videoMultiReferenceEnabled() || sourceVideoDurations.length === 1;
+      if(isCombinedReference && apimartRule.referenceVideoTotalDurationMin > 0 && sourceVideoTotal < apimartRule.referenceVideoTotalDurationMin) return reject(`${apimartRule.label} 的参考视频总时长需大于 ${apimartRule.referenceVideoTotalDurationMin} 秒`);
+      if(isCombinedReference && apimartRule.referenceVideoTotalDurationMax > 0 && sourceVideoTotal > apimartRule.referenceVideoTotalDurationMax) return reject(`${apimartRule.label} 的参考视频总时长不能超过 ${apimartRule.referenceVideoTotalDurationMax} 秒`);
+      const selectedDuration = selectedVideoDuration();
+      if(apimartRule.outputDurationAtMostReferenceVideo && Number.isFinite(selectedDuration) && selectedDuration > 0 && selectedDuration > Math.min(...sourceVideoDurations)) return reject(`${apimartRule.label} 的输出时长不能超过源视频时长`);
+    }
     if(videoAudioFilesData.length){
       if(!apimartRule.supportsAudioReference) return reject(`${apimartRule.label} 不支持上传参考音频。请使用支持多模态参考的模型，例如 MiniMax H3、Seedance 2.0、SkyReels V4、Wan2.5、Wan2.6、Wan2.7 或 Wan2.7 R2V。`);
       if(apimartRule.maxAudioCount > 0 && videoAudioFilesData.length > apimartRule.maxAudioCount) return reject(`${apimartRule.label} 最多支持 ${apimartRule.maxAudioCount} 段参考音频`);
@@ -7229,9 +7469,20 @@ async function submitVideoTask(opts = {}){
       if(apimartRule.audioTotalDuration > 0 && audioDurations.reduce((sum,value)=>sum + value, 0) > apimartRule.audioTotalDuration) return reject(`${apimartRule.label} 的参考音频总时长不能超过 ${apimartRule.audioTotalDuration} 秒`);
       if(apimartRule.audioDurationAtMostVideo && audioDurations.some(value=>value > selectedVideoDuration())) return reject(`${apimartRule.label} 的参考音频不能长于生成视频时长（${selectedVideoDuration()} 秒）`);
       if(apimartRule.audioDisallowsVideo && refVideoMode) return reject(`${apimartRule.label} 的自定义音频不能与参考视频同时使用`);
+      if(apimartRule.audioDisallowsImages && videoRefImages.length) return reject(`${apimartRule.label} 的自定义音频不能与参考图同时使用`);
       if(apimartRule.audioRequiresReference && !(refVideoMode || videoRefImages.length)) return reject(`${apimartRule.label} 的参考音频不能单独使用，请同时上传参考图或主任务视频`);
       if(apimartRule.audioRequiresImage && !videoRefImages.length) return reject(`${apimartRule.label} 的参考音频需要同时上传至少一张参考图`);
       if(['first_frame','first_last_frame'].includes(currentVideoModeValue()) && (apimartRule.audioRequiresReference || apimartRule.audioRequiresImage)) return reject(`${apimartRule.label} 的首帧 / 首尾帧模式不能与参考音频混用，请改为“自动识别”或“多素材生成”`);
+    }
+    const isFirstLastFrameMode = selectedVideoMode === 'first_last_frame' || (selectedVideoMode === 'auto' && videoRefImages.length === 2);
+    const generatedAudio = apimartRule.supportsGeneratedAudio === true && (seedance25
+      ? $('#seedance25GenerateAudio')?.checked !== false
+      : (apimartRule.forceGeneratedAudio === true || $('#videoGenerateAudio')?.checked === true));
+    if(generatedAudio){
+      const resolution = String($('#videoResolution')?.value || '').toLowerCase();
+      if(apimartRule.audioRequiresResolution && resolution !== String(apimartRule.audioRequiresResolution).toLowerCase()) return reject(`${apimartRule.label} 生成音频仅支持 ${apimartRule.audioRequiresResolution}`);
+      if(apimartRule.audioDisallowsLastFrame && isFirstLastFrameMode) return reject(`${apimartRule.label} 的生成音频不能与首尾帧同时使用`);
+      if(apimartRule.audioDisallowsVideo && refVideoMode) return reject(`${apimartRule.label} 的生成音频不能与参考视频同时使用`);
     }
     if(currentVideoModeValue() === 'veo_remix'){
       if(!isApimartTaskExtensionModel()) return reject('任务续写仅支持 VEO3.1 Fast / Quality、Pixverse v6 或 Gemini Omni Flash');
@@ -7247,11 +7498,12 @@ async function submitVideoTask(opts = {}){
   const multiVideoReference = videoMultiReferenceEnabled() && videoFilesData.length > 1;
   if(multiVideoReference && videoFilesData.length > Number(apimartRule?.maxVideoCount || 1)) return reject(`${apimartRule?.label || '当前模型'} 最多支持 ${apimartRule?.maxVideoCount || 1} 个参考视频，当前为 ${videoFilesData.length} 个。`);
   const platformCfg = loadClientConfig(platform) || {};
-  const selectedVideoMode = currentVideoModeValue();
   const effectiveVideoMode = videoAudioFilesData.length && selectedVideoMode === 'auto' && (apimartRule?.audioRequiresReference || apimartRule?.audioRequiresImage) ? 'multi_reference' : selectedVideoMode;
-  const seedance25 = isSeedance25VideoModel();
   const seedance25AutomaticDuration = seedance25UsesAutomaticDuration();
-  const body = { video_platform:platform, api_endpoint:platform === 'flow2api' ? (platformCfg.api_endpoint || 'http://127.0.0.1:38000') : 'https://api.apimart.ai', api_key:apiKey, video_model:$('#videoModel')?.value || '', video_mode:effectiveVideoMode, video_reference_type:currentVideoReferenceType(), multi_video_reference:multiVideoReference, seed:$('#videoSeed')?.value?.trim() || '', copies:Number($('#videoRepeatCount')?.value || 1), retry_times:Number($('#videoRetryTimes')?.value || 0), prompts:$('#videoPrompt').value, prompt_multiline_tasks: $('#videoPromptMultilineTasks') ? $('#videoPromptMultilineTasks').checked : false, resolution:$('#videoResolution').value, aspect_ratio:seedance25RequiresAdaptiveAspect() ? 'adaptive' : $('#videoAspect').value, video_url:$('#videoUrlInput').value.trim(), video_files:videoFilesData, audio_files:videoAudioFilesData, ref_images:videoRefImages, character_orientation:$('#videoCharacterOrientation')?.value || 'image', source_task_id:$('#videoSourceTaskId')?.value?.trim() || '' };
+  const body = { video_platform:platform, api_endpoint:platform === 'flow2api' ? (platformCfg.api_endpoint || 'http://127.0.0.1:38000') : 'https://api.apimart.ai', api_key:apiKey, video_model:$('#videoModel')?.value || '', video_mode:effectiveVideoMode, video_reference_type:currentVideoReferenceType(), multi_video_reference:multiVideoReference, seed:$('#videoSeed')?.value?.trim() || '', copies:Number($('#videoRepeatCount')?.value || 1), retry_times:Number($('#videoRetryTimes')?.value || 0), prompts:$('#videoPrompt').value, prompt_multiline_tasks: $('#videoPromptMultilineTasks') ? $('#videoPromptMultilineTasks').checked : false, resolution:$('#videoResolution').value, aspect_ratio:seedance25RequiresAdaptiveAspect() ? 'adaptive' : $('#videoAspect').value, video_url:$('#videoUrlInput').value.trim(), video_files:videoFilesData, audio_files:videoAudioFilesData, ref_images:videoRefImages, character_orientation:$('#videoCharacterOrientation')?.value || 'image', source_task_id:$('#videoSourceTaskId')?.value?.trim() || '', audio_setting:$('#videoSourceAudioSetting')?.value || 'auto' };
+  if(platform === 'apimart' && apimartRule?.supportsGeneratedAudio === true && !seedance25){
+    body.generate_audio = apimartRule.forceGeneratedAudio === true || $('#videoGenerateAudio')?.checked === true;
+  }
   if(seedance25){
     body.generate_audio = $('#seedance25GenerateAudio')?.checked !== false;
     body.watermark = $('#seedance25Watermark')?.checked === true;
@@ -8072,8 +8324,9 @@ function setupVideoPage(){
   $('#videoModel')?.addEventListener('change', ()=>{ if($('#videoDuration')) $('#videoDuration').dataset.durationValue=''; updateVideoResolutionOptions(); updateVideoDurationOptions(); updateVideoDurationVisibility(); updateVideoModeUI(); updateVideoTaskEstimate(); });
   $('#videoDuration')?.addEventListener('input', ()=>{ updateVideoDurationDisplay(); updateVideoTaskEstimate(); });
   $('#videoModeSelect')?.addEventListener('change', ()=>{ updateVideoDurationOptions(); updateVideoModeUI(); updateVideoDurationVisibility(); updateVideoTaskEstimate(); });
-  $('#videoResolution')?.addEventListener('change', ()=>{ updateVideoDurationOptions(); updateVideoTaskEstimate(); });
+  $('#videoResolution')?.addEventListener('change', ()=>{ updateVideoResolutionOptions(); updateVideoDurationOptions(); updateVideoModeUI(); updateVideoTaskEstimate(); });
   $('#videoSeed')?.addEventListener('input', updateVideoTaskEstimate);
+  $('#videoGenerateAudio')?.addEventListener('change', updateVideoTaskEstimate);
   $('#seedance25AutoDuration')?.addEventListener('change', ()=>{ updateVideoDurationOptions(); updateVideoTaskEstimate(); });
   ['#seedance25GenerateAudio','#seedance25Watermark','#seedance25ReturnLastFrame','#seedance25OutputFormat'].forEach(selector=>$(selector)?.addEventListener('change', updateVideoTaskEstimate));
   $('#videoRepeatCount')?.addEventListener('input', updateVideoTaskEstimate);
