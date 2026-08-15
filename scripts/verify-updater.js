@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const vm = require('vm');
 const crypto = require('crypto');
 
@@ -111,10 +112,63 @@ if (proxySource.indexOf('add(cfg.apimart_proxy_url);') < proxySource.indexOf('ad
 const installStart = source.indexOf('function installSoftwareUpdate');
 const installEnd = source.indexOf('function reconcileSoftwareUpdateAfterRestart', installStart);
 const installSource = source.slice(installStart, installEnd);
+const targetStart = source.indexOf('function softwareUpdateTemporaryRoots');
+const targetEnd = source.indexOf('\nfunction installSoftwareUpdate', targetStart);
+if (targetStart < 0 || targetEnd < 0) throw new Error('Persistent updater install-target resolver is missing.');
+const targetSandbox = {
+  os: { tmpdir: () => 'C:\\Temp' },
+  path,
+  process: { platform: process.platform, env: {}, execPath: 'C:\\Temp\\TENYING_AI.exe' },
+  app: { getPath: () => 'C:\\Temp' },
+  fs: { existsSync: value => /(?:Apps|Program Files)\\TENYING_AI\.exe$/i.test(String(value || '')), readdirSync: () => [], rmSync: () => {} },
+  String,
+  Array,
+  Set
+};
+vm.createContext(targetSandbox);
+vm.runInContext(`${source.slice(targetStart, targetEnd)}\nportableInstallTarget = resolveSoftwareUpdateInstallTarget({ portableExecutable:'C:\\\\Apps\\\\TENYING_AI.exe', runningExecutable:'C:\\\\Temp\\\\TENYING_AI.exe', tempRoots:['C:\\\\Temp'], exists:value => /Apps/.test(value) });\ntempOnlyInstallTarget = resolveSoftwareUpdateInstallTarget({ portableExecutable:'', runningExecutable:'C:\\\\Temp\\\\TENYING_AI.exe', tempRoots:['C:\\\\Temp'], exists:() => true });`, targetSandbox);
+if (!/Apps\\TENYING_AI\.exe$/i.test(String(targetSandbox.portableInstallTarget?.path || ''))) throw new Error('Updater does not prefer the original portable launcher EXE.');
+if (targetSandbox.tempOnlyInstallTarget?.path) throw new Error('Updater can still overwrite a temporary extraction EXE.');
+const cleanupTestDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tenying-updater-cleanup-'));
+try {
+  const downloadedPath = path.join(cleanupTestDir, 'TENYING_AI-1.0.72-win-x64.exe');
+  const backupPath = path.join(cleanupTestDir, 'backup_previous_TENYING_AI.exe');
+  const legacyBackupPath = path.join(cleanupTestDir, 'backup_legacy_TENYING_AI.exe');
+  fs.writeFileSync(downloadedPath, 'downloaded');
+  fs.writeFileSync(backupPath, 'backup');
+  fs.writeFileSync(legacyBackupPath, 'legacy backup');
+  const cleanupSandbox = {
+    os,
+    path,
+    process: { platform: process.platform, env: {}, execPath: '' },
+    app: { getPath: () => os.tmpdir() },
+    fs,
+    updateCacheDir: () => cleanupTestDir,
+    String,
+    Array,
+    Set
+  };
+  cleanupSandbox.downloadedPath = downloadedPath;
+  cleanupSandbox.backupPath = backupPath;
+  vm.createContext(cleanupSandbox);
+  vm.runInContext(`${source.slice(targetStart, targetEnd)}\ncleanupCount = cleanupCompletedSoftwareUpdateArtifacts({ downloaded_path:downloadedPath, backup_path:backupPath });`, cleanupSandbox);
+  if (cleanupSandbox.cleanupCount !== 3 || fs.existsSync(downloadedPath) || fs.existsSync(backupPath) || fs.existsSync(legacyBackupPath)) {
+    throw new Error('Confirmed updater cleanup leaves downloaded packages or old backups behind.');
+  }
+} finally {
+  fs.rmSync(cleanupTestDir, { recursive:true, force:true });
+}
 if (!installSource.includes("spawn('wscript.exe', ['//B', '//NoLogo'")) throw new Error('Silent VBS update launcher is missing.');
 if (!installSource.includes('isAppQuitting = true;')) throw new Error('Updater does not bypass the tray close handler before quitting.');
-if (!installSource.includes('PORTABLE_EXECUTABLE_FILE')) throw new Error('Portable updater does not target the original EXE.');
+if (!installSource.includes('resolveSoftwareUpdateInstallTarget()')) throw new Error('Portable updater does not resolve a persistent original EXE.');
+if (installSource.includes('const target = process.execPath')) throw new Error('Portable updater can still target Electron temporary extraction path.');
+if (installSource.includes('If fso.FileExists(src) Then fso.DeleteFile src')) throw new Error('Updater deletes its rollback package before the new version confirms startup.');
 if (installSource.includes("spawn('cmd.exe'") || installSource.includes('.bat')) throw new Error('Legacy visible cmd/batch updater path is still present.');
+
+const reconcileStart = source.indexOf('function reconcileSoftwareUpdateAfterRestart');
+const reconcileEnd = source.indexOf('\nfunction dataUrlToFile', reconcileStart);
+const reconcileSource = source.slice(reconcileStart, reconcileEnd);
+if (!reconcileSource.includes('cleanupCompletedSoftwareUpdateArtifacts(runtime)')) throw new Error('Confirmed update does not clean downloaded package and old backup.');
 
 assertRendererIncludes('softwareUpdateProgress', 'Renderer update progress UI is missing.');
 assertRendererIncludes('scheduleStartupSoftwareUpdateCheck', 'Startup update check scheduler is missing.');

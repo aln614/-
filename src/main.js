@@ -1126,6 +1126,9 @@ let softwareUpdateRuntime = {
   version: '',
   asset_name: '',
   downloaded_path: '',
+  install_target_path: '',
+  install_target_source: '',
+  backup_path: '',
   bytes: 0,
   total: 0,
   progress: 0,
@@ -1183,6 +1186,9 @@ function beginSoftwareUpdateAttempt(repo = '', message = '更新任务已排队�
     version: '',
     asset_name: '',
     downloaded_path: '',
+    install_target_path: '',
+    install_target_source: '',
+    backup_path: '',
     bytes: 0,
     total: 0,
     progress: 1,
@@ -1627,26 +1633,108 @@ async function applyLatestSoftwareUpdate(repoInput = '', cfg = readConfig()) {
 function vbsString(value = '') {
   return '"' + String(value || '').replace(/"/g, '""') + '"';
 }
+
+function softwareUpdateTemporaryRoots(tempRoots = null) {
+  const values = Array.isArray(tempRoots) ? tempRoots : [
+    os.tmpdir(),
+    process.env.TEMP,
+    process.env.TMP,
+    (() => { try { return app.getPath('temp'); } catch { return ''; } })()
+  ];
+  const seen = new Set();
+  return values.map(value => String(value || '').trim()).filter(Boolean).map(value => path.resolve(value)).filter(value => {
+    const key = process.platform === 'win32' ? value.toLowerCase() : value;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function isSoftwareUpdateTemporaryPath(file = '', tempRoots = null) {
+  const raw = String(file || '').trim();
+  if (!raw) return false;
+  const target = path.resolve(raw);
+  const targetKey = process.platform === 'win32' ? target.toLowerCase() : target;
+  return softwareUpdateTemporaryRoots(tempRoots).some(root => {
+    const rootKey = process.platform === 'win32' ? root.toLowerCase() : root;
+    return targetKey === rootKey || targetKey.startsWith(rootKey + path.sep);
+  });
+}
+
+function resolveSoftwareUpdateInstallTarget(options = {}) {
+  const exists = typeof options.exists === 'function' ? options.exists : fs.existsSync;
+  const tempRoots = options.tempRoots || null;
+  const candidates = [
+    { path: options.portableExecutable ?? process.env.PORTABLE_EXECUTABLE_FILE, source: 'portable launcher' },
+    { path: options.runningExecutable ?? process.execPath, source: 'running executable' }
+  ];
+  for (const candidate of candidates) {
+    const raw = String(candidate.path || '').trim();
+    if (!raw || path.extname(raw).toLowerCase() !== '.exe') continue;
+    const resolved = path.resolve(raw);
+    if (!exists(resolved) || isSoftwareUpdateTemporaryPath(resolved, tempRoots)) continue;
+    return { path: resolved, source: candidate.source, error: '' };
+  }
+  return {
+    path: '',
+    source: '',
+    error: '未找到软件所在的原始 EXE。为避免覆盖临时运行副本，已取消更新；请从原始程序 EXE 启动后重试。'
+  };
+}
+
+function isSoftwareUpdateCachePath(file = '', cacheDir = updateCacheDir()) {
+  const raw = String(file || '').trim();
+  if (!raw) return false;
+  const root = path.resolve(cacheDir);
+  const target = path.resolve(raw);
+  const rootKey = process.platform === 'win32' ? root.toLowerCase() : root;
+  const targetKey = process.platform === 'win32' ? target.toLowerCase() : target;
+  return targetKey !== rootKey && targetKey.startsWith(rootKey + path.sep);
+}
+
+function cleanupCompletedSoftwareUpdateArtifacts(runtime = {}) {
+  const cacheDir = updateCacheDir();
+  const candidates = new Set([
+    runtime.downloaded_path,
+    runtime.backup_path
+  ].map(value => String(value || '').trim()).filter(Boolean));
+  try {
+    for (const name of fs.readdirSync(cacheDir)) {
+      if (/^backup_.*\.exe$/i.test(name)) candidates.add(path.join(cacheDir, name));
+    }
+  } catch {}
+  let removed = 0;
+  for (const file of candidates) {
+    try {
+      if (!isSoftwareUpdateCachePath(file, cacheDir) || !fs.existsSync(file)) continue;
+      fs.rmSync(file, { force:true });
+      removed += 1;
+    } catch {}
+  }
+  return removed;
+}
+
 function installSoftwareUpdate(downloadedPath = '', cfg = readConfig()) {
   const file = String(downloadedPath || (cfg.update_last_check && cfg.update_last_check.downloaded_path) || '').trim();
   if (!file || !fs.existsSync(file)) throw new Error('未找到已下载的新版本 EXE');
   if (!app.isPackaged) throw new Error('当前是开发调试模式，不能覆盖安装；打包后的 EXE 才可以原地更新。');
   const updateFile = ensureInside(updateCacheDir(), file);
   if (path.extname(updateFile).toLowerCase() !== '.exe') throw new Error('更新文件必须是 EXE');
-  // electron-builder portable apps run from a temporary extraction directory.
-  // PORTABLE_EXECUTABLE_FILE points at the original user-facing EXE that must
-  // be replaced for the update to survive the next launch.
-  const portableTarget = String(process.env.PORTABLE_EXECUTABLE_FILE || '').trim();
-  const target = portableTarget && /\.exe$/i.test(portableTarget) && fs.existsSync(portableTarget)
-    ? portableTarget
-    : process.execPath;
   if (process.platform !== 'win32') throw new Error('当前自动更新仅支持 Windows EXE');
-  if (!target || path.extname(target).toLowerCase() !== '.exe' || !fs.existsSync(target)) {
-    throw new Error('未找到可替换的原始程序 EXE，请从 GitHub Release 手动下载安装包。');
-  }
+  const targetInfo = resolveSoftwareUpdateInstallTarget();
+  if (!targetInfo.path) throw new Error(targetInfo.error);
+  const target = targetInfo.path;
   const helper = path.join(os.tmpdir(), 'LAIG_update_' + Date.now() + '.vbs');
-  const helperBackup = path.join(updateCacheDir(), 'backup_' + path.basename(target));
+  const helperBackup = path.join(updateCacheDir(), `backup_${Date.now().toString(36)}_${path.basename(target)}`);
   const helperLog = path.join(updateCacheDir(), 'last_update_install.log');
+  setSoftwareUpdateRuntime({
+    state: 'installing',
+    message: '正在覆盖原始程序并自动重启...',
+    install_target_path: target,
+    install_target_source: targetInfo.source,
+    backup_path: helperBackup,
+    install_requested_at: nowISO()
+  });
   const helperScript = [
     'Option Explicit',
     'Dim fso, shell, src, target, backup, logFile, i, ok, lastError',
@@ -1662,7 +1750,7 @@ function installSoftwareUpdate(downloadedPath = '', cfg = readConfig()) {
     '  stream.WriteLine Now & " " & text',
     '  stream.Close',
     'End Sub',
-    'WriteLog "updater started"',
+    'WriteLog "updater started source=" & src & " target=" & target',
     'WScript.Sleep 900',
     'On Error Resume Next',
     'If fso.FileExists(target) Then fso.CopyFile target, backup, True',
@@ -1680,10 +1768,10 @@ function installSoftwareUpdate(downloadedPath = '', cfg = readConfig()) {
     '  WScript.Sleep 1000',
     'Next',
     'If ok Then',
-    '  WriteLog "update copied after " & i & " tries"',
+    '  WriteLog "update copied after " & i & " tries target=" & target',
+    '  Err.Clear',
     '  shell.Run Chr(34) & target & Chr(34), 1, False',
-    '  WScript.Sleep 1200',
-    '  If fso.FileExists(src) Then fso.DeleteFile src, True',
+    '  If Err.Number <> 0 Then WriteLog "restart failed: " & Err.Description',
     'Else',
     '  WriteLog "update failed: " & lastError',
     '  Err.Clear',
@@ -1714,14 +1802,31 @@ function reconcileSoftwareUpdateAfterRestart() {
   }
   if (!['downloaded','verifying','installing'].includes(state)) return;
   if (targetVersion && compareVersions(getAppVersion(), targetVersion) >= 0) {
-    const completed = { ...runtime, state:'completed', message:'已成功更新到 ' + getAppVersion() + '。', progress:100, updated_at:nowISO() };
+    const removedArtifacts = cleanupCompletedSoftwareUpdateArtifacts(runtime);
+    const completed = {
+      ...runtime,
+      state:'completed',
+      message:'已成功更新到 ' + getAppVersion() + '，旧版本和更新缓存已清理。',
+      progress:100,
+      downloaded_path:'',
+      backup_path:'',
+      cleanup_count:removedArtifacts,
+      completed_at:nowISO(),
+      updated_at:nowISO()
+    };
     softwareUpdateRuntime = completed;
     activeSoftwareUpdateAttemptId = '';
     const lastCheck = { ...(cfg.update_last_check || {}), current_version:getAppVersion(), latest_version:getAppVersion(), has_update:false, update_ready:false, update_status:'latest', message:completed.message };
     saveConfig({ update_runtime:completed, update_last_check:lastCheck });
     return;
   }
-  const failed = { ...runtime, state:'failed', message:'上一次更新未能完成替换，请重新检查更新后再试。', progress:0, updated_at:nowISO() };
+  const failed = {
+    ...runtime,
+    state:'failed',
+    message:`上一次更新未能覆盖原始程序（当前 ${getAppVersion()}，目标 ${targetVersion || '新版'}）。已保留更新包和备份，请重新检查更新后再试。`,
+    progress:0,
+    updated_at:nowISO()
+  };
   softwareUpdateRuntime = failed;
   activeSoftwareUpdateAttemptId = '';
   saveConfig({ update_runtime:failed });
