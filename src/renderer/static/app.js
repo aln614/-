@@ -13,6 +13,9 @@ let recentUploadItems = [];
 let recentUploadWriteChain = Promise.resolve();
 let recentVideoUploadItems = { video: [], audio: [], reference_image: [] };
 const recentUploadPreviewTimers = new Map();
+const recentUploadReferenceClickTimers = new Map();
+const recentUploadPendingBlobUrls = new Map();
+let recentUploadPendingSequence = 0;
 const recentVideoUploadPreviewTimers = new Map();
 let batches = [];
 let historyBatches = [];
@@ -30,6 +33,7 @@ const PREVIEW_PROXY_MIN_BYTES = 24 * 1024 * 1024;
 let lastMiniImagesSignature = '';
 let refreshAllInFlight = false;
 let refreshAllQueued = false;
+let refreshAllQueuedOptions = null;
 let lastLogsLoadAt = 0;
 let lastBatchesLoadAt = 0;
 let lastUserInputAt = 0;
@@ -916,9 +920,9 @@ function batchDurationInfo(b){
 }
 function formatMiniElapsed(createdAt){
   const start = parseBatchTimeToMs(createdAt);
-  if(!start) return '0.0秒';
+  if(!start) return '0秒';
   const sec = Math.max(0, (Date.now() - start) / 1000);
-  if(sec < 60) return `${sec.toFixed(1)}秒`;
+  if(sec < 60) return `${Math.floor(sec)}秒`;
   const total = Math.floor(sec);
   const h = Math.floor(total / 3600);
   const m = Math.floor((total % 3600) / 60);
@@ -935,7 +939,7 @@ function updateMiniTaskElapsedBadges(){
 
 function batchDurationMarkup(b){
   const d = batchDurationInfo(b);
-  return `<span class="batch-duration" data-status="${escapeHtml(b.status||'')}" data-start="${d.start||''}" data-finish="${d.finish||''}">${d.label} / ${d.sec.toFixed(1)} 秒</span>`;
+  return `<span class="batch-duration" data-status="${escapeHtml(b.status||'')}" data-start="${d.start||''}" data-finish="${d.finish||''}">${d.label} / ${Math.floor(d.sec)} 秒</span>`;
 }
 function updateBatchDurationBadges(){
   $$('.batch-duration').forEach(el=>{
@@ -946,7 +950,7 @@ function updateBatchDurationBadges(){
     const finish = Number(el.dataset.finish || 0);
     const end = running ? Date.now() : (finish || Date.now());
     const label = running ? '生成中' : (status.includes('失败') ? '失败' : '耗时');
-    el.textContent = `${label} / ${Math.max(0,(end-start)/1000).toFixed(1)} 秒`;
+    el.textContent = `${label} / ${Math.floor(Math.max(0,(end-start)/1000))} 秒`;
   });
 }
 setInterval(()=>{
@@ -3647,22 +3651,91 @@ function recentUploadSourceUrl(row={}){
 function recentUploadSourceLabel(row={}){
   return row.source === 'ref' ? '参考图' : '主图';
 }
+function applyRecentUploadSettings(settings={}){
+  recentUploadSettings = {
+    image_limit: normalizeRecentUploadLimit(settings?.image_limit, recentUploadSettings.image_limit || RECENT_UPLOAD_DEFAULT_LIMIT),
+    video_limit: normalizeRecentUploadLimit(settings?.video_limit, recentUploadSettings.video_limit || RECENT_UPLOAD_DEFAULT_LIMIT),
+    audio_limit: normalizeRecentUploadLimit(settings?.audio_limit, recentUploadSettings.audio_limit || RECENT_UPLOAD_DEFAULT_LIMIT),
+    reference_image_limit: normalizeRecentUploadLimit(settings?.reference_image_limit, recentUploadSettings.reference_image_limit || RECENT_UPLOAD_DEFAULT_LIMIT)
+  };
+}
+function recentUploadItemsForKind(kind=''){
+  return kind === 'image' ? recentUploadItems : (recentVideoUploadItems[kind] || []);
+}
+function recentUploadLimitForKind(kind=''){
+  if(kind === 'image') return recentUploadSettings.image_limit;
+  if(kind === 'video') return recentUploadSettings.video_limit;
+  if(kind === 'audio') return recentUploadSettings.audio_limit;
+  return recentUploadSettings.reference_image_limit;
+}
+function setRecentUploadItemsForKind(kind='', rows=[]){
+  const list = Array.isArray(rows) ? rows : [];
+  if(kind === 'image') recentUploadItems = list;
+  else if(['video','audio','reference_image'].includes(kind)) recentVideoUploadItems[kind] = list;
+}
+function renderRecentUploadPanels(){
+  renderRecentUploadPanel();
+  renderRecentVideoUploadPanel();
+}
+function mergeRecentUploadItem(item={}, options={}){
+  const kind = String(item?.kind || '');
+  if(!['image','video','audio','reference_image'].includes(kind) || !item?.id) return false;
+  const next = [item, ...recentUploadItemsForKind(kind).filter(row=>String(row?.id || '') !== String(item.id))]
+    .sort((a,b)=>Number(b?.created_at || 0) - Number(a?.created_at || 0))
+    .slice(0, recentUploadLimitForKind(kind));
+  setRecentUploadItemsForKind(kind, next);
+  if(options.render !== false) renderRecentUploadPanels();
+  return true;
+}
+function removeRecentUploadItem(id='', kind='', options={}){
+  const key = String(id || '');
+  if(!key || !['image','video','audio','reference_image'].includes(kind)) return false;
+  const rows = recentUploadItemsForKind(kind);
+  const next = rows.filter(row=>String(row?.id || '') !== key);
+  const changed = next.length !== rows.length;
+  setRecentUploadItemsForKind(kind, next);
+  const blobUrl = recentUploadPendingBlobUrls.get(key);
+  if(blobUrl){
+    recentUploadPendingBlobUrls.delete(key);
+    try{ URL.revokeObjectURL(blobUrl); }catch{}
+  }
+  if(changed && options.render !== false) renderRecentUploadPanels();
+  return changed;
+}
+function addPendingRecentUploadItem(file, kind='', source=''){
+  if(kind !== 'image' || !(file instanceof Blob)) return '';
+  const id = `pending_recent_${Date.now().toString(36)}_${(++recentUploadPendingSequence).toString(36)}`;
+  const blobUrl = URL.createObjectURL(file);
+  recentUploadPendingBlobUrls.set(id, blobUrl);
+  mergeRecentUploadItem({
+    id,
+    kind,
+    source,
+    name:String(file.name || 'uploaded-image'),
+    mime_type:String(file.type || 'image/*'),
+    size:Number(file.size || 0),
+    created_at:Date.now(),
+    source_url:blobUrl,
+    pending:true
+  });
+  return id;
+}
+function settlePendingRecentUploadItem(id='', kind='', payload={}){
+  if(payload?.settings) applyRecentUploadSettings(payload.settings);
+  removeRecentUploadItem(id, kind, {render:false});
+  if(payload?.item) mergeRecentUploadItem(payload.item, {render:false});
+  renderRecentUploadPanels();
+}
 function applyRecentUploadResponse(payload={}){
   const all = Array.isArray(payload.items) ? payload.items : [];
-  recentUploadSettings = {
-    image_limit: normalizeRecentUploadLimit(payload.settings?.image_limit, RECENT_UPLOAD_DEFAULT_LIMIT),
-    video_limit: normalizeRecentUploadLimit(payload.settings?.video_limit, RECENT_UPLOAD_DEFAULT_LIMIT),
-    audio_limit: normalizeRecentUploadLimit(payload.settings?.audio_limit, RECENT_UPLOAD_DEFAULT_LIMIT),
-    reference_image_limit: normalizeRecentUploadLimit(payload.settings?.reference_image_limit, RECENT_UPLOAD_DEFAULT_LIMIT)
-  };
+  applyRecentUploadSettings(payload.settings);
   recentUploadItems = all.filter(row=>row?.kind === 'image').slice(0, recentUploadSettings.image_limit);
   recentVideoUploadItems = {
     video: all.filter(row=>row?.kind === 'video').slice(0, recentUploadSettings.video_limit),
     audio: all.filter(row=>row?.kind === 'audio').slice(0, recentUploadSettings.audio_limit),
     reference_image: all.filter(row=>row?.kind === 'reference_image').slice(0, recentUploadSettings.reference_image_limit)
   };
-  renderRecentUploadPanel();
-  renderRecentVideoUploadPanel();
+  renderRecentUploadPanels();
 }
 function renderRecentUploadPanel(){
   const grid = $('#recentUploadGrid');
@@ -3679,7 +3752,9 @@ function renderRecentUploadPanel(){
     const source = recentUploadSourceLabel(row);
     const src = recentUploadSourceUrl(row);
     const name = escapeHtml(row.name || 'uploaded-image.png');
-    return `<button class="recent-upload-item" type="button" draggable="true" data-recent-upload-id="${escapeHtml(row.id)}" title="${name} · 可拖到图片上传区复用，单击预览，双击添加为主图"><span class="recent-upload-item-media"><img src="${src}" alt="${name}" loading="lazy" decoding="async" draggable="false" /></span><span class="recent-upload-item-source ${row.source === 'ref' ? 'is-ref' : ''}">${source}</span><span class="recent-upload-item-name">${name}</span></button>`;
+    const pending = row.pending === true;
+    const actionText = pending ? '正在保存到最近上传缓存' : '可拖到图片上传区复用，左键单击预览，左键双击添加为主图，右键双击添加为参考图';
+    return `<button class="recent-upload-item${pending ? ' is-pending' : ''}" type="button" draggable="${pending ? 'false' : 'true'}" data-recent-upload-id="${escapeHtml(row.id)}" title="${name} · ${actionText}" aria-busy="${pending ? 'true' : 'false'}"><span class="recent-upload-item-media"><img src="${src}" alt="${name}" loading="eager" fetchpriority="high" decoding="async" draggable="false" /></span><span class="recent-upload-item-source ${row.source === 'ref' ? 'is-ref' : ''}">${source}</span><span class="recent-upload-item-name">${name}</span></button>`;
   }).join('');
 }
 function recentVideoUploadAudioIcon(){
@@ -3740,16 +3815,29 @@ function recentUploadQuery(file, kind, source){
 function cacheRecentMediaFiles(files, kind, source){
   const list = [...(files || [])].filter(file=>file instanceof Blob && Number(file.size || 0) > 0);
   if(!list.length) return Promise.resolve();
+  const pendingIds = list.map(file=>addPendingRecentUploadItem(file, kind, source));
   return queueRecentUploadWrite(async()=>{
-    for(const file of list){
-      await api(recentUploadQuery(file, kind, source), {
-        method:'POST',
-        headers:{'Content-Type':String(file.type || 'application/octet-stream')},
-        body:file
-      });
+    for(let index = 0; index < list.length; index += 1){
+      const file = list[index];
+      const pendingId = pendingIds[index];
+      try{
+        const result = await api(recentUploadQuery(file, kind, source), {
+          method:'POST',
+          headers:{'Content-Type':String(file.type || 'application/octet-stream')},
+          body:file
+        });
+        if(pendingId) settlePendingRecentUploadItem(pendingId, kind, result);
+        else if(result?.item) {
+          if(result?.settings) applyRecentUploadSettings(result.settings);
+          mergeRecentUploadItem(result.item);
+        }
+      }catch(error){
+        if(pendingId) removeRecentUploadItem(pendingId, kind);
+        console.warn('[recent-upload-cache] save failed:', error);
+      }
     }
     await refreshRecentUploadPanel();
-  }).catch(error=>console.warn('[recent-upload-cache] save failed:', error));
+  }).catch(error=>console.warn('[recent-upload-cache] refresh failed:', error));
 }
 function cacheRecentUploadedFiles(files, source='main'){
   const imageFiles = [...(files || [])].filter(file=>file instanceof Blob && (String(file.type || '').startsWith('image/') || /\.(png|jpe?g|webp|gif)$/i.test(String(file.name || ''))));
@@ -3874,19 +3962,38 @@ function scheduleRecentUploadPreview(id){
   recentUploadPreviewTimers.set(id, timer);
 }
 async function addRecentUploadAsMain(id){
+  return addRecentUploadToTarget(id, 'main');
+}
+async function addRecentUploadAsReference(id){
+  return addRecentUploadToTarget(id, 'ref');
+}
+async function addRecentUploadToTarget(id, target='main'){
   const row = recentUploadItems.find(item=>item.id === id);
   if(!row) return;
   try{
     const file = await recentUploadFileFromRow(row);
     const item = await batchImageFileToItem(file);
-    mainImages.push(item);
+    const isReference = target === 'ref';
+    (isReference ? refImages : mainImages).push(item);
     renderThumbs();
     calcEstimate();
     prestagePublicBatchMedia([item]);
-    toast(`已将“${row.name || '图片'}”添加为主图`);
+    toast(`已将“${row.name || '图片'}”添加为${isReference ? '参考图' : '主图'}`);
   }catch(error){
     toast(error.message || '读取最近上传图片失败');
   }
+}
+function registerRecentUploadReferenceClick(id=''){
+  const key = String(id || '');
+  if(!key) return;
+  const previous = recentUploadReferenceClickTimers.get(key);
+  if(previous){
+    window.clearTimeout(previous);
+    recentUploadReferenceClickTimers.delete(key);
+    addRecentUploadAsReference(key);
+    return;
+  }
+  recentUploadReferenceClickTimers.set(key, window.setTimeout(()=>recentUploadReferenceClickTimers.delete(key), 480));
 }
 function recentVideoUploadRowById(id){
   return ['video','audio','reference_image']
@@ -4086,6 +4193,13 @@ function setupRecentUploadPanel(){
       event.preventDefault();
       cancelRecentUploadPreview(item.dataset.recentUploadId);
       addRecentUploadAsMain(item.dataset.recentUploadId);
+    });
+    grid.addEventListener('contextmenu', event=>{
+      const item = event.target.closest('[data-recent-upload-id]');
+      if(!item) return;
+      event.preventDefault();
+      cancelRecentUploadPreview(item.dataset.recentUploadId);
+      registerRecentUploadReferenceClick(item.dataset.recentUploadId);
     });
     grid.addEventListener('keydown', event=>{
       const item = event.target.closest('[data-recent-upload-id]');
@@ -4617,7 +4731,9 @@ async function submitCurrentImageBatch(opts = {}){
       if(!opts.fromAgent && button) button.textContent = '创建批次...';
     }
     const ret = await api('/api/batches',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    if(isPublicClient) refreshAll().catch(()=>{}); else await refreshAll();
+    const realtimeRefresh = {immediate:true, forceBatches:true};
+    if(isPublicClient) refreshAll(realtimeRefresh).catch(()=>{}); else await refreshAll(realtimeRefresh);
+    window.setTimeout(()=>refreshAll(realtimeRefresh).catch(()=>{}), 450);
     if(!opts.fromAgent) toast(`批次已创建：${ret.task_count} 个任务，已在右侧实时面板运行`);
     return ret;
   }catch(e){
@@ -4632,14 +4748,17 @@ $('#startBatchBtn').addEventListener('click', async()=>{
   await submitCurrentImageBatch();
 });
 
-async function refreshAll(){
+async function refreshAll(options = {}){
   // V14.5.6：防止 3 秒定时刷新发生重入。网络慢/下载多时，旧版会堆叠多个 refreshAll，导致界面无响应。
-  if(refreshAllInFlight){ refreshAllQueued = true; return; }
-  const busyWithUser = Date.now() - lastUserInputAt < 900;
-  if(busyWithUser && !$('#page-api')?.classList.contains('active') && !$('#page-logs')?.classList.contains('active')){
+  if(refreshAllInFlight){
     refreshAllQueued = true;
+    refreshAllQueuedOptions = {...(refreshAllQueuedOptions || {}), ...options};
+    return;
+  }
+  const busyWithUser = Date.now() - lastUserInputAt < 900;
+  if(!options.immediate && busyWithUser && !$('#page-api')?.classList.contains('active') && !$('#page-logs')?.classList.contains('active')){
     clearTimeout(refreshDeferredTimer);
-    refreshDeferredTimer = setTimeout(refreshAll, 1100);
+    refreshDeferredTimer = setTimeout(()=>refreshAll({...options, immediate:true}), 1100);
     return;
   }
   refreshAllInFlight = true;
@@ -4650,7 +4769,7 @@ async function refreshAll(){
       : Date.now() - lastLogsLoadAt > 45000;
     const historyActive = $('#page-history')?.classList.contains('active');
     const batchesPanelActive = $('#batchList')?.closest('.page')?.classList.contains('active');
-    const needBatches = !isInlineNoteEditing && (historyActive || batchesPanelActive || (!batches.length && Date.now() - lastBatchesLoadAt > 30000));
+    const needBatches = !isInlineNoteEditing && (options.forceBatches === true || historyActive || batchesPanelActive || (!batches.length && Date.now() - lastBatchesLoadAt > 30000));
     const jobs = [loadStatus()];
     if(needBatches) jobs.push(loadBatches({history:historyActive}));
     if(needLogs){ lastLogsLoadAt = Date.now(); jobs.push(loadLogs()); }
@@ -4661,7 +4780,12 @@ async function refreshAll(){
     if($('#page-video')?.classList.contains('active')) await loadVideoTasks();
   } finally {
     refreshAllInFlight = false;
-    if(refreshAllQueued){ refreshAllQueued = false; setTimeout(refreshAll, 600); }
+    if(refreshAllQueued){
+      const queuedOptions = refreshAllQueuedOptions || {};
+      refreshAllQueued = false;
+      refreshAllQueuedOptions = null;
+      setTimeout(()=>refreshAll(queuedOptions), queuedOptions.immediate ? 100 : 600);
+    }
   }
 }
 
@@ -10635,7 +10759,7 @@ function scheduleRefreshLoop(delay = 6500){
   refreshLoopTimer = setTimeout(async()=>{
     if(!isInlineNoteEditing && !$('#publicLoginOverlay')?.classList.contains('active')) await refreshAll();
     const activeWork = document.querySelector('.mini-task-card,.status.run,.video-pending:not(.failed)');
-    scheduleRefreshLoop(activeWork ? 6500 : 12000);
+    scheduleRefreshLoop(activeWork ? 2500 : 10000);
   }, delay);
 }
 scheduleRefreshLoop(1800);

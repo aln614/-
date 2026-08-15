@@ -38,7 +38,7 @@ const JSON_BODY_LIMIT_BYTES = Number(process.env.LAIG_JSON_BODY_LIMIT_MB || 64) 
 const MEDIA_BODY_LIMIT_BYTES = Number(process.env.LAIG_MEDIA_BODY_LIMIT_MB || 1536) * 1024 * 1024;
 const BATCH_MEDIA_FILE_LIMIT_BYTES = Number(process.env.LAIG_BATCH_MEDIA_FILE_LIMIT_MB || 256) * 1024 * 1024;
 const RECENT_UPLOAD_FILE_LIMIT_BYTES = Number(process.env.LAIG_RECENT_UPLOAD_FILE_LIMIT_MB || 256) * 1024 * 1024;
-const STATUS_CACHE_TTL_MS = 1800;
+const STATUS_CACHE_TTL_MS = 650;
 const HOST_STATS_CACHE_TTL_MS = 8000;
 const STALE_CLEANUP_TTL_MS = 15000;
 const MIDJOURNEY_RECONCILE_INTERVAL_MS = 10000;
@@ -6138,6 +6138,10 @@ function cleanupStaleImageTasks(owner = '') {
 const appStatsCache = new Map();
 let hostCumulativeStatsCache = { ts: 0, data: null };
 const staleImageCleanupCache = new Map();
+function invalidateAppStatsCache(owner = '') {
+  if (owner) appStatsCache.delete(owner);
+  else appStatsCache.clear();
+}
 function cleanupStaleImageTasksThrottled(owner = '') {
   const key = owner || '__all__';
   const last = staleImageCleanupCache.get(key) || 0;
@@ -8419,6 +8423,7 @@ async function apiHandler(req, res, parsed) {
       // 局域网/公网访问端必须使用当前设备自己的 Key；同时拒绝误填到 Key 输入框中的 API 网址。
       body.api_key = validateBatchApiKey(body, cfg, local);
       const mapped = mapPayloadToQueue(body, deviceOwner); const ret = queue.createBatch(mapped.payload, mapped.cfg);
+      invalidateAppStatsCache(deviceOwner);
       return send(res, {ok:true, id:ret.id, name:ret.name, task_count:ret.taskCount, output_dir:ret.outputDir, submit_ms:Date.now()-startedAt});
     }
     if (method === 'POST' && p === '/api/stop_batch') { const body=await readBody(req); const b=getDB()._store.batches.find(x=>x.id===body.batch_id && (!owner || x.owner_id===owner)); if(!b) throw new Error('无权限或批次不存在'); queue.stopBatch(body.batch_id); return send(res,{ok:true}); }

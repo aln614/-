@@ -32,6 +32,11 @@ assert(/addRecentVideoUploadToInputs\(/.test(app), 'Recent video panel must rest
 assert(/openRecentVideoUploadSettings\(/.test(app) && /saveRecentVideoUploadSettings\(/.test(app), 'Video recent-upload settings must be configurable');
 assert(/previewRecentUploadImage\([\s\S]{0,500}showPreview\(/.test(app), 'Recent uploaded images must support single-click preview');
 assert(/grid\.addEventListener\('dblclick',[\s\S]{0,400}addRecentUploadAsMain/.test(app), 'Recent uploaded images must add to the main image list on double-click');
+assert(/grid\.addEventListener\('contextmenu',[\s\S]{0,360}registerRecentUploadReferenceClick/.test(app) && /function addRecentUploadAsReference\(/.test(app), 'Recent uploaded images must add to reference images on a right-button double-click');
+assert(/function addPendingRecentUploadItem\([\s\S]{0,700}URL\.createObjectURL/.test(app) && /cacheRecentMediaFiles\([\s\S]{0,340}addPendingRecentUploadItem/.test(app), 'Recent uploaded images must render an immediate local preview while their cache write finishes');
+assert(/loading="eager" fetchpriority="high"/.test(app), 'Recent uploaded image previews must not be delayed by lazy loading');
+assert(/refreshAll\(options = \{\}\)[\s\S]{0,1800}options\.forceBatches/.test(app) && /realtimeRefresh = \{immediate:true, forceBatches:true\}/.test(app), 'A submitted batch must trigger an immediate realtime refresh');
+assert(/STATUS_CACHE_TTL_MS = 650/.test(main) && /function invalidateAppStatsCache\(/.test(main) && /queue\.createBatch\(mapped\.payload, mapped\.cfg\);\s*invalidateAppStatsCache\(deviceOwner\)/.test(main), 'A submitted batch must invalidate stale realtime status data');
 assert(/function showRecentAudioPreview\(/.test(app) && /function closeRecentAudioPreview\(/.test(app), 'Recent uploaded audio needs a dedicated single-click preview');
 assert(/row\.kind === 'audio'[\s\S]{0,160}showRecentAudioPreview\(/.test(app), 'Recent audio must open the audio player rather than being added on a single click');
 assert(/videoPanel\.addEventListener\('dblclick',[\s\S]{0,360}addRecentVideoUploadToInputs/.test(app) && /if\(row\.kind === 'reference_image'\)[\s\S]{0,160}else await handleVideoFile\(\[file\], \{cache:false\}\)/.test(app), 'Recent audio must only be attached to the task through the double-click restore flow');

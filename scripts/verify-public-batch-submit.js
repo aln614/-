@@ -22,7 +22,7 @@ assert(rendererJs.includes('body.main_image_upload_ids = mainImages.map'), 'publ
 assert(rendererJs.includes('body.main_images = []'), 'public batch request does not remove staged Base64 main images');
 assert(rendererJs.includes('const PUBLIC_BATCH_UPLOAD_CONCURRENCY = 4'), 'public upload concurrency limit is missing');
 assert(rendererJs.includes('publicBatchUploadsActive < PUBLIC_BATCH_UPLOAD_CONCURRENCY'), 'public pre-upload queue does not enforce its concurrency limit');
-assert(rendererJs.includes("if(isPublicClient) refreshAll().catch(()=>{})"), 'public batch submit still waits for the full panel refresh');
+assert(rendererJs.includes("if(isPublicClient) refreshAll(realtimeRefresh).catch(()=>{})"), 'public batch submit still waits for the full panel refresh');
 assert(queueJs.includes('setImmediate(() => this.runBatch(batchId)'), 'batch work still starts before the create response can return');
 assert(!queueJs.includes('const dirs = makeDirs(baseOut, name)'), 'NAS directories are still created synchronously in createBatch');
 assert(queueJs.includes("fs.promises.mkdir(batch.output_dir"), 'batch output directory is not created asynchronously');
