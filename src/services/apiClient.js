@@ -293,7 +293,7 @@ const APIMART_IMAGE_MODELS = [
   'doubao-seedream-5-0-pro','doubao-seedream-5.0-pro',
   'flux-kontext-pro','flux-kontext-max',
   'flux-2-flex','flux-2-pro','flux-2-max',
-  'qwen-image','qwen-image-2.0','z-image-turbo',
+  'qwen-image','qwen-image-2.0','qwen-image-3.0','qwen-image-3.0-pro','z-image-turbo',
   'grok-imagine-1.0','grok-imagine-1.0-edit',
   'grok-imagine-1.5-apimart','grok-imagine-1.0-edit-apimart','grok-imagine-1.5-edit-apimart',
   'wan2.7-image','wan2.7-image-pro'
@@ -359,6 +359,16 @@ const GROK_IMAGINE_EDIT_RULE = {
   nMin: 1, nMax: 10, defaultN: 1,
   noSize: true, noResolution: true
 };
+const QWEN_IMAGE_3_RULE = {
+  endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 3,
+  nMin: 1, nMax: 6, defaultN: 1,
+  sizes: ['1:1','4:3','3:4','16:9','9:16','3:2','2:3'], defaultSize: '1:1',
+  resolutions: ['1K','2K'], defaultResolution: '1K',
+  customSizeMin: 512, customSizeMax: 2048, minAspectRatio: 1 / 8, maxAspectRatio: 8,
+  allowNegativePrompt: true,
+  allowPromptExtend: true, promptExtendModes: ['direct','agent'], defaultPromptExtendMode: 'direct',
+  agentPromptExtendTextOnly: true
+};
 const APIMART_MODEL_RULES = {
   'gpt-image-2': {
     endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 16,
@@ -399,6 +409,8 @@ const APIMART_MODEL_RULES = {
   'grok-imagine-1.0-edit': GROK_IMAGINE_EDIT_RULE,
   'grok-imagine-1.0-edit-apimart': GROK_IMAGINE_EDIT_RULE,
   'grok-imagine-1.5-edit-apimart': GROK_IMAGINE_EDIT_RULE,
+  'qwen-image-3.0': QWEN_IMAGE_3_RULE,
+  'qwen-image-3.0-pro': QWEN_IMAGE_3_RULE,
   'z-image-turbo': { endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 0, nMin: 1, nMax: 1, defaultN: 1, noResolution: true, noSize: true, textOnly: true }
 };
 const DEFAULT_APIMART_IMAGE_RULE = { endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 16, nMin: 1, nMax: 1, defaultN: 1, resolutions: ['1k','2k','4k'], defaultResolution: '1k' };
@@ -433,6 +445,19 @@ function sanitizeApimartImagePayload(rawPayload = {}, model = '') {
     const sizes = rule.sizes || null;
     if (sizes && !sizes.includes(rawSize) && !/^\d+x\d+$/i.test(rawSize)) rawSize = rule.defaultSize || sizes[0] || '1:1';
     if (sizes && rule.noCustomSize && /^\d+x\d+$/i.test(rawSize)) rawSize = rule.defaultSize || sizes[0] || '1:1';
+    const customSize = rawSize.match(/^(\d+)x(\d+)$/i);
+    if (customSize && rule.customSizeMin) {
+      const width = Number(customSize[1]);
+      const height = Number(customSize[2]);
+      const ratio = height ? width / height : 0;
+      const validCustomSize = width >= rule.customSizeMin
+        && height >= rule.customSizeMin
+        && width <= (rule.customSizeMax || Number.MAX_SAFE_INTEGER)
+        && height <= (rule.customSizeMax || Number.MAX_SAFE_INTEGER)
+        && ratio >= (rule.minAspectRatio || 0)
+        && ratio <= (rule.maxAspectRatio || Number.MAX_SAFE_INTEGER);
+      if (!validCustomSize) rawSize = rule.defaultSize || sizes?.[0] || '1:1';
+    }
     if (rule.autoRequiresImage && rawSize === 'auto' && !hasRefs) rawSize = rule.defaultSize || '1:1';
     payload.size = rawSize || rule.defaultSize || 'auto';
   }
@@ -455,6 +480,20 @@ function sanitizeApimartImagePayload(rawPayload = {}, model = '') {
   if (rule.allowOutputFormat && Number.isFinite(outputCompression) && ['jpeg','webp'].includes(payload.output_format)) payload.output_compression = Math.max(0, Math.min(100, outputCompression));
   const maskUrl = String(rawPayload.mask_url || rawPayload.maskUrl || '').trim();
   if (rule.allowMask && maskUrl) payload.mask_url = maskUrl;
+  const negativePrompt = String(rawPayload.negative_prompt || rawPayload.negativePrompt || '').trim();
+  if (rule.allowNegativePrompt && negativePrompt) payload.negative_prompt = negativePrompt;
+  if (rule.allowPromptExtend) {
+    const promptExtend = rawPayload.prompt_extend === true || ['true','1','yes','on'].includes(String(rawPayload.prompt_extend || '').trim().toLowerCase());
+    if (promptExtend) {
+      payload.prompt_extend = true;
+      const modes = rule.promptExtendModes || ['direct','agent'];
+      let mode = String(rawPayload.prompt_extend_mode || rawPayload.promptExtendMode || rule.defaultPromptExtendMode || 'direct').trim().toLowerCase();
+      if (!modes.includes(mode)) mode = rule.defaultPromptExtendMode || modes[0] || 'direct';
+      // Qwen's agent rewrite mode is text-to-image only. Fall back to direct for image editing.
+      if (hasRefs && rule.agentPromptExtendTextOnly && mode === 'agent') mode = 'direct';
+      payload.prompt_extend_mode = mode;
+    }
+  }
 
   if (rule.allowOptimizePrompt) {
     const opt = String(rawPayload.optimize_prompt_options || rawPayload.prompt_optimize || rule.defaultOptimizePrompt || 'standard').trim().toLowerCase();
@@ -980,6 +1019,9 @@ async function generateOne({ cfg, prompt, mainImagePath, refImages = [], outputP
     output_format: cfg.output_format || cfg.outputFormat,
     output_compression: cfg.output_compression || cfg.outputCompression,
     mask_url: cfg.mask_url || cfg.maskUrl,
+    negative_prompt: cfg.negativePrompt || cfg.negative_prompt,
+    prompt_extend: cfg.promptExtend ?? cfg.prompt_extend,
+    prompt_extend_mode: cfg.promptExtendMode || cfg.prompt_extend_mode,
     optimize_prompt_options: cfg.optimize_prompt_options || cfg.promptOptimize,
     sequential_image_generation: cfg.sequential_image_generation,
     watermark: cfg.watermark,

@@ -989,6 +989,8 @@ const APIMART_MODEL_OPTIONS = [
   ['flux-2-pro','Flux 2.0 Pro'],
   ['flux-2-max','Flux 2.0 Max'],
   ['qwen-image-2.0','Qwen Image 2.0'],
+  ['qwen-image-3.0','Qwen Image 3.0'],
+  ['qwen-image-3.0-pro','Qwen Image 3.0 Pro'],
   ['z-image-turbo','Z-Image-Turbo'],
   ['grok-imagine-1.5-apimart','grok-imagine-1.5-apimart'],
   ['grok-imagine-1.5-edit-apimart','grok-imagine-1.5-edit-apimart'],
@@ -1327,6 +1329,9 @@ function isFlux2Model(model){
 function isFluxImageModel(model){
   return isFluxKontextModel(model) || isFlux2Model(model);
 }
+function isQwenImage3Model(model){
+  return ['qwen-image-3.0','qwen-image-3.0-pro'].includes(imageModelKey(model));
+}
 const FLUX_IMAGE_SIZES = ['auto','custom','1:1','4:3','3:4','16:9','9:16','3:2','2:3','21:9','9:21'];
 function applyFluxImageUiGuard(model){
   if(currentImagePlatform() !== 'apimart') return;
@@ -1378,7 +1383,24 @@ function applyFluxImageUiGuard(model){
 }
 function isMultiNImageModel(model){
   const m = imageModelKey(model);
-  return isOfficialImageModel(m) || ['doubao-seedance-4-0','doubao-seedream-4.0','doubao-seedream-4-0','seedream-4.0','seedream-4.5','doubao-seedream-5-0-lite','doubao-seedream-5.0-lite','seedream-5.0-lite','grok-imagine-1.5-apimart','grok-imagine-1.0','grok-imagine-1.5-edit-apimart','grok-imagine-1.0-edit-apimart','grok-imagine-1.0-edit'].includes(m);
+  return isOfficialImageModel(m) || isQwenImage3Model(m) || ['doubao-seedance-4-0','doubao-seedream-4.0','doubao-seedream-4-0','seedream-4.0','seedream-4.5','doubao-seedream-5-0-lite','doubao-seedream-5.0-lite','seedream-5.0-lite','grok-imagine-1.5-apimart','grok-imagine-1.0','grok-imagine-1.5-edit-apimart','grok-imagine-1.0-edit-apimart','grok-imagine-1.0-edit'].includes(m);
+}
+function applyQwenImage3UiGuard(model){
+  if(currentImagePlatform() !== 'apimart' || !isQwenImage3Model(model)) return;
+  const allowedSizes = new Set(['1:1','4:3','3:4','16:9','9:16','3:2','2:3']);
+  const size = $('#size');
+  if(size && size.value !== 'custom' && !allowedSizes.has(getSizeValue())){
+    size.value = '1:1';
+    if($('#customWidth')) $('#customWidth').value = '';
+    if($('#customHeight')) $('#customHeight').value = '';
+  }
+  if($('#clarity') && !['1K','2K'].includes(String($('#clarity').value || '').toUpperCase())) $('#clarity').value = '1K';
+  if($('#claritySettings')) $('#claritySettings').value = $('#clarity')?.value || '1K';
+  const imageN = $('#imageN');
+  if(imageN){
+    const requested = Number(imageN.value || 1);
+    imageN.value = String(Math.max(1, Math.min(6, Number.isFinite(requested) ? requested : 1)));
+  }
 }
 function applySeedream5ProUiGuard(model){
   if(currentImagePlatform() !== 'apimart' || !isSeedream5ProModel(model)) return;
@@ -1393,6 +1415,7 @@ function updateOfficialImageOptions(){
   const platform = currentImagePlatform();
   const model = $('#model')?.value || $('#modelPreset')?.value || '';
   applyFluxImageUiGuard(model);
+  applyQwenImage3UiGuard(model);
   applySeedream5ProUiGuard(model);
   const grsai = platform === 'grsai';
   const official = !grsai && isOfficialImageModel(model);
@@ -1495,6 +1518,7 @@ function applySizeToUI(sizeValue){
 function updateSizeHint(){
   const model = $('#model')?.value || $('#modelPreset')?.value || 'gemini-3.1-flash-image-preview';
   applyFluxImageUiGuard(model);
+  applyQwenImage3UiGuard(model);
   applySeedream5ProUiGuard(model);
   const v = getSizeValue();
   const clarity = $('#clarity')?.value || $('#claritySettings')?.value || '1K';
@@ -1513,7 +1537,7 @@ function updateSizeHint(){
     $('#sizeHint').textContent = `当前比例：${v}；Flux 2.0 提交参数 size=${actual}，resolution=${clarity}；最多 8 张参考图。`;
     return;
   }
-  const supportNote = isSeedream5ProModel(model) ? '（Seedream-5.0-Pro 支持 auto/1:1/4:3/3:4/16:9/9:16/3:2/2:3/21:9，resolution 仅 1K/2K）' : (String(model||'').startsWith('imagen-4.0') ? '（Imagen-4.0 仅支持文生图，上传参考图会被拦截）' : (imageModelKey(model).includes('grok-imagine') ? '（Grok 生成不传 resolution；Grok Edit 会走 /v1/images/edits）' : ''));
+  const supportNote = isQwenImage3Model(model) ? '（Qwen Image 3.0 支持 1-3 张参考图、1K/2K、1-6 张输出；自定义尺寸为 512-2048px，比例 1:8-8:1）' : (isSeedream5ProModel(model) ? '（Seedream-5.0-Pro 支持 auto/1:1/4:3/3:4/16:9/9:16/3:2/2:3/21:9，resolution 仅 1K/2K）' : (String(model||'').startsWith('imagen-4.0') ? '（Imagen-4.0 仅支持文生图，上传参考图会被拦截）' : (imageModelKey(model).includes('grok-imagine') ? '（Grok 生成不传 resolution；Grok Edit 会走 /v1/images/edits）' : '')));
   $('#sizeHint').textContent = `当前比例：${v}；APIMart 提交参数 size=${actual}，resolution=${clarity}${supportNote}`;
 }
 

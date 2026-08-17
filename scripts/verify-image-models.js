@@ -88,7 +88,9 @@ function main() {
     'flux-kontext-max',
     'flux-2-flex',
     'flux-2-pro',
-    'flux-2-max'
+    'flux-2-max',
+    'qwen-image-3.0',
+    'qwen-image-3.0-pro'
   ];
   const missingRequired = required.filter(x => !frontendSet.has(x) || !backendSet.has(x) || !indexModels.map(v => v.toLowerCase()).includes(x));
   if (missingRequired.length) fail(`Required homepage models are not wired end-to-end: ${missingRequired.join(', ')}`);
@@ -101,7 +103,14 @@ function main() {
     "payload.prompt_upsampling",
     "payload.safety_tolerance",
     "payload.steps",
-    "payload.guidance"
+    "payload.guidance",
+    'const QWEN_IMAGE_3_RULE',
+    'maxImageUrls: 3',
+    'nMin: 1, nMax: 6',
+    "'qwen-image-3.0': QWEN_IMAGE_3_RULE",
+    "'qwen-image-3.0-pro': QWEN_IMAGE_3_RULE",
+    'payload.negative_prompt',
+    'payload.prompt_extend_mode'
   ];
   const missingRules = requiredRuleSnippets.filter(snippet => !apiClientJs.includes(snippet));
   if (missingRules.length) fail(`Flux request rules are incomplete: ${missingRules.join(', ')}`);
