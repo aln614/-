@@ -119,7 +119,11 @@ function extractApimartErrorMessage(data){
 }
 function assertApimartCode200(data, context = 'APIMart'){
   const code = data && (data.code ?? data.status_code);
-  if (code !== undefined && code !== null && Number(code) !== 200) {
+  const numericCode = Number(code);
+  const normalizedCode = String(code ?? '').trim().toLowerCase();
+  const isSuccess = [200, 201, 202].includes(numericCode)
+    || ['success', 'ok', 'submitted', 'processing'].includes(normalizedCode);
+  if (code !== undefined && code !== null && !isSuccess) {
     throw new Error(`${context} 返回错误：${extractApimartErrorMessage(data)}；实际响应：${compactJson(data, 1000)}`);
   }
   return data;
@@ -283,26 +287,61 @@ async function jsonRequestWithFallback(url, apiKey, payload = null, method = 'GE
 }
 const APIMART_IMAGE_MODELS = [
   'gemini-3.1-flash-image-preview','gemini-3.1-flash-image-preview-official',
+  'gemini-3.1-flash-lite-image','gemini-3.1-flash-lite-image-ext',
+  'nano-banana-2-ext','nano-banana-2','nano-banana-2-lite','nano-banana-2-lite-ext',
   'gemini-3-pro-image-preview','gemini-3-pro-image-preview-official',
+  'nano-banana-pro-ext','nano-banana-pro',
   'gemini-2.5-flash-image-preview','gemini-2.5-flash-image-preview-official',
   'imagen-4.0-apimart',
   'gpt-image-1-official','gpt-image-1.5-official','gpt-image-2','gpt-image-2-official',
-  'seedream-4.0','seedream-4.5','seedream-5.0-lite','seedream-5.0-pro',
+  'seedream-4.0','seedream-4-0','seedream-4.5','seedream-5-0-lite','seedream-5.0-lite','seedream-5-0-pro','seedream-5.0-pro',
   'doubao-seedance-4-0','doubao-seedream-4.0','doubao-seedream-4-0',
   'doubao-seedream-5-0-lite','doubao-seedream-5.0-lite',
   'doubao-seedream-5-0-pro','doubao-seedream-5.0-pro',
   'flux-kontext-pro','flux-kontext-max',
   'flux-2-flex','flux-2-pro','flux-2-max',
-  'qwen-image','qwen-image-2.0','qwen-image-3.0','qwen-image-3.0-pro','z-image-turbo',
+  'qwen-image','qwen-image-2.0','qwen-image-2.0-pro','qwen-image-3.0','qwen-image-3.0-pro','z-image-turbo',
   'grok-imagine-1.0','grok-imagine-1.0-edit',
   'grok-imagine-1.5-apimart','grok-imagine-1.0-edit-apimart','grok-imagine-1.5-edit-apimart',
+  'grok-imagine-1.5-ext','grok-imagine-image','grok-imagine-image-quality',
+  'grok-imagine-2.0-ext','grok-imagine-image-2.0',
   'wan2.7-image','wan2.7-image-pro'
 ];
-const APIMART_RATIO_SET = new Set(['auto','1:1','3:2','2:3','4:3','3:4','16:9','9:16','5:4','4:5','21:9','9:21','1:4','4:1','1:8','8:1','2:1','1:2','3:1','1:3']);
+const APIMART_RATIO_SET = new Set(['auto','1:1','3:2','2:3','4:3','3:4','16:9','9:16','5:4','4:5','21:9','9:21','1:4','4:1','1:8','8:1','2:1','1:2','3:1','1:3','9:19.5','19.5:9','9:20','20:9']);
 
 // V14.4.6: APIMart 模型规则表。不要把所有图片模型都套同一套参数，按模型能力过滤/归一化。
+const GEMINI_31_RULE = {
+  endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 14,
+  nMin: 1, nMax: 1, defaultN: 1,
+  sizes: ['auto','1:1','3:2','2:3','4:3','3:4','16:9','9:16','5:4','4:5','21:9','1:4','4:1','1:8','8:1'], defaultSize: 'auto',
+  resolutions: ['0.5K','1K','2K','4K'], defaultResolution: '1K'
+};
+const GEMINI_31_LITE_RULE = {
+  endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 14,
+  nMin: 1, nMax: 4, defaultN: 1,
+  sizes: ['auto','1:1','3:2','2:3','4:3','3:4','16:9','9:16','5:4','4:5','21:9'], defaultSize: 'auto',
+  resolutions: ['1K'], defaultResolution: '1K'
+};
+const GEMINI_3_PRO_RULE = {
+  endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 14,
+  nMin: 1, nMax: 1, defaultN: 1,
+  sizes: ['auto','1:1','3:2','2:3','4:3','3:4','16:9','9:16','5:4','4:5','21:9'], defaultSize: 'auto',
+  resolutions: ['1K','2K','4K'], defaultResolution: '1K'
+};
+const GEMINI_25_RULE = {
+  endpoint: '/v1/images/generations', taskQuery: 'batch',
+  nMin: 1, nMax: 4, defaultN: 1,
+  sizes: ['1:1','3:2','2:3','4:3','3:4','16:9','9:16','5:4','4:5','21:9'], defaultSize: '1:1',
+  resolutions: ['1K'], defaultResolution: '1K'
+};
+const IMAGEN_4_RULE = {
+  endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 0,
+  nMin: 1, nMax: 1, defaultN: 1,
+  sizes: ['1:1','4:3','3:4','16:9','9:16'], defaultSize: '16:9',
+  noResolution: true, textOnly: true
+};
 const SEEDREAM4_RULE = {
-  endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 999,
+  endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 14, maxReferencesAndOutputs: 15,
   nMin: 1, nMax: 15, defaultN: 1,
   sizes: ['1:1','4:3','3:4','16:9','9:16','3:2','2:3','21:9','9:21','auto'], defaultSize: '1:1', autoRequiresImage: true,
   resolutions: ['1k','2k','4k'], defaultResolution: '2k',
@@ -310,7 +349,7 @@ const SEEDREAM4_RULE = {
   allowSequential: true, allowWatermark: true
 };
 const SEEDREAM5_LITE_RULE = {
-  endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 999,
+  endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 14, maxReferencesAndOutputs: 15,
   nMin: 1, nMax: 15, defaultN: 1,
   sizes: ['1:1','4:3','3:4','16:9','9:16','3:2','2:3','21:9','auto'], defaultSize: '1:1', autoRequiresImage: true,
   resolutions: ['2k','3k','4k'], defaultResolution: '2k',
@@ -320,8 +359,9 @@ const SEEDREAM5_LITE_RULE = {
 const SEEDREAM5_PRO_RULE = {
   endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 10,
   nMin: 1, nMax: 1, defaultN: 1,
-  sizes: ['1:1','4:3','3:4','16:9','9:16','3:2','2:3','21:9','auto'], defaultSize: '1:1', noCustomSize: true,
-  resolutions: ['1K','2K'], defaultResolution: '2K',
+  defaultSize: 'auto', customPixelMin: 921600, customPixelMax: 4624220,
+  minAspectRatio: 1 / 16, maxAspectRatio: 16,
+  resolutions: ['1K','1.5K','2K'], defaultResolution: '1.5K',
   outputFormats: ['jpeg','png'], defaultOutputFormat: 'jpeg', allowOutputFormat: true,
   allowWatermark: true
 };
@@ -349,7 +389,7 @@ const FLUX2_FLEX_RULE = {
   allowGuidance: true, guidanceMin: 1.5, guidanceMax: 10, defaultGuidance: 5
 };
 const GROK_IMAGINE_15_RULE = {
-  endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 0,
+  endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 1,
   nMin: 1, nMax: 10, defaultN: 1,
   sizes: ['1:1','16:9','9:16','3:2','2:3'], defaultSize: '1:1',
   noResolution: true
@@ -369,7 +409,57 @@ const QWEN_IMAGE_3_RULE = {
   allowPromptExtend: true, promptExtendModes: ['direct','agent'], defaultPromptExtendMode: 'direct',
   agentPromptExtendTextOnly: true
 };
+const QWEN_IMAGE_2_RULE = {
+  endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 16,
+  nMin: 1, nMax: 6, defaultN: 1,
+  sizes: ['1:1','4:3','3:4','16:9','9:16','3:2','2:3'], defaultSize: '1:1',
+  resolutions: ['1K','2K'], defaultResolution: '1K',
+  allowNegativePrompt: true
+};
+const GROK_IMAGE_RULE = {
+  endpoint: '/v1/images/generations', taskQuery: 'batch',
+  nMin: 1, nMax: 10, defaultN: 1,
+  sizes: ['auto','1:1','3:4','4:3','9:16','16:9','2:3','3:2','9:19.5','19.5:9','9:20','20:9','1:2','2:1'], defaultSize: 'auto',
+  sizeParam: 'aspect_ratio', resolutions: ['1k','2k'], defaultResolution: '1k'
+};
+const GROK_IMAGINE_IMAGE_RULE = { ...GROK_IMAGE_RULE, maxImageUrls: 5 };
+const GROK_IMAGINE_IMAGE_QUALITY_RULE = { ...GROK_IMAGE_RULE, maxImageUrls: 3 };
+const GROK_IMAGINE_2_EXT_RULE = {
+  endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 0,
+  nMin: 1, nMax: 12, defaultN: 1,
+  sizes: ['1:1','2:3','3:2','3:4','4:3','9:16','16:9'], defaultSize: '1:1',
+  noResolution: true, textOnly: true
+};
+const WAN2_7_IMAGE_RULE = {
+  endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 9,
+  nMin: 1, nMax: 4, defaultN: 1,
+  sizes: ['auto','1:1','16:9','9:16','4:3','3:4','3:2','2:3'], defaultSize: '1:1',
+  resolutions: ['1K','2K'], defaultResolution: '2K',
+  allowNegativePrompt: true, allowWatermark: true, allowSeed: true
+};
+const WAN2_7_IMAGE_PRO_RULE = { ...WAN2_7_IMAGE_RULE, resolutions: ['1K','2K','4K'] };
+const Z_IMAGE_TURBO_RULE = {
+  endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 0,
+  nMin: 1, nMax: 1, defaultN: 1,
+  sizes: ['1:1','4:3','3:4','16:9','9:16','3:2','2:3'], defaultSize: '1:1',
+  resolutions: ['1K','2K'], defaultResolution: '1K',
+  textOnly: true, allowPromptExtend: true, promptExtendModes: ['direct'], defaultPromptExtendMode: 'direct'
+};
 const APIMART_MODEL_RULES = {
+  'gemini-3.1-flash-image-preview': GEMINI_31_RULE,
+  'gemini-3.1-flash-image-preview-official': GEMINI_31_RULE,
+  'nano-banana-2-ext': GEMINI_31_RULE,
+  'nano-banana-2': GEMINI_31_RULE,
+  'gemini-3.1-flash-lite-image': GEMINI_31_LITE_RULE,
+  'gemini-3.1-flash-lite-image-ext': GEMINI_31_LITE_RULE,
+  'nano-banana-2-lite': GEMINI_31_LITE_RULE,
+  'nano-banana-2-lite-ext': GEMINI_31_LITE_RULE,
+  'gemini-3-pro-image-preview': GEMINI_3_PRO_RULE,
+  'gemini-3-pro-image-preview-official': GEMINI_3_PRO_RULE,
+  'nano-banana-pro-ext': GEMINI_3_PRO_RULE,
+  'nano-banana-pro': GEMINI_3_PRO_RULE,
+  'gemini-2.5-flash-image-preview': GEMINI_25_RULE,
+  'gemini-2.5-flash-image-preview-official': GEMINI_25_RULE,
   'gpt-image-2': {
     endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 16,
     nMin: 1, nMax: 1, defaultN: 1,
@@ -387,15 +477,18 @@ const APIMART_MODEL_RULES = {
   },
   'gpt-image-1-official': { endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 16, nMin: 1, nMax: 4, defaultN: 1, resolutions: ['1k','2k','4k'], defaultResolution: '1k', qualities: ['auto','low','medium','high'], backgrounds: ['auto','opaque','transparent'], moderations: ['auto','low'], outputFormats: ['png','jpeg','webp'], allowQuality: true, allowMask: true, allowOutputFormat: true, allowBackground: true, allowModeration: true },
   'gpt-image-1.5-official': { endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 16, nMin: 1, nMax: 4, defaultN: 1, resolutions: ['1k','2k','4k'], defaultResolution: '1k', qualities: ['auto','low','medium','high'], backgrounds: ['auto','opaque','transparent'], moderations: ['auto','low'], outputFormats: ['png','jpeg','webp'], allowQuality: true, allowMask: true, allowOutputFormat: true, allowBackground: true, allowModeration: true },
-  'imagen-4.0-apimart': { endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 0, nMin: 1, nMax: 1, defaultN: 1, resolutions: ['1k','2k','4k'], defaultResolution: '1k', textOnly: true },
+  'imagen-4.0-apimart': IMAGEN_4_RULE,
   'seedream-4.0': SEEDREAM4_RULE,
+  'seedream-4-0': SEEDREAM4_RULE,
   'doubao-seedance-4-0': SEEDREAM4_RULE,
   'doubao-seedream-4.0': SEEDREAM4_RULE,
   'doubao-seedream-4-0': SEEDREAM4_RULE,
-  'seedream-4.5': { endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 999, nMin: 1, nMax: 15, defaultN: 1, sizes: ['auto','1:1','3:2','2:3','4:3','3:4','16:9','9:16','21:9','9:21'], defaultSize: '1:1', resolutions: ['1k','2k','4k'], defaultResolution: '2k' },
+  'seedream-4.5': { endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 14, maxReferencesAndOutputs: 15, nMin: 1, nMax: 15, defaultN: 1, sizes: ['auto','1:1','3:2','2:3','4:3','3:4','16:9','9:16','21:9','9:21'], defaultSize: '1:1', resolutions: ['2k','4k'], defaultResolution: '2k' },
+  'seedream-5-0-lite': SEEDREAM5_LITE_RULE,
   'seedream-5.0-lite': SEEDREAM5_LITE_RULE,
   'doubao-seedream-5-0-lite': SEEDREAM5_LITE_RULE,
   'doubao-seedream-5.0-lite': SEEDREAM5_LITE_RULE,
+  'seedream-5-0-pro': SEEDREAM5_PRO_RULE,
   'seedream-5.0-pro': SEEDREAM5_PRO_RULE,
   'doubao-seedream-5-0-pro': SEEDREAM5_PRO_RULE,
   'doubao-seedream-5.0-pro': SEEDREAM5_PRO_RULE,
@@ -404,14 +497,23 @@ const APIMART_MODEL_RULES = {
   'flux-2-flex': FLUX2_FLEX_RULE,
   'flux-2-pro': FLUX2_RULE,
   'flux-2-max': FLUX2_RULE,
+  'qwen-image-2.0': QWEN_IMAGE_2_RULE,
+  'qwen-image-2.0-pro': QWEN_IMAGE_2_RULE,
   'grok-imagine-1.0': GROK_IMAGINE_15_RULE,
   'grok-imagine-1.5-apimart': GROK_IMAGINE_15_RULE,
   'grok-imagine-1.0-edit': GROK_IMAGINE_EDIT_RULE,
   'grok-imagine-1.0-edit-apimart': GROK_IMAGINE_EDIT_RULE,
   'grok-imagine-1.5-edit-apimart': GROK_IMAGINE_EDIT_RULE,
+  'grok-imagine-1.5-ext': GROK_IMAGINE_15_RULE,
+  'grok-imagine-image': GROK_IMAGINE_IMAGE_RULE,
+  'grok-imagine-image-quality': GROK_IMAGINE_IMAGE_QUALITY_RULE,
+  'grok-imagine-2.0-ext': GROK_IMAGINE_2_EXT_RULE,
+  'grok-imagine-image-2.0': { ...GROK_IMAGINE_IMAGE_QUALITY_RULE, maxImageUrls: 3 },
   'qwen-image-3.0': QWEN_IMAGE_3_RULE,
   'qwen-image-3.0-pro': QWEN_IMAGE_3_RULE,
-  'z-image-turbo': { endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 0, nMin: 1, nMax: 1, defaultN: 1, noResolution: true, noSize: true, textOnly: true }
+  'wan2.7-image': WAN2_7_IMAGE_RULE,
+  'wan2.7-image-pro': WAN2_7_IMAGE_PRO_RULE,
+  'z-image-turbo': Z_IMAGE_TURBO_RULE
 };
 const DEFAULT_APIMART_IMAGE_RULE = { endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 16, nMin: 1, nMax: 1, defaultN: 1, resolutions: ['1k','2k','4k'], defaultResolution: '1k' };
 function getApimartImageRule(model='') {
@@ -424,7 +526,7 @@ function clampInt(value, min, max, fallback) {
 }
 function normalizeRuleResolution(value, rule = DEFAULT_APIMART_IMAGE_RULE) {
   const raw = String(value || rule.defaultResolution || '1k').trim().toLowerCase();
-  const map = { '0.5k':'0.5k', '512':'0.5k', '1k':'1k', '1K':'1k', '2k':'2k', '2K':'2k', '3k':'3k', '3K':'3k', '4k':'4k', '4K':'4k' };
+  const map = { '0.5k':'0.5k', '512':'0.5k', '1k':'1k', '1K':'1k', '1.5k':'1.5k', '1536':'1.5k', '2k':'2k', '2K':'2k', '3k':'3k', '3K':'3k', '4k':'4k', '4K':'4k' };
   const r = map[raw] || raw;
   const available = rule.resolutions || [];
   const matched = available.find(x => String(x).toLowerCase() === String(r).toLowerCase());
@@ -446,26 +548,33 @@ function sanitizeApimartImagePayload(rawPayload = {}, model = '') {
     if (sizes && !sizes.includes(rawSize) && !/^\d+x\d+$/i.test(rawSize)) rawSize = rule.defaultSize || sizes[0] || '1:1';
     if (sizes && rule.noCustomSize && /^\d+x\d+$/i.test(rawSize)) rawSize = rule.defaultSize || sizes[0] || '1:1';
     const customSize = rawSize.match(/^(\d+)x(\d+)$/i);
-    if (customSize && rule.customSizeMin) {
+    if (customSize && (rule.customSizeMin || rule.customPixelMin || rule.customPixelMax)) {
       const width = Number(customSize[1]);
       const height = Number(customSize[2]);
       const ratio = height ? width / height : 0;
-      const validCustomSize = width >= rule.customSizeMin
-        && height >= rule.customSizeMin
+      const pixels = width * height;
+      const validCustomSize = width >= (rule.customSizeMin || 0)
+        && height >= (rule.customSizeMin || 0)
         && width <= (rule.customSizeMax || Number.MAX_SAFE_INTEGER)
         && height <= (rule.customSizeMax || Number.MAX_SAFE_INTEGER)
+        && pixels >= (rule.customPixelMin || 0)
+        && pixels <= (rule.customPixelMax || Number.MAX_SAFE_INTEGER)
         && ratio >= (rule.minAspectRatio || 0)
         && ratio <= (rule.maxAspectRatio || Number.MAX_SAFE_INTEGER);
       if (!validCustomSize) rawSize = rule.defaultSize || sizes?.[0] || '1:1';
     }
     if (rule.autoRequiresImage && rawSize === 'auto' && !hasRefs) rawSize = rule.defaultSize || '1:1';
-    payload.size = rawSize || rule.defaultSize || 'auto';
+    payload[rule.sizeParam || 'size'] = rawSize || rule.defaultSize || 'auto';
   }
   if (!rule.noResolution) payload.resolution = normalizeRuleResolution(rawPayload.resolution, rule);
 
   if (hasRefs) {
     if (rule.textOnly || Number(rule.maxImageUrls || 0) <= 0) throw new Error(`${payload.model} 仅支持文生图，不支持上传参考图`);
-    const maxImages = Math.max(1, Number(rule.maxImageUrls || rawPayload.image_urls.length));
+    let maxImages = Math.max(1, Number(rule.maxImageUrls || rawPayload.image_urls.length));
+    if (Number.isFinite(Number(rule.maxReferencesAndOutputs))) {
+      maxImages = Math.min(maxImages, Math.max(0, Number(rule.maxReferencesAndOutputs) - payload.n));
+    }
+    if (maxImages < 1) throw new Error(`${payload.model} 当前输出数量 n=${payload.n} 已占满参考图名额，请减少 n 后再上传参考图`);
     payload.image_urls = rawPayload.image_urls.filter(Boolean).slice(0, maxImages);
   }
   const quality = String(rawPayload.quality || '').trim().toLowerCase();
@@ -1002,8 +1111,13 @@ async function generateOne({ cfg, prompt, mainImagePath, refImages = [], outputP
   const model = cfg.model || 'gemini-3.1-flash-image-preview';
   const rule = getApimartImageRule(model);
   if (apimartMode && allImagePaths.length) {
-    const maxImages = Number(rule.maxImageUrls ?? 16);
-    if (rule.textOnly || maxImages <= 0) throw new Error(`${model} 仅支持文生图，不支持上传参考图`);
+    let maxImages = Number(rule.maxImageUrls ?? 16);
+    if (Number.isFinite(Number(rule.maxReferencesAndOutputs))) {
+      const requestedN = clampInt(cfg.imageN || cfg.image_n || cfg.n || cfg.count || 1, rule.nMin || 1, rule.nMax || 1, rule.defaultN || 1);
+      maxImages = Math.min(maxImages, Math.max(0, Number(rule.maxReferencesAndOutputs) - requestedN));
+    }
+    if (rule.textOnly) throw new Error(`${model} 仅支持文生图，不支持上传参考图`);
+    if (maxImages <= 0) throw new Error(`${model} 当前输出数量已占满参考图名额，请减少 n 后再上传参考图`);
     for (const p of allImagePaths.slice(0, maxImages)) imageUrls.push(await uploadImageToApimart(base, cfg.apiKey, p, proxyUrl));
   }
 
@@ -1073,7 +1187,7 @@ async function generateOne({ cfg, prompt, mainImagePath, refImages = [], outputP
       try { onSubmitted(taskId); } catch {}
     }
     if (apimartMode && !taskId && !imageUrl && !b64) {
-      throw new Error(`APIMart 图像接口没有返回 task_id。按文档成功响应应为 {code:200,data:[{status:'submitted',task_id:'...'}]}。实际响应：${JSON.stringify(submit).slice(0,1000)}。请检查 API Key、账户余额、模型名、请求格式和网络/代理。`);
+      throw new Error(`APIMart 图像接口没有返回 task_id。请检查 API Key、账户余额、模型名、请求格式和网络/代理。实际响应：${JSON.stringify(submit).slice(0,1000)}`);
     }
   }
 

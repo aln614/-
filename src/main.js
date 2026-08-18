@@ -2706,6 +2706,7 @@ registerApimartVideoRules([
   { model:'skyreels-v4-std', label:'SkyReels V4 Std', resolutions:['480p','720p','1080p'], defaultResolution:'1080p', aspectRatios:['16:9','4:3','1:1','9:16','3:4'], durationRange:[3,15], supportsImageUrls:true, supportsVideoUrls:true, imageParam:'skyreels', videoParam:'ref_videos', maxImageCount:15, maxVideoCount:1, durationWithVideo:true, omitAspectWithImageModes:['first_frame','first_last_frame'], omitAspectWithVideo:true, disallowFrameReferenceMix:true, promptOptimizerParam:'prompt_optimizer', audioReferenceParam:'ref_image_audio_url', maxAudioCount:1, audioRequiresImage:true, audioMaxDuration:15, audioReferenceMaxBytes:15*1024*1024 },
   { model:'happyhorse-1.0', label:'HappyHorse 1.0', resolutions:['720P','1080P'], defaultResolution:'1080P', aspectRatios:['16:9','9:16','1:1','4:3','3:4'], aspectParam:'size', durationRange:[3,15], supportsImageUrls:true, supportsVideoUrls:true, imageParam:'first_frame_image', videoParam:'video_url', maxImageCount:9, videoMaxImageCount:5, referenceVideoDurationRange:[3,60], omitAspectWithVideo:true, watermarkParam:'watermark', audioSettingParam:'audio_setting', audioSettingValues:['auto','origin'], promptOptionalModes:['first_frame'] },
   { model:'happyhorse-1.1', label:'HappyHorse 1.1', resolutions:['720P','1080P'], defaultResolution:'1080P', aspectRatios:['16:9','9:16','1:1','4:3','3:4'], aspectParam:'size', durationRange:[3,15], supportsImageUrls:true, imageParam:'first_frame_image', maxImageCount:9, omitAspectWithImages:true, watermarkParam:'watermark' },
+  { model:'wan3.0-video', label:'Wan3.0 Video', resolutions:['480P','720P','1080P'], defaultResolution:'1080P', aspectRatios:['adaptive','16:9','4:3','1:1','3:4','9:16'], defaultAspectRatio:'adaptive', aspectParam:'size', durationRange:[2,30], defaultDuration:5, supportsAutoDuration:true, supportsImageUrls:true, supportsVideoUrls:true, supportsImageWithRoles:true, supportsLastFrame:true, imageRolesBecomeReferencesWithMedia:true, referenceFamilyInputsForceReferenceImages:true, generationTypeParam:'generation_type', maxImageCount:10, videoParam:'video_urls', maxVideoCount:5, referenceVideoDurationRange:[1,15], referenceVideoTotalDurationMax:15, referenceVideoDurationPlusOutputMax:30, durationWithVideo:true, audioParam:'audio', defaultAudio:true, audioReferenceParam:'audio_urls', maxAudioCount:5, audioMinDuration:1, audioMaxDuration:15, audioTotalDuration:15, audioReferenceMaxBytes:15*1024*1024, watermarkParam:'watermark', promptOptionalWithMedia:true, supportsDocumentReference:true, supportsLinkReference:true },
   { model:'wan2.5-preview', label:'Wan2.5 Preview', resolutions:['480p','720p','1080p'], defaultResolution:'720p', aspectRatios:['16:9','9:16','1:1','4:3','3:4'], aspectParam:'size', resolutionAspectRatios:{'480p':['16:9','9:16','1:1']}, durations:[5,10], supportsImageUrls:true, maxImageCount:1, omitAspectWithImages:true, audioParam:'audio', defaultAudio:true, forceAudio:true, watermarkParam:'watermark', negativePromptParam:'negative_prompt', audioReferenceParam:'audio_url', maxAudioCount:1, audioMinDuration:3, audioMaxDuration:30, audioReferenceMaxBytes:15*1024*1024, promptOptionalWithMedia:true },
   { model:'wan2.6', label:'Wan2.6', resolutions:['720p','1080p'], defaultResolution:'720p', aspectRatios:['16:9','9:16','1:1','4:3','3:4'], durations:[5,10,15], supportsImageUrls:true, maxImageCount:1, omitAspectWithImages:true, audioParam:'audio', defaultAudio:true, watermarkParam:'watermark', negativePromptParam:'negative_prompt', audioReferenceParam:'audio_url', maxAudioCount:1, audioDurationAtMostVideo:true, audioReferenceMaxBytes:15*1024*1024, promptOptionalWithMedia:true },
   { model:'wan2.6-i2v-flash', label:'Wan2.6 I2V Flash', resolutions:['720p','1080p'], defaultResolution:'1080p', aspectParam:false, durationRange:[2,15], defaultDuration:5, supportsImageUrls:false, imageParam:'first_frame_image', minImageCount:1, maxImageCount:1, audioParam:'audio', defaultAudio:true, watermarkParam:'watermark', negativePromptParam:'negative_prompt', audioReferenceParam:'audio_url', maxAudioCount:1, audioMinDuration:3, audioMaxDuration:30, audioReferenceMaxBytes:15*1024*1024, promptOptionalWithMedia:true },
@@ -3906,6 +3907,7 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
   const prompt = String(body.prompt || '').trim();
   const refImages = Array.isArray(body.ref_images) ? body.ref_images : [];
   const videoItem = body.video_file || null;
+  const documentItem = body.document_file || null;
   const audioItems = Array.isArray(body.audio_files) ? body.audio_files : (body.audio_file ? [body.audio_file] : []);
   const audioDurationItems = audioItems.length ? audioItems : (Array.isArray(body.audio_durations) ? body.audio_durations : []);
   const videoUrlInput = String(body.video_url || '').trim();
@@ -3914,9 +3916,12 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
   const directVideoUrls = Array.isArray(body.video_urls) ? body.video_urls.map(item=>String(item || '').trim()).filter(Boolean) : [];
   const prebuiltLocalAudioPaths = Array.isArray(body.local_audio_paths) ? body.local_audio_paths.map(item=>String(item || '').trim()).filter(Boolean) : [];
   const directAudioUrls = Array.isArray(body.audio_urls) ? body.audio_urls.map(item=>String(item || '').trim()).filter(Boolean) : [];
+  const documentUrlInput = String(body.file_url || '').trim();
+  const linkUrlInput = String(body.link_url || '').trim();
   const sourceVideoName = String(body.source_video_name || '').trim();
   const st = ensureVideoStore();
   const videoModel = canonicalApimartVideoModel(body.video_model || 'omni-flash-ext');
+  const rule = getApimartVideoRule(videoModel);
   const localId = existingRow?.id || uuid('video_');
   const retryTimes = safeInt(body.retry_times, Number(cfg.retryTimes || 2), 0, 10);
   const fallbackVideoBatchId = body.video_batch_id || uuid('video_batch_');
@@ -3958,6 +3963,19 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
     const localVideoPath = localVideoPaths[0] || '';
     const generatedLocalAudioPaths = audioItems.map(item => dataUrlToFile(item, ownerId)).filter(Boolean);
     const localAudioPaths = [...new Set([...prebuiltLocalAudioPaths, ...(Array.isArray(row.local_audio_paths) ? row.local_audio_paths : []), ...generatedLocalAudioPaths].filter(Boolean))];
+    const generatedLocalDocumentPath = documentItem ? dataUrlToFile(documentItem, ownerId) : '';
+    const localDocumentPath = generatedLocalDocumentPath || String(body.local_document_path || row.local_document_path || '').trim();
+    let documentFileUrl = documentUrlInput;
+    let linkUrl = linkUrlInput;
+    if ((localDocumentPath || documentFileUrl) && !rule.supportsDocumentReference) throw new Error(`${rule.label || videoModel} 不支持文档参考。`);
+    if (linkUrl && !rule.supportsLinkReference) throw new Error(`${rule.label || videoModel} 不支持网页参考。`);
+    if ((localDocumentPath || documentFileUrl) && linkUrl) throw new Error('Wan3.0 文档参考和网页参考不能同时使用。');
+    if (localDocumentPath) {
+      assertApimartVideoDocumentReferenceFile(localDocumentPath, rule);
+      documentFileUrl = await buildPublicTempFileUrlAuto(localDocumentPath, cfg, ownerId, req);
+    }
+    if (documentFileUrl) documentFileUrl = assertApimartPublicReferenceUrl(documentFileUrl, '文档参考 URL');
+    if (linkUrl) linkUrl = assertApimartPublicReferenceUrl(linkUrl, '网页参考 URL');
     let videoUrls = [...new Set(directVideoUrls.length ? directVideoUrls : (videoUrlInput ? [videoUrlInput] : []))];
     if (!videoUrls.length) {
       for (const localPath of localVideoPaths) videoUrls.push(await buildPublicVideoUrlAuto(localPath, cfg, ownerId, req));
@@ -3972,7 +3990,6 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
       }
     }
     assertApimartVideoReferenceRules({ imageUrls, videoUrl, context:'视频任务' });
-    const rule = getApimartVideoRule(videoModel);
     let audioUrls = [...new Set(directAudioUrls)];
     if ((audioUrls.length || localAudioPaths.length) && !rule.audioReferenceParam) throw new Error(`${rule.label || videoModel} 不支持上传参考音频。`);
     for (const localPath of localAudioPaths) audioUrls.push(await buildPublicReferenceAudioUrlAuto(localPath, cfg, ownerId, req, rule));
@@ -3983,7 +4000,14 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
     if (Number(rule.maxImageCount || 0) > 0 && imageUrls.length > Number(rule.maxImageCount)) {
       throw new Error(`${rule.label || videoModel} 参考图最多支持 ${rule.maxImageCount} 张，当前为 ${imageUrls.length} 张。`);
     }
-    const mode = resolveApimartVideoMode(body.video_mode, { imageCount: imageUrls.length, hasVideo: videoUrls.length > 0, hasAudio: audioUrls.length > 0 });
+    let mode = resolveApimartVideoMode(body.video_mode, { imageCount: imageUrls.length, hasVideo: videoUrls.length > 0, hasAudio: audioUrls.length > 0 });
+    const hasReferenceFamilyInputs = Boolean(videoUrls.length || audioUrls.length || documentFileUrl || linkUrl);
+    if (rule.referenceFamilyInputsForceReferenceImages && hasReferenceFamilyInputs && imageUrls.length && ['first_frame', 'first_last_frame'].includes(mode)) {
+      if (normalizeVideoMode(body.video_mode) !== 'auto') {
+        throw new Error(`${rule.label || videoModel} 的首帧 / 首尾帧控制不能与视频、音频、文档或网页参考混用，请使用多素材生成。`);
+      }
+      mode = 'multi_reference';
+    }
     const videoReferenceType = String(body.video_reference_type || 'reference') === 'extend' ? 'extend' : 'reference';
     const acceptsImages = rule.supportsImageUrls || rule.supportsImageWithRoles || !!rule.imageParam;
     if (imageUrls.length && !acceptsImages) throw new Error(`${rule.label || videoModel} 不支持参考图片输入。`);
@@ -4041,10 +4065,11 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
       });
     }
     const promptOptionalForMode = Array.isArray(rule.promptOptionalModes) && rule.promptOptionalModes.includes(mode);
-    if (!prompt && !(rule.promptOptionalWithMedia && (imageUrls.length || videoUrls.length || audioUrls.length)) && !promptOptionalForMode) {
+    if (!prompt && !(rule.promptOptionalWithMedia && (imageUrls.length || videoUrls.length || audioUrls.length || documentFileUrl || linkUrl)) && !promptOptionalForMode) {
       throw new Error('请输入视频提示词；当前模型只有在已上传参考素材时才能省略提示词。');
     }
-    const forceAutomaticDuration = rule.forceAutoDurationForVideoEdit === true && mode === 'video_edit';
+    const forceAutomaticDuration = (rule.forceAutoDurationForVideoEdit === true && mode === 'video_edit')
+      || (rule.supportsAutoDuration === true && body.auto_duration === true);
     const requestedDuration = forceAutomaticDuration
       ? -1
       : normalizeVideoDurationForRule(body.duration, rule.defaultDuration ?? 6, rule, videoModel);
@@ -4056,6 +4081,8 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
     assertApimartAudioReferenceRules({ rule, audioUrls, audioItems:audioDurationItems, imageUrls, videoUrls, mode, requestedDuration });
     const payload = { model: rule.model || videoModel };
     if (prompt) payload.prompt = prompt;
+    if (documentFileUrl) payload.file_url = documentFileUrl;
+    if (linkUrl) payload.link_url = linkUrl;
     const forceAdaptiveAspect = (rule.forceAdaptiveForVideoEdit === true && mode === 'video_edit')
       || (rule.forceAdaptiveForFrameModes === true && ['first_frame', 'first_last_frame'].includes(mode));
     let normalizedAspectRatio = forceAdaptiveAspect ? 'adaptive' : normalizeVideoAspectRatio(body.aspect_ratio, videoModel);
@@ -4099,7 +4126,7 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
         payload.first_frame_image = imageUrls[0];
         if (imageUrls[1] && mode === 'first_last_frame' && rule.supportsLastFrame) payload.last_frame_image = imageUrls[1];
         else if (imageUrls.length > 1 && rule.supportsImageUrls) payload.image_urls = imageUrls;
-      } else if (rule.supportsImageWithRoles && !(rule.imageRolesBecomeReferencesWithMedia && (videoUrls.length || audioUrls.length)) && (mode === 'first_frame' || mode === 'first_last_frame' || !rule.supportsImageUrls)) {
+      } else if (rule.supportsImageWithRoles && !(rule.imageRolesBecomeReferencesWithMedia && hasReferenceFamilyInputs) && (mode === 'first_frame' || mode === 'first_last_frame' || !rule.supportsImageUrls)) {
         const imageWithRoles = buildApimartVideoImageRolePayload(videoModel, imageUrls, mode);
         if (imageWithRoles.length) payload.image_with_roles = imageWithRoles;
       } else if (rule.supportsImageUrls) {
@@ -4109,7 +4136,7 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
       }
     }
     if (rule.generationTypeParam && imageUrls.length) {
-      const generationType = mode === 'multi_reference' ? 'reference' : 'frame';
+      const generationType = (mode === 'multi_reference' || (rule.referenceFamilyInputsForceReferenceImages && hasReferenceFamilyInputs)) ? 'reference' : 'frame';
       if (generationType === 'reference' && rule.supportsReferenceGeneration === false) {
         throw new Error(`${rule.label || videoModel} 不支持多图参考生成；请使用单图/首尾帧，或切换到 Fast 模型。`);
       }
@@ -4213,11 +4240,16 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
     row.duration = payload.duration ?? '';
     row.mode = videoUrl ? '参考视频编辑' : (imageUrls.length ? '图生视频' : '文生视频');
     row.mode = apimartVideoModeLabel(mode);
+    if (documentFileUrl) row.mode = '文档参考生成';
+    else if (linkUrl) row.mode = '网页参考生成';
     if (mode === 'veo_remix') row.mode = '任务续写';
     row.image_urls = imageUrls;
     row.video_url = videoUrl;
     row.video_urls = videoUrls;
     row.audio_urls = audioUrls;
+    row.file_url = documentFileUrl;
+    row.link_url = linkUrl;
+    row.local_document_path = localDocumentPath;
     row.reference_public_url = videoUrl;
     row.reference_public_urls = videoUrls;
     row.local_video_path = localVideoPath;
@@ -4228,7 +4260,7 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
     if (body.source_video_duration) row.source_video_duration = body.source_video_duration;
     row.updated_at = nowISO(); getDB()._save();
     let ret;
-    addLog(`视频请求参数：endpoint=${submitEndpoint} model=${payload.model} resolution=${payload.resolution || payload.quality || payload.mode || ''} aspect=${payload.aspect_ratio || payload.size || ''} duration=${payload.duration ?? (rule.supportsDuration === false ? '模型自动' : '参考视频模式')} images=${imageUrls.length} videos=${videoUrls.length} audios=${audioUrls.length}`, { ownerId });
+    addLog(`视频请求参数：endpoint=${submitEndpoint} model=${payload.model} resolution=${payload.resolution || payload.quality || payload.mode || ''} aspect=${payload.aspect_ratio || payload.size || ''} duration=${payload.duration ?? (rule.supportsDuration === false || forceAutomaticDuration ? '模型自动' : '参考视频模式')} images=${imageUrls.length} videos=${videoUrls.length} audios=${audioUrls.length} document=${documentFileUrl ? 1 : 0} link=${linkUrl ? 1 : 0}`, { ownerId });
     try {
       ret = await postJsonApimart(submitEndpoint, apiKey, payload, 30000);
       addLog(`视频接口返回：${JSON.stringify(ret).slice(0, 1000)}`, { ownerId });
@@ -4351,7 +4383,8 @@ async function createApimartVideoBatch(body, ownerId, req, cfg) {
   assertApimartVideoReferenceRules({ imageUrls: refImageUrls, videoUrl: videoUrlInput || (videoFiles.length ? 'local_video_upload' : ''), context:'视频批量任务' });
   if (!prompts.length) {
     const hasReferenceMedia = refImageUrls.length > 0 || localAudioPaths.length > 0
-      || sourceVideos.some(item => item.local_video_path || item.video_url);
+      || sourceVideos.some(item => item.local_video_path || item.video_url)
+      || Boolean(body.document_file || String(body.file_url || '').trim() || String(body.link_url || '').trim());
     if (!videoRule.promptOptionalWithMedia || !hasReferenceMedia) throw new Error('请输入视频提示词');
     prompts = [''];
   }
@@ -5391,14 +5424,19 @@ function assertApimartVideoInputDurationRules({ rule = {}, durations = [], refer
   if (maxTotal > 0 && total > maxTotal) throw new Error(`${rule.label || rule.model} 的参考视频总时长不能超过 ${maxTotal} 秒`);
 }
 function assertApimartVideoOutputDurationRules({ rule = {}, requestedDuration = 0, sourceDurations = [] } = {}) {
-  if (!rule.outputDurationAtMostReferenceVideo) return;
   const outputDuration = Number(requestedDuration || 0);
   if (!Number.isFinite(outputDuration) || outputDuration <= 0) return;
   const knownSourceDurations = (sourceDurations || []).map(Number).filter(value => Number.isFinite(value) && value > 0);
   if (!knownSourceDurations.length) return;
-  const sourceDuration = Math.min(...knownSourceDurations);
-  if (outputDuration > sourceDuration) {
-    throw new Error(`${rule.label || rule.model} output duration cannot exceed the source video duration (${sourceDuration.toFixed(1)}s).`);
+  if (rule.outputDurationAtMostReferenceVideo) {
+    const sourceDuration = Math.min(...knownSourceDurations);
+    if (outputDuration > sourceDuration) {
+      throw new Error(`${rule.label || rule.model} output duration cannot exceed the source video duration (${sourceDuration.toFixed(1)}s).`);
+    }
+  }
+  const totalLimit = Number(rule.referenceVideoDurationPlusOutputMax || 0);
+  if (totalLimit > 0 && knownSourceDurations.reduce((sum, value) => sum + value, 0) + outputDuration > totalLimit) {
+    throw new Error(`${rule.label || rule.model} 的参考视频总时长与输出时长之和不能超过 ${totalLimit} 秒。`);
   }
 }
 async function runRuntimeDataMirror(cfg = readConfig(), opts = {}) {
@@ -6878,6 +6916,32 @@ async function buildPublicTempFileUrlAuto(filePath, cfg, ownerId='', req=null) {
   if (stat.size > 100 * 1024 * 1024) throw new Error('聊天附件临时公网链接最大支持 100MB，请压缩后再上传。');
   const id = registerPublicVideo(filePath, ownerId, { kind:'chat_attachment', expireHours:2 });
   return `${base}/public-file/${id}${ext}`;
+}
+
+const APIMART_VIDEO_DOCUMENT_EXTENSIONS = new Set([
+  '.docx', '.doc', '.xlsx', '.xls', '.pptx', '.ppt', '.pdf', '.txt',
+  '.key', '.pages', '.numbers', '.md'
+]);
+
+function assertApimartVideoDocumentReferenceFile(filePath, rule = {}) {
+  if (!rule.supportsDocumentReference) throw new Error(`${rule.label || rule.model || '当前模型'} 不支持文档参考。`);
+  if (!filePath || !fs.existsSync(filePath)) throw new Error('文档参考文件不存在或无法读取。');
+  const ext = path.extname(String(filePath)).toLowerCase();
+  if (!APIMART_VIDEO_DOCUMENT_EXTENSIONS.has(ext)) {
+    throw new Error('Wan3.0 文档参考仅支持 DOC/DOCX、XLS/XLSX、PPT/PPTX、PDF、TXT、KEY、PAGES、NUMBERS 或 MD。');
+  }
+  const stat = fs.statSync(filePath);
+  if (stat.size <= 0) throw new Error('文档参考文件为空。');
+  if (stat.size > 100 * 1024 * 1024) throw new Error('Wan3.0 文档参考不能超过 100MB。');
+}
+
+function assertApimartPublicReferenceUrl(value, label = '参考链接') {
+  const urlValue = String(value || '').trim();
+  if (!/^https?:\/\//i.test(urlValue)) throw new Error(`${label}必须是 HTTP/HTTPS 公网地址。`);
+  if (/^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|192\.168\.|10\.|172\.(1[6-9]|2\d|3[0-1])\.)/i.test(urlValue)) {
+    throw new Error(`${label}不能使用本机或局域网地址，APIMart 云端无法访问。`);
+  }
+  return urlValue;
 }
 
 function assertReferenceAudioFile(filePath, rule = {}) {

@@ -45,7 +45,7 @@ for (const group of pickerBlock.matchAll(/\['[^']+',\s*\[([^\]]+)\]\]/g)) {
   for (const model of group[1].matchAll(/'([^']+)'/g)) picker.add(model[1].toLowerCase());
 }
 
-assert(backend.size === 44, `Expected 44 official backend models, found ${backend.size}`);
+assert(backend.size === 45, `Expected 45 official backend models, found ${backend.size}`);
 assert(picker.size === backend.size, `Model picker/backend count mismatch: picker=${picker.size}, backend=${backend.size}`);
 for (const model of picker) assert(backend.has(model), `Model picker has no backend rule: ${model}`);
 for (const model of backend.keys()) assert(picker.has(model), `Backend model is missing from picker: ${model}`);
@@ -67,7 +67,7 @@ assert(/model:'doubao-seedance-2\.0-fast'[^\n]*durationRange:\[4,15\][^\n]*disal
 assert(/model:'doubao-seedance-2\.5'[^\n]*resolutions:\['480p','720p'\][^\n]*durationRange:\[4,30\][^\n]*supportsAutoDuration:true[^\n]*maxImageCount:30[^\n]*maxVideoCount:10/.test(main), 'Seedance 2.5 must support its documented resolution, duration, and reference limits');
 assert(/model:'doubao-seedance-2\.5'[^\n]*audioReferenceParam:'audio_urls'[^\n]*maxAudioCount:10[^\n]*audioMinDuration:2[^\n]*audioTotalDuration:30/.test(main), 'Seedance 2.5 must support up to ten 2-30 second audio references');
 assert(/model:'doubao-seedance-2\.5'[^\n]*imageRolesBecomeReferencesWithMedia:true[^\n]*outputFormatParam:'output_format'[^\n]*outputFormats:\['mp4','mov'\][^\n]*forceAdaptiveForVideoEdit:true/.test(main), 'Seedance 2.5 must send documented output format and task constraints');
-assert(/imageRolesBecomeReferencesWithMedia && \(videoUrls\.length \|\| audioUrls\.length\)/.test(main), 'Seedance 2.5 frame roles must become reference images when audio or video references coexist');
+assert(/imageRolesBecomeReferencesWithMedia && hasReferenceFamilyInputs/.test(main), 'Frame-role models must submit images as references whenever video, audio, document, or web references coexist');
 assert(/model:'doubao-seedance-2\.5'[^\n]*durationMin:4,\s*durationMax:30[^\n]*supportsAutoDuration:true[^\n]*maxVideoCount:10/.test(app), 'Seedance 2.5 slider and multi-video UI rule must be registered');
 assert(/seedance25OutputFormat/.test(app) && /seedance25AutoDuration/.test(app), 'Seedance 2.5 advanced controls must be available in the video editor');
 assert(/payload\[rule\.outputFormatParam\]/.test(main) && /body\.output_format/.test(app), 'Video output format must be passed through to APIMart');
@@ -94,6 +94,14 @@ assert(/model:'happyhorse-1\.0'[^\n]*audioSettingParam:'audio_setting'[^\n]*prom
 assert(/keep_original_sound:'no'/.test(main), 'Kling Omni and Video O1 must use the documented default of not keeping reference-video audio');
 assert(/model:'wan2\.5-preview'[^\n]*durations:\[5,10\]/.test(main), 'Wan2.5 must support 5 or 10 seconds');
 assert(/model:'wan2\.6'[^\n]*durations:\[5,10,15\]/.test(main), 'Wan2.6 must support 5, 10, or 15 seconds');
+assert(/model:'wan3\.0-video'[^\n]*resolutions:\['480P','720P','1080P'\][^\n]*durationRange:\[2,30\][^\n]*supportsAutoDuration:true[^\n]*maxImageCount:10[^\n]*maxVideoCount:5/.test(main), 'Wan3.0 Video must support its documented resolution, duration, image, and video limits');
+assert(/model:'wan3\.0-video'[^\n]*audioReferenceParam:'audio_urls'[^\n]*maxAudioCount:5[^\n]*audioMinDuration:1[^\n]*audioTotalDuration:15[^\n]*supportsDocumentReference:true[^\n]*supportsLinkReference:true/.test(main), 'Wan3.0 Video must support documented audio, document, and web references');
+assert(/model:'wan3\.0-video'[^\n]*referenceVideoDurationRange:\[1,15\][^\n]*referenceVideoTotalDurationMax:15[^\n]*referenceVideoDurationPlusOutputMax:30/.test(main), 'Wan3.0 Video must enforce reference video duration limits');
+assert(/model:'wan3\.0-video'[^\n]*durationMin:2,\s*durationMax:30[^\n]*supportsDocumentReference:true/.test(app), 'Wan3.0 Video slider and reference controls must be registered in the UI');
+assert(/wan3ReferenceRow/.test(html) && /wan3DocumentFile/.test(html) && /wan3LinkUrl/.test(html) && /wan3AutoDuration/.test(html), 'Wan3.0 Video must expose document, web, and auto-duration controls');
+assert(/payload\.file_url = documentFileUrl/.test(main) && /payload\.link_url = linkUrl/.test(main), 'Wan3.0 document and web references must reach APIMart');
+assert(/referenceFamilyInputsForceReferenceImages/.test(main), 'Wan3.0 mixed reference inputs must be submitted as reference images rather than frame controls');
+assert(/wan3DocumentFileData/.test(app) && /document_file:wan3DocumentFile/.test(app), 'Wan3.0 document uploads must be included in video batch submissions');
 assert(/model:'wan2\.7-r2v'[^\n]*videoDurationRange:\[2,10\][^\n]*maxReferenceCount:5/.test(main), 'Wan2.7 R2V must constrain video edits to 2-10 seconds and five references');
 assert(/model:'wan2\.7'[^\n]*allowedImageCounts:\[0,1,2\][^\n]*maxImageCount:2/.test(main), 'Wan2.7 must only accept zero, one, or two input images');
 assert(/model:'wan2\.7-videoedit'[^\n]*referenceVideoDurationRange:\[2,10\][^\n]*outputDurationAtMostReferenceVideo:true[^\n]*audioSettingParam:'audio_setting'/.test(main), 'Wan2.7 VideoEdit must constrain source/output duration and submit its audio setting');

@@ -83,14 +83,21 @@ function main() {
   if (missingRuntime.length) fail(`index.html APIMart options missing in runtime APIMART_MODEL_OPTIONS: ${missingRuntime.join(', ')}`);
 
   const required = [
-    'doubao-seedream-5-0-pro',
+    'seedream-5-0-pro',
     'flux-kontext-pro',
     'flux-kontext-max',
     'flux-2-flex',
     'flux-2-pro',
     'flux-2-max',
+    'gemini-3.1-flash-lite-image',
+    'gemini-3.1-flash-lite-image-ext',
+    'qwen-image-2.0-pro',
     'qwen-image-3.0',
-    'qwen-image-3.0-pro'
+    'qwen-image-3.0-pro',
+    'grok-imagine-image',
+    'grok-imagine-image-quality',
+    'grok-imagine-2.0-ext',
+    'grok-imagine-image-2.0'
   ];
   const missingRequired = required.filter(x => !frontendSet.has(x) || !backendSet.has(x) || !indexModels.map(v => v.toLowerCase()).includes(x));
   if (missingRequired.length) fail(`Required homepage models are not wired end-to-end: ${missingRequired.join(', ')}`);
@@ -110,10 +117,20 @@ function main() {
     "'qwen-image-3.0': QWEN_IMAGE_3_RULE",
     "'qwen-image-3.0-pro': QWEN_IMAGE_3_RULE",
     'payload.negative_prompt',
-    'payload.prompt_extend_mode'
+    'payload.prompt_extend_mode',
+    'const GEMINI_31_LITE_RULE',
+    "'gemini-3.1-flash-lite-image': GEMINI_31_LITE_RULE",
+    'const QWEN_IMAGE_2_RULE',
+    "'qwen-image-2.0-pro': QWEN_IMAGE_2_RULE",
+    'const GROK_IMAGINE_2_EXT_RULE',
+    "sizeParam: 'aspect_ratio'",
+    "'grok-imagine-image-2.0'",
+    'maxReferencesAndOutputs: 15',
+    'customPixelMin: 921600',
+    'const Z_IMAGE_TURBO_RULE'
   ];
   const missingRules = requiredRuleSnippets.filter(snippet => !apiClientJs.includes(snippet));
-  if (missingRules.length) fail(`Flux request rules are incomplete: ${missingRules.join(', ')}`);
+  if (missingRules.length) fail(`Image request rules are incomplete: ${missingRules.join(', ')}`);
 
   console.log(`[verify-image-models] OK: ${frontendModels.length} frontend APIMart models match backend list.`);
 }

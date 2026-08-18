@@ -107,6 +107,8 @@
                 <optgroup label="APIMart 图像系列">
                   <option value="gemini-3.1-flash-image-preview">Gemini-3.1-Flash-Image-preview（Nano banana2）</option>
                   <option value="gemini-3.1-flash-image-preview-official">Gemini-3.1-Flash-Image-preview 官方</option>
+                  <option value="gemini-3.1-flash-lite-image">Gemini-3.1-Flash-Lite-Image（Nano Banana Lite）</option>
+                  <option value="gemini-3.1-flash-lite-image-ext">Gemini-3.1-Flash-Lite-Image Ext（Nano Banana Lite Ext）</option>
                   <option value="gemini-3-pro-image-preview">Gemini-3-Pro-Image-preview（Nano banana Pro）</option>
                   <option value="gemini-3-pro-image-preview-official">Gemini-3-Pro-Image-preview 官方</option>
                   <option value="gemini-2.5-flash-image-preview">Gemini-2.5-Flash-Image-preview（Nano banana）</option>
@@ -116,21 +118,26 @@
                   <option value="gpt-image-1.5-official">GPT-Image-1.5 Official</option>
                   <option value="gpt-image-2">GPT-Image-2</option>
                   <option value="gpt-image-2-official">GPT-Image-2 Official</option>
-                  <option value="doubao-seedance-4-0">doubao-seedance-4-0 / Seedream-4.0</option>
+                  <option value="seedream-4.0">Seedream-4.0</option>
                   <option value="seedream-4.5">Seedream-4.5</option>
-                  <option value="doubao-seedream-5-0-lite">doubao-seedream-5-0-lite</option>
-                  <option value="doubao-seedream-5-0-pro">Seedream-5.0-Pro</option>
+                  <option value="seedream-5-0-lite">Seedream-5.0 Lite</option>
+                  <option value="seedream-5-0-pro">Seedream-5.0 Pro</option>
                   <option value="flux-kontext-pro">Flux Kontext Pro</option>
                   <option value="flux-kontext-max">Flux Kontext Max</option>
                   <option value="flux-2-flex">Flux 2.0 Flex</option>
                   <option value="flux-2-pro">Flux 2.0 Pro</option>
                   <option value="flux-2-max">Flux 2.0 Max</option>
                   <option value="qwen-image-2.0">Qwen Image 2.0</option>
+                  <option value="qwen-image-2.0-pro">Qwen Image 2.0 Pro</option>
                   <option value="qwen-image-3.0">Qwen Image 3.0</option>
                   <option value="qwen-image-3.0-pro">Qwen Image 3.0 Pro</option>
                   <option value="z-image-turbo">Z-Image-Turbo</option>
                   <option value="grok-imagine-1.5-apimart">grok-imagine-1.5-apimart</option>
                   <option value="grok-imagine-1.5-edit-apimart">grok-imagine-1.5-edit-apimart</option>
+                  <option value="grok-imagine-image">Grok Imagine Image</option>
+                  <option value="grok-imagine-image-quality">Grok Imagine Image Quality</option>
+                  <option value="grok-imagine-2.0-ext">Grok Imagine 2.0 Ext</option>
+                  <option value="grok-imagine-image-2.0">Grok Imagine Image 2.0 Official</option>
                   <option value="wan2.7-image">wan2.7-image</option>
                   <option value="wan2.7-image-pro">wan2.7-image-pro</option>
                   <option value="custom">自定义 APIMart 模型...</option>
@@ -155,6 +162,10 @@
                   <option value="4:5">4:5 电商竖图</option>
                   <option value="21:9">21:9 超宽横图</option>
                   <option value="9:21">9:21 超长竖图</option>
+                  <option value="9:19.5">9:19.5 电影竖图</option>
+                  <option value="19.5:9">19.5:9 电影横图</option>
+                  <option value="9:20">9:20 超长竖图</option>
+                  <option value="20:9">20:9 超宽横图</option>
                   <option value="1:4">1:4 长竖图</option>
                   <option value="4:1">4:1 长横图</option>
                   <option value="1:8">1:8 极长竖图</option>
@@ -170,6 +181,7 @@
               <div><label>分辨率</label><select id="clarity">
                 <option value="0.5K">0.5K 预览</option>
                 <option value="1K">1K 标准</option>
+                <option value="1.5K">1.5K</option>
                 <option value="2K">2K 高清</option>
                 <option value="3K">3K</option>
                 <option value="4K">4K 超清</option>
@@ -367,6 +379,7 @@
             <div class="row hidden" id="videoSourceAudioSettingRow"><div><label>源视频音频</label><select id="videoSourceAudioSetting"><option value="auto">自动重建匹配音频</option><option value="origin">保留原音轨</option></select><div class="field-help">仅支持该选项的视频编辑模型可用。</div></div><div class="setting-note-box" id="videoSourceAudioSettingNote">自动：AI 根据编辑后画面重建匹配音频。</div></div>
             <div class="warning" id="videoPlatformWarning">上传视频时使用 Omni Flash 编辑；公网视频 URL 必须是 APIMart 云端可访问的 HTTP/HTTPS 直链。</div>
             <div id="videoUrlWrap"><label>已有公开视频 URL（可选）</label><input id="videoUrlInput" placeholder="https://.../reference.mp4，可不填" /></div>
+            <div class="row hidden" id="wan3ReferenceRow"><div><label>Wan3.0 文档参考（可选）</label><input id="wan3DocumentFile" type="file" accept=".doc,.docx,.xls,.xlsx,.ppt,.pptx,.pdf,.txt,.key,.pages,.numbers,.md" /><div class="field-help" id="wan3DocumentName">支持最大 100MB 的文档参考。</div></div><div><label>Wan3.0 网页参考（可选）</label><input id="wan3LinkUrl" placeholder="https://example.com/article" /><div class="field-help">公开网页；文档与网页参考只能二选一。</div><label class="switch-line"><input id="wan3AutoDuration" type="checkbox" /> 自动时长</label></div></div>
             <div id="videoReferenceTypeWrap" class="hidden"><label>SkyReels 视频参考方式</label><select id="videoReferenceType"><option value="reference">动作 / 主体参考</option><option value="extend">视频扩展</option></select><div class="field-help">动作参考跟随源视频时长；视频扩展使用当前时长，且不能同时使用参考图。</div></div>
           </div>
           <div class="card">
@@ -590,7 +603,7 @@
           <div class="row"><div><label>API 地址</label><select id="apiEndpoint"><option value="https://api.apimart.ai">https://api.apimart.ai（APIMart）</option><option value="http://127.0.0.1:38000">http://127.0.0.1:38000（本地 Flow2API）</option></select></div><div><label>软件名称</label><input id="appName" placeholder="例如：TENYING_AI 1.0" /></div></div>
           <div class="row"><div><label>显示模式</label><select id="themeMode"><option value="light">日间模式</option><option value="dark">深色模式</option><option value="auto">自动（按时间）</option></select></div><div><label>界面皮肤</label><select id="skinIdSettings"><option value="starlight">星穹 AI 助手</option><option value="cloud">云海终端</option><option value="sakura">樱雪画室</option><option value="academy">银河学院</option><option value="hangar">极光机库</option><option value="classic">经典毛玻璃</option></select></div></div>
           <div class="row"><div><label>动漫助手</label><label class="switch-line"><input id="mascotEnabledSettings" type="checkbox" checked /> 显示皮肤角色与任务状态助手</label></div><div class="setting-note-box">API 地址已移动到本机设置中心，首页只保留 API Key 和生成参数。</div></div>
-          <div class="row"><div><label>输出目录</label><input id="outputDir" /></div><div><label>默认清晰度</label><select id="claritySettings"><option value="1K">1K 标准清晰</option><option value="2K">2K 高清</option><option value="4K">4K 超清</option></select></div></div>
+          <div class="row"><div><label>输出目录</label><input id="outputDir" /></div><div><label>默认清晰度</label><select id="claritySettings"><option value="0.5K">0.5K 预览</option><option value="1K">1K 标准清晰</option><option value="1.5K">1.5K</option><option value="2K">2K 高清</option><option value="3K">3K</option><option value="4K">4K 超清</option></select></div></div>
           <div class="row"><div><label>日志保留天数</label><input id="logKeepDays" type="number" value="3" /></div><div><label>轮询间隔 ms</label><input id="pollInterval" type="number" value="800" /></div></div><div class="row"><div><label>APIMart 代理地址（可选）</label><input id="apimartProxyUrl" placeholder="例如：http://127.0.0.1:7890；不使用代理请留空" /></div><div class="setting-note-box">如果日志出现 ETIMEDOUT / Connection timed out，说明当前网络无法直连 api.apimart.ai，可在这里填系统代理地址。</div></div>
           <div class="row"><div><label>单任务累计多少秒算超时</label><input id="timeoutSeconds" type="number" value="1200" /><div class="field-help">从单个任务创建开始累计计时，包含提交 API、等待远端生成、轮询查询和下载保存。图片生成已恢复 V9.8 模式，不再使用单次网络请求 30000ms 强制中断。</div></div><div><label>后台运行</label><label class="switch-line"><input id="backgroundKeepalive" type="checkbox" checked /> 允许后台持续运行，不掉线</label><div class="field-help">开启后会保持页面心跳，并尽量防止浏览器休眠；任务本身会在本地程序后台继续跑。</div></div></div>
           <div class="card inner-card">

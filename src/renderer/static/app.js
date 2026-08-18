@@ -970,6 +970,8 @@ const IMAGE_PLATFORM_ACTIVE_KEY = CLIENT_CONFIG_KEY + '_active_image_platform';
 const APIMART_MODEL_OPTIONS = [
   ['gemini-3.1-flash-image-preview','Gemini-3.1-Flash-Image-preview（Nano banana2）'],
   ['gemini-3.1-flash-image-preview-official','Gemini-3.1-Flash-Image-preview 官方'],
+  ['gemini-3.1-flash-lite-image','Gemini-3.1-Flash-Lite-Image（Nano Banana Lite）'],
+  ['gemini-3.1-flash-lite-image-ext','Gemini-3.1-Flash-Lite-Image Ext（Nano Banana Lite Ext）'],
   ['gemini-3-pro-image-preview','Gemini-3-Pro-Image-preview（Nano banana Pro）'],
   ['gemini-3-pro-image-preview-official','Gemini-3-Pro-Image-preview 官方'],
   ['gemini-2.5-flash-image-preview','Gemini-2.5-Flash-Image-preview（Nano banana）'],
@@ -979,21 +981,26 @@ const APIMART_MODEL_OPTIONS = [
   ['gpt-image-1.5-official','GPT-Image-1.5 Official'],
   ['gpt-image-2','GPT-Image-2'],
   ['gpt-image-2-official','GPT-Image-2 Official'],
-  ['doubao-seedance-4-0','doubao-seedance-4-0 / Seedream-4.0'],
+  ['seedream-4.0','Seedream-4.0'],
   ['seedream-4.5','Seedream-4.5'],
-  ['doubao-seedream-5-0-lite','doubao-seedream-5-0-lite'],
-  ['doubao-seedream-5-0-pro','Seedream-5.0-Pro'],
+  ['seedream-5-0-lite','Seedream-5.0 Lite'],
+  ['seedream-5-0-pro','Seedream-5.0 Pro'],
   ['flux-kontext-pro','Flux Kontext Pro'],
   ['flux-kontext-max','Flux Kontext Max'],
   ['flux-2-flex','Flux 2.0 Flex'],
   ['flux-2-pro','Flux 2.0 Pro'],
   ['flux-2-max','Flux 2.0 Max'],
   ['qwen-image-2.0','Qwen Image 2.0'],
+  ['qwen-image-2.0-pro','Qwen Image 2.0 Pro'],
   ['qwen-image-3.0','Qwen Image 3.0'],
   ['qwen-image-3.0-pro','Qwen Image 3.0 Pro'],
   ['z-image-turbo','Z-Image-Turbo'],
   ['grok-imagine-1.5-apimart','grok-imagine-1.5-apimart'],
   ['grok-imagine-1.5-edit-apimart','grok-imagine-1.5-edit-apimart'],
+  ['grok-imagine-image','Grok Imagine Image'],
+  ['grok-imagine-image-quality','Grok Imagine Image Quality'],
+  ['grok-imagine-2.0-ext','Grok Imagine 2.0 Ext'],
+  ['grok-imagine-image-2.0','Grok Imagine Image 2.0 Official'],
   ['wan2.7-image','wan2.7-image'],
   ['wan2.7-image-pro','wan2.7-image-pro']
 ];
@@ -1308,14 +1315,29 @@ document.addEventListener('visibilitychange', ()=>{
 });
 
 function imageModelKey(model){ return String(model || '').toLowerCase(); }
+const APIMART_IMAGE_MODEL_ALIASES = Object.freeze({
+  'doubao-seedance-4-0': 'seedream-4.0',
+  'doubao-seedream-4.0': 'seedream-4.0',
+  'doubao-seedream-4-0': 'seedream-4.0',
+  'doubao-seedream-5-0-lite': 'seedream-5-0-lite',
+  'doubao-seedream-5.0-lite': 'seedream-5-0-lite',
+  'seedream-5.0-lite': 'seedream-5-0-lite',
+  'doubao-seedream-5-0-pro': 'seedream-5-0-pro',
+  'doubao-seedream-5.0-pro': 'seedream-5-0-pro',
+  'seedream-5.0-pro': 'seedream-5-0-pro'
+});
+function canonicalApimartImageModel(model){
+  const value = imageModelKey(model);
+  return APIMART_IMAGE_MODEL_ALIASES[value] || String(model || '').trim();
+}
 function isOfficialImageModel(model){
   return ['gpt-image-2-official','gpt-image-1-official','gpt-image-1.5-official'].includes(imageModelKey(model));
 }
 function isSeedream5LiteModel(model){
-  return ['doubao-seedream-5-0-lite','doubao-seedream-5.0-lite','seedream-5.0-lite'].includes(imageModelKey(model));
+  return ['seedream-5-0-lite','doubao-seedream-5-0-lite','doubao-seedream-5.0-lite','seedream-5.0-lite'].includes(imageModelKey(model));
 }
 function isSeedream5ProModel(model){
-  return ['doubao-seedream-5-0-pro','doubao-seedream-5.0-pro','seedream-5.0-pro'].includes(imageModelKey(model));
+  return ['seedream-5-0-pro','doubao-seedream-5-0-pro','doubao-seedream-5.0-pro','seedream-5.0-pro'].includes(imageModelKey(model));
 }
 function isSeedream5OutputFormatModel(model){
   return isSeedream5LiteModel(model) || isSeedream5ProModel(model);
@@ -1331,6 +1353,67 @@ function isFluxImageModel(model){
 }
 function isQwenImage3Model(model){
   return ['qwen-image-3.0','qwen-image-3.0-pro'].includes(imageModelKey(model));
+}
+function isQwenImage2Model(model){
+  return ['qwen-image-2.0','qwen-image-2.0-pro'].includes(imageModelKey(model));
+}
+function isNanoBananaLiteModel(model){
+  return ['gemini-3.1-flash-lite-image','gemini-3.1-flash-lite-image-ext','nano-banana-2-lite','nano-banana-2-lite-ext'].includes(imageModelKey(model));
+}
+function isZImageTurboModel(model){ return imageModelKey(model) === 'z-image-turbo'; }
+function isWan27ImageModel(model){ return ['wan2.7-image','wan2.7-image-pro'].includes(imageModelKey(model)); }
+function isGrokAspectRatioImageModel(model){
+  return ['grok-imagine-image','grok-imagine-image-quality','grok-imagine-image-2.0'].includes(imageModelKey(model));
+}
+function isGrokImagine2ExtModel(model){ return imageModelKey(model) === 'grok-imagine-2.0-ext'; }
+function clampImageOutputCount(max){
+  const imageN = $('#imageN');
+  if(!imageN) return;
+  const current = Number(imageN.value || 1);
+  imageN.value = String(Math.max(1, Math.min(max, Number.isFinite(current) ? current : 1)));
+}
+function applyDocumentedImageUiGuard(model){
+  if(currentImagePlatform() !== 'apimart') return;
+  const m = imageModelKey(model);
+  const sizeValue = getSizeValue();
+  const setSizeIfUnsupported = (values, fallback='1:1') => {
+    if(values.includes(sizeValue)) return;
+    applySizeToUI(fallback);
+  };
+  const setResolution = (values, fallback) => {
+    const clarity = $('#clarity');
+    if(!clarity || values.includes(String(clarity.value || '').toUpperCase())) return;
+    clarity.value = fallback;
+    if($('#claritySettings') && [...$('#claritySettings').options].some(option=>option.value === fallback)) $('#claritySettings').value = fallback;
+  };
+
+  if(isNanoBananaLiteModel(m)){
+    setSizeIfUnsupported(['auto','1:1','3:2','2:3','4:3','3:4','16:9','9:16','5:4','4:5','21:9']);
+    setResolution(['1K'], '1K');
+    clampImageOutputCount(4);
+  }else if(isQwenImage2Model(m)){
+    setSizeIfUnsupported(['1:1','4:3','3:4','16:9','9:16','3:2','2:3']);
+    setResolution(['1K','2K'], '1K');
+    clampImageOutputCount(6);
+  }else if(isZImageTurboModel(m)){
+    setSizeIfUnsupported(['1:1','4:3','3:4','16:9','9:16','3:2','2:3']);
+    setResolution(['1K','2K'], '1K');
+    clampImageOutputCount(1);
+  }else if(isGrokImagine2ExtModel(m)){
+    setSizeIfUnsupported(['1:1','2:3','3:2','3:4','4:3','9:16','16:9']);
+    clampImageOutputCount(12);
+  }else if(isGrokAspectRatioImageModel(m)){
+    setSizeIfUnsupported(['auto','1:1','3:4','4:3','9:16','16:9','2:3','3:2','9:19.5','19.5:9','9:20','20:9','1:2','2:1']);
+    setResolution(['1K','2K'], '1K');
+    clampImageOutputCount(m === 'grok-imagine-image' ? 10 : 10);
+  }else if(isWan27ImageModel(m)){
+    setSizeIfUnsupported(['auto','1:1','16:9','9:16','4:3','3:4','3:2','2:3']);
+    setResolution(m === 'wan2.7-image-pro' ? ['1K','2K','4K'] : ['1K','2K'], '2K');
+    clampImageOutputCount(4);
+  }else if(m === 'imagen-4.0-apimart'){
+    setSizeIfUnsupported(['1:1','4:3','3:4','16:9','9:16'], '16:9');
+    clampImageOutputCount(1);
+  }
 }
 const FLUX_IMAGE_SIZES = ['auto','custom','1:1','4:3','3:4','16:9','9:16','3:2','2:3','21:9','9:21'];
 function applyFluxImageUiGuard(model){
@@ -1383,7 +1466,7 @@ function applyFluxImageUiGuard(model){
 }
 function isMultiNImageModel(model){
   const m = imageModelKey(model);
-  return isOfficialImageModel(m) || isQwenImage3Model(m) || ['doubao-seedance-4-0','doubao-seedream-4.0','doubao-seedream-4-0','seedream-4.0','seedream-4.5','doubao-seedream-5-0-lite','doubao-seedream-5.0-lite','seedream-5.0-lite','grok-imagine-1.5-apimart','grok-imagine-1.0','grok-imagine-1.5-edit-apimart','grok-imagine-1.0-edit-apimart','grok-imagine-1.0-edit'].includes(m);
+  return isOfficialImageModel(m) || isQwenImage2Model(m) || isQwenImage3Model(m) || isNanoBananaLiteModel(m) || isGrokAspectRatioImageModel(m) || isGrokImagine2ExtModel(m) || isWan27ImageModel(m) || ['gemini-2.5-flash-image-preview','gemini-2.5-flash-image-preview-official','doubao-seedance-4-0','doubao-seedream-4.0','doubao-seedream-4-0','seedream-4.0','seedream-4.5','seedream-5-0-lite','doubao-seedream-5-0-lite','doubao-seedream-5.0-lite','seedream-5.0-lite','grok-imagine-1.5-apimart','grok-imagine-1.5-ext','grok-imagine-1.0','grok-imagine-1.5-edit-apimart','grok-imagine-1.0-edit-apimart','grok-imagine-1.0-edit'].includes(m);
 }
 function applyQwenImage3UiGuard(model){
   if(currentImagePlatform() !== 'apimart' || !isQwenImage3Model(model)) return;
@@ -1404,10 +1487,8 @@ function applyQwenImage3UiGuard(model){
 }
 function applySeedream5ProUiGuard(model){
   if(currentImagePlatform() !== 'apimart' || !isSeedream5ProModel(model)) return;
-  const allowedSizes = new Set(['auto','1:1','4:3','3:4','16:9','9:16','3:2','2:3','21:9']);
-  if($('#size') && !allowedSizes.has(getSizeValue())) applySizeToUI('1:1');
-  if($('#clarity') && !['1K','2K'].includes(String($('#clarity').value || '').toUpperCase())) $('#clarity').value = '2K';
-  if($('#claritySettings')) $('#claritySettings').value = $('#clarity')?.value || '2K';
+  if($('#clarity') && !['1K','1.5K','2K'].includes(String($('#clarity').value || '').toUpperCase())) $('#clarity').value = '1.5K';
+  if($('#claritySettings')) $('#claritySettings').value = $('#clarity')?.value || '1.5K';
   if($('#outputFormat') && !['jpeg','png'].includes(String($('#outputFormat').value || '').toLowerCase())) $('#outputFormat').value = 'jpeg';
   if($('#imageN')) $('#imageN').value = '1';
 }
@@ -1417,6 +1498,7 @@ function updateOfficialImageOptions(){
   applyFluxImageUiGuard(model);
   applyQwenImage3UiGuard(model);
   applySeedream5ProUiGuard(model);
+  applyDocumentedImageUiGuard(model);
   const grsai = platform === 'grsai';
   const official = !grsai && isOfficialImageModel(model);
   const flux = !grsai && isFluxImageModel(model);
@@ -1433,7 +1515,9 @@ function updateOfficialImageOptions(){
   if(compWrap) compWrap.style.opacity = (fmt === 'jpeg' || fmt === 'webp') ? '1' : '.45';
 }
 function applyModelToUI(model){
-  const v = model || 'gemini-3.1-flash-image-preview';
+  const v = currentImagePlatform() === 'apimart'
+    ? (canonicalApimartImageModel(model) || 'gemini-3.1-flash-image-preview')
+    : (model || 'gemini-3.1-flash-image-preview');
   const opts = $$('#modelPreset option').map(o=>o.value);
   if(opts.includes(v) && v !== 'custom'){
     $('#modelPreset').value = v;
@@ -1520,6 +1604,7 @@ function updateSizeHint(){
   applyFluxImageUiGuard(model);
   applyQwenImage3UiGuard(model);
   applySeedream5ProUiGuard(model);
+  applyDocumentedImageUiGuard(model);
   const v = getSizeValue();
   const clarity = $('#clarity')?.value || $('#claritySettings')?.value || '1K';
   const actual = resolveModelSize(model, v, clarity);
@@ -1537,8 +1622,20 @@ function updateSizeHint(){
     $('#sizeHint').textContent = `当前比例：${v}；Flux 2.0 提交参数 size=${actual}，resolution=${clarity}；最多 8 张参考图。`;
     return;
   }
-  const supportNote = isQwenImage3Model(model) ? '（Qwen Image 3.0 支持 1-3 张参考图、1K/2K、1-6 张输出；自定义尺寸为 512-2048px，比例 1:8-8:1）' : (isSeedream5ProModel(model) ? '（Seedream-5.0-Pro 支持 auto/1:1/4:3/3:4/16:9/9:16/3:2/2:3/21:9，resolution 仅 1K/2K）' : (String(model||'').startsWith('imagen-4.0') ? '（Imagen-4.0 仅支持文生图，上传参考图会被拦截）' : (imageModelKey(model).includes('grok-imagine') ? '（Grok 生成不传 resolution；Grok Edit 会走 /v1/images/edits）' : '')));
-  $('#sizeHint').textContent = `当前比例：${v}；APIMart 提交参数 size=${actual}，resolution=${clarity}${supportNote}`;
+  let supportNote = '';
+  if(isNanoBananaLiteModel(model)) supportNote = '（Nano Banana Lite 固定 1K，最多 14 张参考图、1-4 张输出）';
+  else if(isQwenImage2Model(model)) supportNote = '（Qwen Image 2.0 / Pro 支持 1K/2K、1-6 张输出）';
+  else if(isQwenImage3Model(model)) supportNote = '（Qwen Image 3.0 支持 1-3 张参考图、1K/2K、1-6 张输出；自定义尺寸为 512-2048px，比例 1:8-8:1）';
+  else if(isSeedream5ProModel(model)) supportNote = '（Seedream-5.0-Pro 支持 1K/1.5K/2K 与精确像素尺寸，最多 10 张参考图）';
+  else if(isZImageTurboModel(model)) supportNote = '（Z-Image-Turbo 仅支持文生图、1K/2K，固定 1 张输出）';
+  else if(isWan27ImageModel(model)) supportNote = `（Wan2.7 Image 最多 9 张参考图；${imageModelKey(model) === 'wan2.7-image-pro' ? 'Pro 文生图可选 4K' : '标准版最高 2K'}）`;
+  else if(String(model||'').startsWith('imagen-4.0')) supportNote = '（Imagen-4.0 仅支持文生图，比例限 1:1 / 4:3 / 3:4 / 16:9 / 9:16）';
+  else if(isGrokImagine2ExtModel(model)) supportNote = '（Grok Imagine 2.0 Ext 仅支持文生图，固定质量模式，不提交 resolution）';
+  else if(isGrokAspectRatioImageModel(model)) supportNote = '（Grok Imagine Image 使用 aspect_ratio 参数，支持 1K/2K 与参考图编辑）';
+  else if(imageModelKey(model).includes('grok-imagine')) supportNote = '（Grok Imagine 1.5 最多 1 张参考图，不提交 resolution）';
+  const sizeParam = isGrokAspectRatioImageModel(model) ? 'aspect_ratio' : 'size';
+  const resolutionText = isGrokImagine2ExtModel(model) || String(model || '').startsWith('imagen-4.0') ? '不提交 resolution' : `resolution=${clarity}`;
+  $('#sizeHint').textContent = `当前比例：${v}；APIMart 提交参数 ${sizeParam}=${actual}，${resolutionText}${supportNote}`;
 }
 
 function updateLanDisplay(c = {}){
@@ -6827,6 +6924,7 @@ $('#previewStage')?.addEventListener('touchend', e=>{ if(e.touches.length===0) p
 let videoRefImages = [];
 let videoFilesData = [];
 let videoAudioFilesData = [];
+let wan3DocumentFileData = null;
 let videoTasksCache = [];
 let videoSelectedIds = new Set();
 let lastBatchesSignature = '';
@@ -6917,6 +7015,7 @@ function registerApimartVideoUiRules(items = []){
       referenceVideoDurationRange:item.referenceVideoDurationRange || null,
       referenceVideoTotalDurationMin:Number(item.referenceVideoTotalDurationMin || 0),
       referenceVideoTotalDurationMax:Number(item.referenceVideoTotalDurationMax || 0),
+      referenceVideoDurationPlusOutputMax:Number(item.referenceVideoDurationPlusOutputMax || 0),
       firstLastDurations:item.firstLastDurations || null,
       resolutionDurationRules:item.resolutionDurationRules || null,
       resolutionAspectRatios:item.resolutionAspectRatios || null,
@@ -6933,6 +7032,8 @@ function registerApimartVideoUiRules(items = []){
       supportsSourceAudioSetting:item.supportsSourceAudioSetting === true,
       promptOptionalWithMedia:item.promptOptionalWithMedia === true,
       promptOptionalModes:Array.isArray(item.promptOptionalModes) ? item.promptOptionalModes.map(String) : [],
+      supportsDocumentReference:item.supportsDocumentReference === true,
+      supportsLinkReference:item.supportsLinkReference === true,
       characterOrientation:item.characterOrientation === true,
       referenceVideoDurationRangeByOrientation:item.referenceVideoDurationRangeByOrientation || null,
       supportsAudioReference:item.supportsAudioReference === true,
@@ -7060,6 +7161,7 @@ registerApimartVideoUiRules([
   { model:'veo3.1-quality-official', label:'VEO3.1 Official Quality', resolutions:['720p','1080p','4k'], defaultResolution:'720p', aspects:['16:9','9:16'], durations:[4,6,8], defaultDuration:8, maxImageCount:2 },
   { model:'flux-3-video', label:'FLUX 3 Video', resolutions:['hd','fhd'], defaultResolution:'hd', aspects:['auto','21:9','2:1','16:9','4:3','3:4','9:16'], defaultAspect:'auto', durationMin:5, durationMax:20, defaultDuration:5, supportsVideo:true, durationWithVideo:true, maxImageCount:10, maxVideoCount:1, note:'Supports text, 1-10 ordered keyframes, and one video continuation.' },
   { model:'happyhorse-1.0', label:'HappyHorse 1.0', resolutions:['720P','1080P'], defaultResolution:'1080P', aspects:['16:9','9:16','1:1','4:3','3:4'], durationMin:3, durationMax:15, defaultDuration:5, supportsVideo:true, maxImageCount:9, videoMaxImageCount:5, promptOptionalWithMedia:true },
+  { model:'wan3.0-video', label:'Wan3.0 Video', resolutions:['480P','720P','1080P'], defaultResolution:'1080P', aspects:['adaptive','16:9','4:3','1:1','3:4','9:16'], defaultAspect:'adaptive', durationMin:2, durationMax:30, defaultDuration:5, supportsAutoDuration:true, supportsVideo:true, durationWithVideo:true, maxImageCount:10, maxVideoCount:5, referenceVideoDurationRange:[1,15], referenceVideoTotalDurationMax:15, referenceVideoDurationPlusOutputMax:30, supportsAudioReference:true, maxAudioCount:5, audioReferenceParam:'audio_urls', audioMinDuration:1, audioMaxDuration:15, audioTotalDuration:15, promptOptionalWithMedia:true, supportsDocumentReference:true, supportsLinkReference:true, supportsGeneratedAudio:true, defaultGeneratedAudio:true, note:'支持首帧/首尾帧、多图/视频/音频参考，以及单个文档或公开网页参考；文档与网页不能同时使用。' },
   { model:'wan2.5-preview', label:'Wan2.5 Preview', resolutions:['480p','720p','1080p'], defaultResolution:'720p', aspects:['16:9','9:16','1:1','4:3','3:4'], resolutionAspectRatios:{'480p':['16:9','9:16','1:1']}, durations:[5,10], defaultDuration:5, maxImageCount:1, supportsAudioReference:true, maxAudioCount:1, audioReferenceParam:'audio_url', audioMinDuration:3, audioMaxDuration:30, promptOptionalWithMedia:true },
   { model:'wan2.6', label:'Wan2.6', resolutions:['720p','1080p'], defaultResolution:'720p', aspects:['16:9','9:16','1:1','4:3','3:4'], durations:[5,10,15], defaultDuration:5, maxImageCount:1, supportsAudioReference:true, maxAudioCount:1, audioReferenceParam:'audio_url', audioDurationAtMostVideo:true, promptOptionalWithMedia:true },
   { model:'wan2.6-i2v-flash', label:'Wan2.6 I2V Flash', resolutions:['720p','1080p'], defaultResolution:'1080p', supportsAspect:false, durationMin:2, durationMax:15, defaultDuration:5, minImageCount:1, maxImageCount:1, supportsAudioReference:true, maxAudioCount:1, audioReferenceParam:'audio_url', audioMinDuration:3, audioMaxDuration:30, promptOptionalWithMedia:true, note:'First-frame image is required; output ratio follows the uploaded image.' },
@@ -7119,7 +7221,7 @@ const APIMART_VIDEO_MODEL_GROUPS_UI = [
   ['Omni / Google / FLUX', ['gemini-omni-flash-preview','omni-flash-ext','veo3.1-fast','veo3.1-quality','veo3.1-lite','veo3.1-fast-official','veo3.1-quality-official','flux-3-video']],
   ['Doubao Seedance', ['doubao-seedance-1-0-pro-fast','doubao-seedance-1-0-pro-quality','doubao-seedance-1-5-pro','doubao-seedance-2.0','doubao-seedance-2.0-fast','doubao-seedance-2.0-mini','doubao-seedance-2.5']],
   ['Sora / MiniMax / SkyReels', ['sora-2','sora-2-pro','MiniMax-Hailuo-02','MiniMax-Hailuo-2.3','MiniMax-Hailuo-2.3-Fast','MiniMax-H3','skyreels-v4-fast','skyreels-v4-std']],
-  ['HappyHorse / Wan', ['happyhorse-1.0','happyhorse-1.1','wan2.5-preview','wan2.6','wan2.6-i2v-flash','wan2.7','wan2.7-r2v','wan2.7-videoedit']],
+  ['HappyHorse / Wan', ['happyhorse-1.0','happyhorse-1.1','wan3.0-video','wan2.5-preview','wan2.6','wan2.6-i2v-flash','wan2.7','wan2.7-r2v','wan2.7-videoedit']],
   ['Kling', ['kling-v2-6','kling-v2-6-motion-control','kling-v3','kling-v3-motion-control','kling-v3-omni','kling-video-o1','kling-3.0-turbo']],
   ['Vidu / Grok / Pixverse', ['viduq3','viduq3-mix','viduq3-pro','viduq3-turbo','grok-imagine-1.5-video-apimart','pixverse-v6']]
 ];
@@ -7143,6 +7245,7 @@ function isApimartOmniVideoModel(){
 function videoModeAutoLabel(){
   const hasVideo = hasReferenceVideo();
   const images = videoRefImages.length;
+  if(hasWan3ReferenceDocument()) return '文档 / 网页参考生成';
   if(videoAudioFilesData.length) return '多模态参考';
   if(hasVideo) return '上传视频编辑';
   if(images > 2) return '多素材生成';
@@ -7170,6 +7273,44 @@ function seedance25RequiresAdaptiveAspect(){
 }
 function seedance25UsesAutomaticDuration(){
   return isSeedance25VideoModel() && (seedance25VideoEditIsActive() || $('#seedance25AutoDuration')?.checked === true);
+}
+function isWan3VideoModel(model = $('#videoModel')?.value){
+  return currentVideoPlatform() === 'apimart' && String(model || '').toLowerCase() === 'wan3.0-video';
+}
+function wan3UsesAutomaticDuration(){
+  return isWan3VideoModel() && $('#wan3AutoDuration')?.checked === true;
+}
+function hasWan3ReferenceDocument(){
+  return isWan3VideoModel() && Boolean(wan3DocumentFileData || ($('#wan3LinkUrl')?.value || '').trim());
+}
+function updateWan3ReferenceControls(){
+  const enabled = isWan3VideoModel();
+  const row = $('#wan3ReferenceRow');
+  const documentInput = $('#wan3DocumentFile');
+  const linkInput = $('#wan3LinkUrl');
+  const autoDuration = $('#wan3AutoDuration');
+  if(row) row.classList.toggle('hidden', !enabled);
+  if(documentInput) documentInput.disabled = !enabled;
+  if(linkInput) linkInput.disabled = !enabled;
+  if(autoDuration) autoDuration.disabled = !enabled;
+  const fileName = $('#wan3DocumentName');
+  if(fileName){
+    fileName.textContent = wan3DocumentFileData
+      ? `已选择：${wan3DocumentFileData.name || '文档'}（文档与网页参考不能同时使用）`
+      : '支持 DOC/DOCX、XLS/XLSX、PPT/PPTX、PDF、TXT、KEY、PAGES、NUMBERS、MD，最大 100MB。';
+  }
+}
+async function handleWan3DocumentFile(files){
+  const file = [...(files || [])][0];
+  if(!file) return;
+  const ext = String(file.name || '').match(/\.[^.]+$/)?.[0]?.toLowerCase() || '';
+  const allowed = new Set(['.doc','.docx','.xls','.xlsx','.ppt','.pptx','.pdf','.txt','.key','.pages','.numbers','.md']);
+  if(!allowed.has(ext)) return toast('Wan3.0 文档参考仅支持 DOC/DOCX、XLS/XLSX、PPT/PPTX、PDF、TXT、KEY、PAGES、NUMBERS 或 MD');
+  if(file.size > 100 * 1024 * 1024) return toast('Wan3.0 文档参考不能超过 100MB');
+  wan3DocumentFileData = await fileToData(file);
+  updateWan3ReferenceControls();
+  updateVideoModeUI();
+  updateVideoTaskEstimate();
 }
 function updateSeedance25Options(){
   const row = $('#seedance25Options');
@@ -7283,6 +7424,9 @@ function currentVideoDurationSpec(){
     const rule = currentApimartVideoRule();
     if(seedance25UsesAutomaticDuration()){
       return { values:[], defaultValue:-1, mode:'auto', note:'Automatic duration is selected by Seedance 2.5.' };
+    }
+    if(wan3UsesAutomaticDuration()){
+      return { values:[], defaultValue:-1, mode:'auto', note:'Wan3.0 will select the output duration automatically.' };
     }
     let values = normalizedVideoDurationValues(rule.durations);
     let mode = rule.supportsDuration === false ? 'auto' : (rule.durationMode || 'discrete');
@@ -7428,6 +7572,7 @@ function updateVideoModeUI(){
   const hasVideo = hasReferenceVideo();
   syncFlow2VideoEditModel();
   if(updateSeedance25Options()) updateVideoDurationOptions();
+  updateWan3ReferenceControls();
   updateVideoGeneratedAudioControl();
   updateVideoSourceAudioSettingControl();
   const images = videoRefImages.length;
@@ -7456,6 +7601,8 @@ function updateVideoModeUI(){
       : '本地 Flow2API：Omni Flash 支持文生、首帧、多素材及上传视频编辑；Veo 3.1 仅支持文生 / 图生视频。')
     : isApimartOmniVideoModel()
       ? `${apimartRule.label} 支持直接上传视频编辑；公网视频 URL 必须是 APIMart 云端可访问的 HTTP/HTTPS 直链。${apimartRule.note ? ' ' + apimartRule.note : ''}`
+      : isWan3VideoModel()
+        ? 'Wan3.0 支持文生、首尾帧、多图/视频/音频参考，以及单个文档或公开网页参考；文档与网页不能同时使用。'
       : 'APIMart 视频系列已按官方文档匹配模型、时长、比例和分辨率；上传视频编辑仅对支持 video_url / video_urls 的模型开放。'
   if(platform === 'flow2api' && images > 7){
     toast('本地 Flow2API Omni Flash 最多支持 7 张图片素材');
@@ -7512,7 +7659,7 @@ function hasReferenceVideo(){ return !!(videoFilesData.length || ($('#videoUrlIn
 function videoMultiReferenceEnabled(){ return currentVideoPlatform() === 'apimart' && $('#videoMultiReference')?.checked === true; }
 function selectCompatibleMultiVideoReferenceModel(videoCount = videoFilesData.length){
   const requiredCount = Math.max(2, Number(videoCount || 0));
-  const preferredModels = ['doubao-seedance-2.5','MiniMax-H3','doubao-seedance-2.0','doubao-seedance-2.0-fast','doubao-seedance-2.0-mini','wan2.7-r2v'];
+  const preferredModels = ['doubao-seedance-2.5','wan3.0-video','MiniMax-H3','doubao-seedance-2.0','doubao-seedance-2.0-fast','doubao-seedance-2.0-mini','wan2.7-r2v'];
   return preferredModels.find(model=>{
     const rule = APIMART_VIDEO_MODEL_RULES_UI[String(model).toLowerCase()];
     return rule?.supportsVideo && Number(rule.maxVideoCount || 1) >= requiredCount;
@@ -7678,7 +7825,20 @@ async function handleVideoRefs(files, options={}){
   renderVideoInputs();
   if(options.cache !== false) cacheRecentVideoUploadedFiles(refs, 'reference_image');
 }
-function clearVideoInputs(){ videoFilesData=[]; videoAudioFilesData=[]; videoRefImages=[]; $('#videoPrompt').value=''; $('#videoUrlInput').value=''; if($('#videoSourceTaskId')) $('#videoSourceTaskId').value=''; renderVideoInputs(); }
+function clearVideoInputs(){
+  videoFilesData=[];
+  videoAudioFilesData=[];
+  videoRefImages=[];
+  wan3DocumentFileData=null;
+  $('#videoPrompt').value='';
+  $('#videoUrlInput').value='';
+  if($('#wan3DocumentFile')) $('#wan3DocumentFile').value='';
+  if($('#wan3LinkUrl')) $('#wan3LinkUrl').value='';
+  if($('#wan3AutoDuration')) $('#wan3AutoDuration').checked=false;
+  if($('#videoSourceTaskId')) $('#videoSourceTaskId').value='';
+  updateWan3ReferenceControls();
+  renderVideoInputs();
+}
 async function submitVideoTask(opts = {}){
   const reject = message=>{
     if(opts.fromAgent) throw new Error(message);
@@ -7692,15 +7852,21 @@ async function submitVideoTask(opts = {}){
   const refVideoMode = hasReferenceVideo();
   const apimartRule = platform === 'apimart' ? currentApimartVideoRule() : null;
   const seedance25 = isSeedance25VideoModel();
+  const wan3 = isWan3VideoModel();
+  const wan3DocumentFile = wan3 ? wan3DocumentFileData : null;
+  const wan3LinkUrl = wan3 ? String($('#wan3LinkUrl')?.value || '').trim() : '';
   const selectedVideoMode = currentVideoModeValue();
-  const hasReferenceMedia = refVideoMode || videoRefImages.length > 0 || videoAudioFilesData.length > 0;
+  const hasReferenceMedia = refVideoMode || videoRefImages.length > 0 || videoAudioFilesData.length > 0 || Boolean(wan3DocumentFile || wan3LinkUrl);
   const promptOptionalForCurrentMode = apimartRule?.promptOptionalModes?.includes(selectedVideoMode === 'auto' && !refVideoMode && videoRefImages.length === 1 ? 'first_frame' : selectedVideoMode);
   const prompts = splitVideoPromptInput();
   if(!prompts.length && !(platform === 'apimart' && (apimartRule?.promptOptionalWithMedia && hasReferenceMedia || promptOptionalForCurrentMode))) return reject('请输入视频提示词');
+  if(wan3DocumentFile && wan3LinkUrl) return reject('Wan3.0 文档参考和网页参考不能同时使用');
   // V14.5.5：取消前端提交前硬拦截，避免元数据误读导致 5 秒视频被拒。
   // 视频真实可用性由 APIMart 远端返回结果决定，本地只负责提交与显示真实错误。
   localStorage.setItem(`${CLIENT_CONFIG_KEY}_video_key_${platform}`, apiKey);
   if(apimartRule){
+    if(wan3DocumentFile && !apimartRule.supportsDocumentReference) return reject(`${apimartRule.label} 不支持文档参考`);
+    if(wan3LinkUrl && !apimartRule.supportsLinkReference) return reject(`${apimartRule.label} 不支持网页参考`);
     if(videoRefImages.length && !apimartRule.supportsImages) return reject(`${apimartRule.label} 不支持参考图输入`);
     if(Array.isArray(apimartRule.allowedImageCounts) && !apimartRule.allowedImageCounts.includes(videoRefImages.length)) return reject(`${apimartRule.label} 的参考图数量仅支持 ${apimartRule.allowedImageCounts.join(' / ')} 张，当前为 ${videoRefImages.length} 张`);
     if(apimartRule.minImageCount > videoRefImages.length) return reject(`${apimartRule.label} 至少需要 ${apimartRule.minImageCount} 张参考图`);
@@ -7719,6 +7885,7 @@ async function submitVideoTask(opts = {}){
       if(isCombinedReference && apimartRule.referenceVideoTotalDurationMax > 0 && sourceVideoTotal > apimartRule.referenceVideoTotalDurationMax) return reject(`${apimartRule.label} 的参考视频总时长不能超过 ${apimartRule.referenceVideoTotalDurationMax} 秒`);
       const selectedDuration = selectedVideoDuration();
       if(apimartRule.outputDurationAtMostReferenceVideo && Number.isFinite(selectedDuration) && selectedDuration > 0 && selectedDuration > Math.min(...sourceVideoDurations)) return reject(`${apimartRule.label} 的输出时长不能超过源视频时长`);
+      if(apimartRule.referenceVideoDurationPlusOutputMax > 0 && Number.isFinite(selectedDuration) && selectedDuration > 0 && sourceVideoTotal + selectedDuration > apimartRule.referenceVideoDurationPlusOutputMax) return reject(`${apimartRule.label} 的参考视频总时长与输出时长之和不能超过 ${apimartRule.referenceVideoDurationPlusOutputMax} 秒`);
     }
     if(videoAudioFilesData.length){
       if(!apimartRule.supportsAudioReference) return reject(`${apimartRule.label} 不支持上传参考音频。请使用支持多模态参考的模型，例如 MiniMax H3、Seedance 2.0、SkyReels V4、Wan2.5、Wan2.6、Wan2.7 或 Wan2.7 R2V。`);
@@ -7760,7 +7927,7 @@ async function submitVideoTask(opts = {}){
   const platformCfg = loadClientConfig(platform) || {};
   const effectiveVideoMode = videoAudioFilesData.length && selectedVideoMode === 'auto' && (apimartRule?.audioRequiresReference || apimartRule?.audioRequiresImage) ? 'multi_reference' : selectedVideoMode;
   const seedance25AutomaticDuration = seedance25UsesAutomaticDuration();
-  const body = { video_platform:platform, api_endpoint:platform === 'flow2api' ? (platformCfg.api_endpoint || 'http://127.0.0.1:38000') : 'https://api.apimart.ai', api_key:apiKey, video_model:$('#videoModel')?.value || '', video_mode:effectiveVideoMode, video_reference_type:currentVideoReferenceType(), multi_video_reference:multiVideoReference, seed:$('#videoSeed')?.value?.trim() || '', copies:Number($('#videoRepeatCount')?.value || 1), retry_times:Number($('#videoRetryTimes')?.value || 0), prompts:$('#videoPrompt').value, prompt_multiline_tasks: $('#videoPromptMultilineTasks') ? $('#videoPromptMultilineTasks').checked : false, resolution:$('#videoResolution').value, aspect_ratio:seedance25RequiresAdaptiveAspect() ? 'adaptive' : $('#videoAspect').value, video_url:$('#videoUrlInput').value.trim(), video_files:videoFilesData, audio_files:videoAudioFilesData, ref_images:videoRefImages, character_orientation:$('#videoCharacterOrientation')?.value || 'image', source_task_id:$('#videoSourceTaskId')?.value?.trim() || '', audio_setting:$('#videoSourceAudioSetting')?.value || 'auto' };
+  const body = { video_platform:platform, api_endpoint:platform === 'flow2api' ? (platformCfg.api_endpoint || 'http://127.0.0.1:38000') : 'https://api.apimart.ai', api_key:apiKey, video_model:$('#videoModel')?.value || '', video_mode:effectiveVideoMode, video_reference_type:currentVideoReferenceType(), multi_video_reference:multiVideoReference, seed:$('#videoSeed')?.value?.trim() || '', copies:Number($('#videoRepeatCount')?.value || 1), retry_times:Number($('#videoRetryTimes')?.value || 0), prompts:$('#videoPrompt').value, prompt_multiline_tasks: $('#videoPromptMultilineTasks') ? $('#videoPromptMultilineTasks').checked : false, resolution:$('#videoResolution').value, aspect_ratio:seedance25RequiresAdaptiveAspect() ? 'adaptive' : $('#videoAspect').value, video_url:$('#videoUrlInput').value.trim(), video_files:videoFilesData, audio_files:videoAudioFilesData, ref_images:videoRefImages, document_file:wan3DocumentFile, link_url:wan3LinkUrl, auto_duration:wan3UsesAutomaticDuration(), character_orientation:$('#videoCharacterOrientation')?.value || 'image', source_task_id:$('#videoSourceTaskId')?.value?.trim() || '', audio_setting:$('#videoSourceAudioSetting')?.value || 'auto' };
   if(platform === 'apimart' && apimartRule?.supportsGeneratedAudio === true && !seedance25){
     body.generate_audio = apimartRule.forceGeneratedAudio === true || $('#videoGenerateAudio')?.checked === true;
   }
@@ -8589,6 +8756,9 @@ function setupVideoPage(){
   $('#videoGenerateAudio')?.addEventListener('change', updateVideoTaskEstimate);
   $('#seedance25AutoDuration')?.addEventListener('change', ()=>{ updateVideoDurationOptions(); updateVideoTaskEstimate(); });
   ['#seedance25GenerateAudio','#seedance25Watermark','#seedance25ReturnLastFrame','#seedance25OutputFormat'].forEach(selector=>$(selector)?.addEventListener('change', updateVideoTaskEstimate));
+  $('#wan3AutoDuration')?.addEventListener('change', ()=>{ updateVideoDurationOptions(); updateVideoDurationVisibility(); updateVideoModeUI(); updateVideoTaskEstimate(); });
+  $('#wan3DocumentFile')?.addEventListener('change', e=>handleWan3DocumentFile(e.target.files));
+  $('#wan3LinkUrl')?.addEventListener('input', ()=>{ updateVideoModeUI(); updateVideoTaskEstimate(); });
   $('#videoRepeatCount')?.addEventListener('input', updateVideoTaskEstimate);
   if($('#openVideoUrlBtn')) $('#openVideoUrlBtn').textContent = '复制视频';
   const videoPanel = $('#videoRealtimePanel');
