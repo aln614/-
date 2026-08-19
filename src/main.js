@@ -12,7 +12,7 @@ const { app, BrowserWindow, Tray, shell, Menu, clipboard, nativeImage, ipcMain, 
 const { spawn } = require('child_process');
 const { initDB, getDB, addLog, listBatches, listImages, listLogs, nowISO, uuid, setNetworkTimeOffset, getNetworkTimeInfo } = require('./services/db');
 const { TaskQueue } = require('./services/taskQueue');
-const { grsaiTool, chatCompletion, getApimartChatModels, refreshApimartChatModels, APIMART_IMAGE_MODELS } = require('./services/apiClient');
+const { chatCompletion, getApimartChatModels, refreshApimartChatModels, APIMART_IMAGE_MODELS } = require('./services/apiClient');
 const { safeName, ensureDir, makeDirs, createThumb, downloadToFile } = require('./services/cache');
 
 let mainWindow = null;
@@ -606,16 +606,7 @@ function startNetworkTimeSync() {
 
 
 function normalizeImageApiEndpoint(input) {
-  let s = String(input || 'https://api.apimart.ai').trim();
-  // V14.0: 修复 V13.9 白屏/主进程报错：main.js 调用了 normalizeImageApiEndpoint 但未定义。
-  // APIMart 文档页统一转换为 APIMart API 根地址；本地 Flow2API 地址保持不变。
-  if (!s) return 'https://api.apimart.ai';
-  if (/docs\.apimart\.ai/i.test(s)) return 'https://api.apimart.ai';
-  if (/api\.apimart\.ai/i.test(s)) return 'https://api.apimart.ai';
-  if (/grsaiapi\.com|grsai\.dakka\.com\.cn/i.test(s)) return 'http://127.0.0.1:38000';
-  s = s.replace(/\/+$/, '');
-  s = s.replace(/\/v1\/(images\/generations|tasks.*|uploads\/images).*$/i, '');
-  return s || 'https://api.apimart.ai';
+  return 'https://api.apimart.ai';
 }
 
 function normalizeShortcutAccelerator(value = '') {
@@ -749,22 +740,16 @@ function readConfig() {
     if (typeof migrated.lan_enabled === 'undefined' && typeof raw.lanEnabled !== 'undefined') migrated.lan_enabled = raw.lanEnabled;
     if (typeof migrated.device_data_isolation === 'undefined' && typeof raw.deviceDataIsolation !== 'undefined') migrated.device_data_isolation = raw.deviceDataIsolation;
     if (!migrated.port && raw.lanPort) migrated.port = raw.lanPort;
-    const migratedFromGrsai = ['legacy','grsai'].includes(String(migrated.image_api_platform || '').toLowerCase()) || /grsaiapi\.com|grsai\.dakka\.com\.cn/i.test(String(migrated.api_endpoint || ''));
-    if (migratedFromGrsai) {
-      migrated.image_api_platform = 'flow2api';
-      migrated.api_endpoint = 'http://127.0.0.1:38000';
-      migrated.legacy_api_endpoint = 'http://127.0.0.1:38000';
+    const removedPlatform = ['legacy','grsai','flow2api'].includes(String(migrated.image_api_platform || '').toLowerCase())
+      || /(?:127\.0\.0\.1|localhost):38000|grsaiapi\.com|grsai\.dakka\.com\.cn/i.test(String(migrated.api_endpoint || ''));
+    migrated.image_api_platform = 'apimart';
+    migrated.api_endpoint = 'https://api.apimart.ai';
+    delete migrated.legacy_api_endpoint;
+    if (removedPlatform) {
       migrated.api_key = '';
-      migrated.model = 'gemini-3.1-flash-image';
+      migrated.model = 'gemini-3.1-flash-image-preview';
     }
-    if (/grsaiapi\.com|grsai\.dakka\.com\.cn/i.test(String(migrated.api_endpoint || ''))) migrated.api_endpoint = 'http://127.0.0.1:38000';
-    if (!migrated.api_endpoint) migrated.api_endpoint = migrated.image_api_platform === 'flow2api' ? 'http://127.0.0.1:38000' : 'https://api.apimart.ai';
-    migrated.api_endpoint = normalizeImageApiEndpoint(migrated.api_endpoint);
-    if (!migrated.model || ['gpt-image-2-vip','nano-banana-pro','nano-banana-2','nano-banana-pro-vt','nano-banana-fast','nano-banana-2-cl','nano-banana-pro-cl','nano-banana'].includes(String(migrated.model || '').toLowerCase())) migrated.model = migrated.image_api_platform === 'flow2api' ? 'gemini-3.1-flash-image' : 'gemini-3.1-flash-image-preview';
-    if (migrated.image_api_platform === 'flow2api') {
-      migrated.model = String(migrated.model || '').toLowerCase().startsWith('gemini-3.0-pro-image') ? 'gemini-3.0-pro-image' : 'gemini-3.1-flash-image';
-      if (String(migrated.api_key || '').trim() === 'laig-flow2api-local-2026') migrated.api_key = '';
-    }
+    if (!migrated.model || ['gpt-image-2-vip','nano-banana-pro','nano-banana-2','nano-banana-pro-vt','nano-banana-fast','nano-banana-2-cl','nano-banana-pro-cl','nano-banana'].includes(String(migrated.model || '').toLowerCase())) migrated.model = 'gemini-3.1-flash-image-preview';
     // V14.7.3: AI聊天接口使用 APIMart 通用对话 /v1/chat/completions，保留用户选择的 GPT/Gemini 等语言模型。
     if (!migrated.chat_model) migrated.chat_model = 'gpt-5.5';
     // V14.5.0：用户电脑直连 api.apimart.ai:443 超时，已验证本机 HTTP 代理 10808 可通。
@@ -986,9 +971,8 @@ function urls(cfg) {
 function toCamelConfig(cfg) {
   return {
     appName: cfg.app_name,
-    imageApiPlatform: (['legacy','grsai','flow2api'].includes(String(cfg.image_api_platform||'').toLowerCase()) || /(?:127\.0\.0\.1|localhost):38000|grsaiapi\.com|grsai\.dakka\.com\.cn/i.test(cfg.api_endpoint||'') ? 'flow2api' : 'apimart'),
-    apiBaseUrl: cfg.api_endpoint,
-    legacyApiEndpoint: cfg.legacy_api_endpoint || 'http://127.0.0.1:38000',
+    imageApiPlatform: 'apimart',
+    apiBaseUrl: 'https://api.apimart.ai',
     apiKey: cfg.api_key,
     model: cfg.model,
     size: cfg.size,
@@ -1045,7 +1029,6 @@ function bodyLimitForRequest(req) {
     '/api/video_submit',
     '/api/video_batch_submit',
     '/api/mj_submit',
-    '/api/grsai_tool'
   ].includes(p)) return MEDIA_BODY_LIMIT_BYTES;
   return JSON_BODY_LIMIT_BYTES;
 }
@@ -6287,11 +6270,7 @@ function parseBoolValue(value, defaultValue = true) {
 }
 
 function batchImagePlatform(body = {}, cfg = {}) {
-  const platform = String(body.image_api_platform || cfg.image_api_platform || '').trim().toLowerCase();
-  const endpoint = String(body.api_endpoint || cfg.api_endpoint || '').trim();
-  return ['legacy','grsai','flow2api'].includes(platform) || /(?:127\.0\.0\.1|localhost):38000|grsaiapi\.com|grsai\.dakka\.com\.cn/i.test(endpoint)
-    ? 'flow2api'
-    : 'apimart';
+  return 'apimart';
 }
 function looksLikeApiUrl(value = '') {
   return /(?:^[a-z][a-z0-9+.-]*:\/\/|^www\.)/i.test(String(value || '').trim());
@@ -6342,7 +6321,7 @@ function mapPayloadToQueue(body, owner) {
     ...(body.reference_images || []).map(x => dataUrlToFile(x, owner)).filter(Boolean)
   ];
   const cfg = toCamelConfig(readConfig());
-  const imageApiPlatform = (['legacy','grsai','flow2api'].includes(String(body.image_api_platform || cfg.imageApiPlatform || '').toLowerCase()) || /(?:127\.0\.0\.1|localhost):38000|grsaiapi\.com|grsai\.dakka\.com\.cn/i.test(body.api_endpoint || cfg.apiBaseUrl || '') ? 'flow2api' : 'apimart');
+  const imageApiPlatform = 'apimart';
   const payload = {
     ownerId: owner,
     prompts: body.prompts || '',
@@ -6350,8 +6329,7 @@ function mapPayloadToQueue(body, owner) {
     mainImages,
     refImages,
     imageApiPlatform,
-    apiBaseUrl: normalizeImageApiEndpoint(['legacy','grsai','flow2api'].includes(String(body.image_api_platform || cfg.imageApiPlatform || '').toLowerCase()) ? (body.api_endpoint || body.legacy_api_endpoint || cfg.legacyApiEndpoint || 'http://127.0.0.1:38000') : (body.api_endpoint || cfg.apiBaseUrl)),
-    legacyApiEndpoint: body.legacy_api_endpoint || cfg.legacyApiEndpoint || 'http://127.0.0.1:38000',
+    apiBaseUrl: 'https://api.apimart.ai',
     apiKey: body.api_key || cfg.apiKey,
     apimartProxyUrl: body.apimart_proxy_url || cfg.apimartProxyUrl || '',
     model: resolveBatchImageModel(body.model, cfg.model, imageApiPlatform),
@@ -8651,8 +8629,8 @@ async function apiHandler(req, res, parsed) {
       // 不把 raw JSON 返回给前端，避免聊天气泡显示整段接口响应。调试请看实时日志。
       return send(res, {ok:true, response:{content: ret.content || '', endpoint: ret.endpoint, model: ret.model}, content: ret.content || '接口已返回，但没有解析到文本回复。请查看实时日志中的 APIMart Chat Completions 原始结构。'});
     }
-    if (method === 'POST' && p === '/api/video_submit') { const body=await readBody(req); if(String(body.video_platform||'').toLowerCase()==='flow2api'){const ret=await createFlow2VideoBatch({...body,prompts:body.prompt||body.prompts,copies:1},deviceOwner);return send(res,{ok:true,task:ret.rows[0]||null});} const row = await createApimartVideoTask(body, deviceOwner, req, cfg); return send(res,{ok:true, task:formatVideoTask(row)}); }
-    if (method === 'POST' && p === '/api/video_batch_submit') { const body=await readBody(req); return send(res, String(body.video_platform||'').toLowerCase()==='flow2api' ? await createFlow2VideoBatch(body, deviceOwner) : await createApimartVideoBatch(body, deviceOwner, req, cfg)); }
+    if (method === 'POST' && p === '/api/video_submit') { const body=await readBody(req); const row = await createApimartVideoTask({...body,video_platform:'apimart'}, deviceOwner, req, cfg); return send(res,{ok:true, task:formatVideoTask(row)}); }
+    if (method === 'POST' && p === '/api/video_batch_submit') { const body=await readBody(req); return send(res, await createApimartVideoBatch({...body,video_platform:'apimart'}, deviceOwner, req, cfg)); }
     if (method === 'POST' && p === '/api/video_resume_pending') {
       const body = await readBody(req);
       const key = String(body.api_key || (local ? cfg.api_key : '') || '').trim();
@@ -8733,10 +8711,6 @@ async function apiHandler(req, res, parsed) {
       return send(res, await queryMidjourneyTask({ task_id: parsed.query.task_id || '', api_key: local ? cfg.api_key || '' : '' }));
     }
     if (method === 'POST' && p === '/api/mj_task') { const body=await readBody(req); return send(res, await queryMidjourneyTask(body)); }
-    if (method === 'POST' && p === '/api/grsai_tool') {
-      const body=await readBody(req); const ret = await grsaiTool({baseUrl: body.api_endpoint || cfg.api_endpoint, apiKey: body.api_key || (local ? cfg.api_key : ''), action: body.action, model: body.model || cfg.model, extra: body.body || {}, queryApiKey: body.target_api_key || ''});
-      return send(res,{ok:true, action:body.action, response:ret});
-    }
     return send(res, {ok:false,error:'接口不存在'}, 404);
   } catch (e) {
     const requestedCode = Number(e && (e.statusCode || e.code));

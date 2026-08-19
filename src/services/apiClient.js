@@ -1161,14 +1161,7 @@ function queryApimartTaskBatchAware(base, apiKey, taskId, proxyUrl = '', timeout
 
 async function generateOne({ cfg, prompt, mainImagePath, refImages = [], outputPath, remoteTaskId = '', onSubmitted = null, onProgress = null }) {
   const proxyUrl = getProxyUrl(cfg.apimartProxyUrl || cfg.proxyUrl || cfg.apimart_proxy_url || '');
-  const rawBase = cleanBase(cfg.apiBaseUrl || 'https://api.apimart.ai');
-  const platform = String(cfg.imageApiPlatform || '').toLowerCase();
-  const migratedLegacyFlow = ['legacy','grsai'].includes(platform) || /grsaiapi\.com|grsai\.dakka\.com\.cn/i.test(rawBase);
-  const flow2apiMode = platform === 'flow2api' || migratedLegacyFlow || /(?:127\.0\.0\.1|localhost):38000/i.test(rawBase);
-  if (flow2apiMode) {
-    const flowCfg = migratedLegacyFlow ? { ...cfg, imageApiPlatform:'flow2api', apiBaseUrl:'http://127.0.0.1:38000', apiKey:'', model:'gemini-3.1-flash-image' } : cfg;
-    return generateFlow2ApiImage({ cfg:flowCfg, prompt, mainImagePath, refImages, outputPath, onProgress });
-  }
+  const rawBase = cleanBase('https://api.apimart.ai');
   const apimartMode = isApimartBase(rawBase);
   const base = apimartMode ? normalizeApimartBase(rawBase) : rawBase;
   const allImagePaths = [mainImagePath, ...(refImages || [])].filter(Boolean);
@@ -1910,25 +1903,4 @@ async function chatCompletion({ baseUrl, apiKey, model, messages = [], stream = 
   return { raw: data, content, endpoint: '/v1/chat/completions', model: payload.model, stream: false };
 }
 
-async function grsaiTool({ baseUrl, apiKey, action, model, extra = {}, queryApiKey = '' }) {
-  const base = cleanBase(baseUrl);
-  if (action === 'model_status') {
-    return getJson(`${base}/client/common/getModelStatus?model=${encodeURIComponent(model || '')}`, apiKey);
-  }
-  const map = {
-    account_credits: '/client/openapi/getCredits',
-    api_key_credits: '/client/openapi/getAPIKeyCredits',
-    create_api_key: '/client/openapi/createAPIKey',
-    update_api_key: '/client/openapi/updateAPIKeyInfo',
-    delete_api_key: '/client/openapi/deleteAPIKey'
-  };
-  const path = map[action];
-  if (!path) throw new Error('unknown action');
-  let payload = { ...extra };
-  if (action === 'api_key_credits') {
-    payload = { apiKey: queryApiKey || apiKey, api_key: queryApiKey || apiKey, key: queryApiKey || apiKey };
-  }
-  return postJson(base + path, apiKey, payload);
-}
-
-module.exports = { generateOne, grsaiTool, chatCompletion, APIMART_RESPONSE_CHAT_MODELS, getApimartChatModels, refreshApimartChatModels, sizeToAspect, resolveModelSize, GPT_IMAGE_2_VIP_SIZES, GPT_IMAGE_2_SIZES, APIMART_IMAGE_MODELS, APIMART_MODEL_RULES, getApimartImageRule, sanitizeApimartImagePayload };
+module.exports = { generateOne, chatCompletion, APIMART_RESPONSE_CHAT_MODELS, getApimartChatModels, refreshApimartChatModels, sizeToAspect, resolveModelSize, GPT_IMAGE_2_VIP_SIZES, GPT_IMAGE_2_SIZES, APIMART_IMAGE_MODELS, APIMART_MODEL_RULES, getApimartImageRule, sanitizeApimartImagePayload };

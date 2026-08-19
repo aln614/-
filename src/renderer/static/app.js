@@ -966,8 +966,7 @@ function toast(msg){ const t=$('#toast'); if(!t) return; t.textContent=msg; t.cl
 window.__copyImageToast = toast;
 
 function normalizeImagePlatformValue(platform='apimart'){
-  const p = String(platform || '').toLowerCase();
-  return (p === 'legacy' || p === 'grsai' || p === 'flow2api') ? 'flow2api' : 'apimart';
+  return 'apimart';
 }
 const IMAGE_PLATFORM_CONFIG_PREFIX = CLIENT_CONFIG_KEY + '_image_platform_';
 const IMAGE_PLATFORM_ACTIVE_KEY = CLIENT_CONFIG_KEY + '_active_image_platform';
@@ -1008,16 +1007,6 @@ const APIMART_MODEL_OPTIONS = [
   ['wan2.7-image','wan2.7-image'],
   ['wan2.7-image-pro','wan2.7-image-pro']
 ];
-const FLOW2API_MODEL_OPTIONS = [
-  ['gemini-3.0-pro-image','Nano Banana Pro（gemini-3.0-pro-image）'],
-  ['gemini-3.1-flash-image','Nano Banana 2（gemini-3.1-flash-image）']
-];
-function normalizeFlow2ApiBaseModel(model=''){
-  const value = String(model || '').trim().toLowerCase();
-  if(value.startsWith('gemini-3.0-pro-image')) return 'gemini-3.0-pro-image';
-  if(value.startsWith('gemini-3.1-flash-image')) return 'gemini-3.1-flash-image';
-  return 'gemini-3.1-flash-image';
-}
 function platformConfigKey(platform='apimart'){ return IMAGE_PLATFORM_CONFIG_PREFIX + normalizeImagePlatformValue(platform); }
 function loadLegacyClientConfig(){
   try{ return removeInvalidStoredApiKey(JSON.parse(localStorage.getItem(CLIENT_CONFIG_KEY) || '{}'), CLIENT_CONFIG_KEY); }catch(e){ return {}; }
@@ -1086,28 +1075,19 @@ function saveClientConfig(cfg){
   localStorage.setItem(CLIENT_CONFIG_KEY, JSON.stringify({ image_api_platform:p }));
 }
 function platformDefaultApiEndpoint(platform='apimart'){
-  return normalizeImagePlatformValue(platform) === 'flow2api' ? 'http://127.0.0.1:38000' : 'https://api.apimart.ai';
+  return 'https://api.apimart.ai';
 }
 function isFlow2ApiEndpoint(v=''){ return /(?:127\.0\.0\.1|localhost):38000/i.test(String(v || '')); }
 function isGrsAIEndpoint(v=''){ return /grsaiapi\.com|grsai\.dakka\.com\.cn/i.test(String(v || '')); }
 function isApimartEndpoint(v=''){ return /api\.apimart\.ai|apimart\.ai/i.test(String(v || '')); }
 function sanitizePlatformEndpoint(cfg = {}, platform='apimart'){
-  const p = normalizeImagePlatformValue(platform || cfg.image_api_platform);
-  const out = { ...(cfg || {}), image_api_platform:p };
-  const current = String(out.api_endpoint || '').trim();
-  // 平台切换时 API 地址必须跟随当前平台，但允许每个平台保存自己的自定义地址。
-  // 只在发现明显串台时强制恢复当前平台默认地址。
-  if(!current) out.api_endpoint = platformDefaultApiEndpoint(p);
-  else if(p === 'flow2api' && (isApimartEndpoint(current) || isGrsAIEndpoint(current))) out.api_endpoint = platformDefaultApiEndpoint('flow2api');
-  else if(p === 'apimart' && (isGrsAIEndpoint(current) || isFlow2ApiEndpoint(current))) out.api_endpoint = platformDefaultApiEndpoint('apimart');
-  if(p === 'flow2api') out.legacy_api_endpoint = out.api_endpoint || platformDefaultApiEndpoint('flow2api');
+  const p = 'apimart';
+  const out = { ...(cfg || {}), image_api_platform:p, api_endpoint:'https://api.apimart.ai' };
+  delete out.legacy_api_endpoint;
   return out;
 }
 function defaultPlatformConfig(platform='apimart'){
-  const p = normalizeImagePlatformValue(platform);
-  return p === 'flow2api'
-    ? { image_api_platform:'flow2api', api_endpoint:platformDefaultApiEndpoint('flow2api'), legacy_api_endpoint:platformDefaultApiEndpoint('flow2api'), api_key:'', model:'gemini-3.1-flash-image', size:'16:9', clarity:'1K', image_n:1, quality:'auto', background:'auto', moderation:'auto', output_format:'png', output_compression:90 }
-    : { image_api_platform:'apimart', api_endpoint:platformDefaultApiEndpoint('apimart'), api_key:'', model:'gemini-3.1-flash-image-preview', size:'auto', clarity:'1K', image_n:1, quality:'auto', background:'auto', moderation:'auto', output_format:'png', output_compression:90 };
+  return { image_api_platform:'apimart', api_endpoint:'https://api.apimart.ai', api_key:'', model:'gemini-3.1-flash-image-preview', size:'auto', clarity:'1K', image_n:1, quality:'auto', background:'auto', moderation:'auto', output_format:'png', output_compression:90 };
 }
 let apimartSizeOptionsHtml = '';
 let apimartClarityOptionsHtml = '';
@@ -1132,9 +1112,9 @@ function rebuildModelPresetOptions(platform='apimart'){
   const p = normalizeImagePlatformValue(platform);
   const select = $('#modelPreset');
   if(!select) return;
-  const list = p === 'flow2api' ? FLOW2API_MODEL_OPTIONS : APIMART_MODEL_OPTIONS;
-  const label = p === 'flow2api' ? '本地 Flow2API 图像模型' : 'APIMart 图像系列';
-  const customOption = p === 'flow2api' ? '' : '<option value="custom">自定义 APIMart 模型...</option>';
+  const list = APIMART_MODEL_OPTIONS;
+  const label = 'APIMart 图像系列';
+  const customOption = '<option value="custom">自定义 APIMart 模型...</option>';
   select.innerHTML = `<optgroup label="${label}">${list.map(([v,t])=>`<option value="${v}">${t}</option>`).join('')}${customOption}</optgroup>`;
 }
 function readCurrentImageFormConfig(){
@@ -1142,9 +1122,8 @@ function readCurrentImageFormConfig(){
   return {
     image_api_platform:p,
     api_endpoint: $('#apiEndpoint')?.value?.trim() || platformDefaultApiEndpoint(p),
-    legacy_api_endpoint: p === 'flow2api' ? ($('#apiEndpoint')?.value?.trim() || platformDefaultApiEndpoint('flow2api')) : (loadClientConfig('flow2api').api_endpoint || platformDefaultApiEndpoint('flow2api')),
     api_key: $('#apiKey')?.value?.trim() || '',
-    model: p === 'flow2api' ? normalizeFlow2ApiBaseModel($('#model')?.value) : ($('#model')?.value?.trim() || 'gemini-3.1-flash-image-preview'),
+    model: $('#model')?.value?.trim() || 'gemini-3.1-flash-image-preview',
     size: getSizeValue ? getSizeValue() : ($('#size')?.value || 'auto'),
     clarity: $('#clarity')?.value || $('#claritySettings')?.value || '1K',
     quality: $('#imageQuality')?.value || 'auto',
@@ -1159,15 +1138,11 @@ function applyImagePlatformFields(cfg = {}, platform='apimart'){
   const p = normalizeImagePlatformValue(platform || cfg.image_api_platform);
   const merged = sanitizePlatformEndpoint({ ...defaultPlatformConfig(p), ...cfg, image_api_platform:p }, p);
   if(merged.api_key && looksLikeApiUrl(merged.api_key)) merged.api_key = '';
-  if(p === 'flow2api'){
-    merged.model = normalizeFlow2ApiBaseModel(merged.model);
-    if(merged.api_key === 'laig-flow2api-local-2026') merged.api_key = '';
-  }
   if($('#apiEndpoint')) $('#apiEndpoint').value = merged.api_endpoint || platformDefaultApiEndpoint(p);
   if($('#apiKey')) $('#apiKey').value = merged.api_key || '';
   rebuildModelPresetOptions(p);
   rebuildImageParameterOptions(p);
-  applyModelToUI(merged.model || (p === 'flow2api' ? 'gemini-3.1-flash-image' : 'gemini-3.1-flash-image-preview'));
+  applyModelToUI(merged.model || 'gemini-3.1-flash-image-preview');
   applySizeToUI(merged.size || 'auto');
   if($('#clarity')) $('#clarity').value = merged.clarity || '1K';
   if($('#claritySettings')) $('#claritySettings').value = merged.clarity || '1K';
@@ -1197,15 +1172,9 @@ function setImageApiPlatform(platform='apimart', silent=false, skipSaveCurrent=f
     merged = sanitizePlatformEndpoint({ ...merged, ...legacy, image_api_platform:p }, p);
   }
   applyImagePlatformFields(merged, p);
-  if(p === 'flow2api'){
-    if($('#model')) $('#model').placeholder = 'Flow2API 模型由上方列表选择';
-    if($('#apiKey')) $('#apiKey').placeholder = '请输入本地 Flow2API API Key';
-    if(!silent) toast('已切换到本地 Flow2API');
-  }else{
-    if($('#model')) $('#model').placeholder = '自定义 APIMart 图像模型 ID';
-    if($('#apiKey')) $('#apiKey').placeholder = '请输入 APIMart API Key / Bearer Token';
-    if(!silent) toast('已切换到 APIMart，只显示 APIMart 模型和配置');
-  }
+  if($('#model')) $('#model').placeholder = '自定义 APIMart 图像模型 ID';
+  if($('#apiKey')) $('#apiKey').placeholder = '请输入 APIMart API Key / Bearer Token';
+  if(!silent) toast('当前仅使用 APIMart 平台');
   updateOfficialImageOptions();
   updateSizeHint();
 }
@@ -1216,7 +1185,7 @@ function bindImageApiPlatformSwitch(){
 function updateAppTitle(name){
   const appName = (name || 'TENYING_AI 1.0').trim() || 'TENYING_AI 1.0';
   if($('#appBrand')) $('#appBrand').textContent = appName;
-  if($('#appSubtitle')) $('#appSubtitle').textContent = 'APIMart / GrsAI 双平台 · 并发生成 · 多批次 · 视频编辑';
+  if($('#appSubtitle')) $('#appSubtitle').textContent = 'APIMart 平台 · 并发生成 · 多批次 · 视频编辑';
   document.title = appName;
 }
 
@@ -1666,34 +1635,6 @@ function readToolJson(){
   try{ return JSON.parse(raw); }
   catch(e){ throw new Error('请求体 JSON 格式错误：' + e.message); }
 }
-
-async function runGrsaiTool(action, extra = {}){
-  const btn = document.activeElement;
-  const oldText = btn && btn.tagName === 'BUTTON' ? btn.textContent : '';
-  try{
-    if(btn && btn.tagName === 'BUTTON'){ btn.disabled = true; btn.textContent = '请求中...'; }
-    const bodyJson = readToolJson();
-    const payload = {
-      action,
-      api_endpoint: $('#toolEndpoint')?.value || $('#apiEndpoint')?.value || 'https://api.apimart.ai',
-      api_key: $('#toolApiKey')?.value || $('#apiKey')?.value || '',
-      target_api_key: $('#toolTargetApiKey')?.value || $('#toolApiKey')?.value || $('#apiKey')?.value || '',
-      model: $('#toolModel')?.value || $('#model')?.value || 'gemini-3.1-flash-image-preview',
-      timeout_seconds: Number($('#timeoutSeconds')?.value || 1200),
-      apimart_proxy_url: $('#apimartProxyUrl')?.value?.trim() || '',
-      body: {...bodyJson, ...extra}
-    };
-    const ret = await api('/api/grsai_tool',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-    $('#toolResult').textContent = JSON.stringify(ret, null, 2);
-    toast('接口请求完成');
-  }catch(e){
-    if($('#toolResult')) $('#toolResult').textContent = String(e.message || e);
-    alert(e.message || '接口请求失败');
-  }finally{
-    if(btn && btn.tagName === 'BUTTON'){ btn.disabled = false; btn.textContent = oldText; }
-  }
-}
-
 
 function renderChatModelPresetOptions(filterKeyword = ''){
   const sel = $('#chatModelPreset');
@@ -4611,11 +4552,10 @@ function collectPublicConfig(){
 
 function collectConfig(){
   const imagePlatform = currentImagePlatform();
-  const endpointValue = $('#apiEndpoint')?.value?.trim() || (imagePlatform === 'grsai' ? 'https://grsaiapi.com' : 'https://api.apimart.ai');
+  const endpointValue = 'https://api.apimart.ai';
   const announcementItems = normalizeAnnouncementItems(getAnnouncementEditorItemsFromDom());
   return {
     image_api_platform: imagePlatform,
-    legacy_api_endpoint: imagePlatform === 'grsai' ? endpointValue : (loadClientConfig().legacy_api_endpoint || 'https://grsaiapi.com'),
     api_endpoint: endpointValue,
     api_key: $('#apiKey')?.value?.trim() || '',
     model: $('#model').value.trim() || 'gemini-3.1-flash-image-preview',
@@ -4819,10 +4759,6 @@ $('#openPublicUrlBtn')?.addEventListener('click', ()=>{
   if(u) window.open(u, '_blank');
 });
 $('#fillToolConfigBtn')?.addEventListener('click', ()=>{ syncToolConfigFromHome(); toast('已同步首页 API 配置'); });
-$('#checkModelStatusBtn')?.addEventListener('click', ()=>runGrsaiTool('model_status'));
-$('#checkAccountCreditsBtn')?.addEventListener('click', ()=>runGrsaiTool('account_credits'));
-$('#checkApiKeyCreditsBtn')?.addEventListener('click', ()=>runGrsaiTool('api_key_credits'));
-$$('.tool-action').forEach(btn=>btn.addEventListener('click', ()=>runGrsaiTool(btn.dataset.action)));
 $('#chatModelPreset')?.addEventListener('change', ()=>{ updateChatModelFromPreset(); saveChatConfig(); });
 $('#chatModelSearch')?.addEventListener('input', handleChatModelSearchInput);
 $$('#chatStream,#chatMaxTokens,#chatTemperature,#chatTopP,#chatTopK,#chatPresencePenalty,#chatFrequencyPenalty,#chatModel,#chatSystemPrompt').forEach(el=>el?.addEventListener('change', saveChatConfig));
@@ -6962,7 +6898,7 @@ function getHomeApiKey(){ return ($('#apiKey')?.value || '').trim(); }
 const VIDEO_PLATFORM_KEY = CLIENT_CONFIG_KEY + '_active_video_platform';
 const VIDEO_OWNER_SCOPE_KEY = CLIENT_CONFIG_KEY + '_video_owner_scope_all';
 let videoAllOwnersMode = localStorage.getItem(VIDEO_OWNER_SCOPE_KEY) === '1';
-function currentVideoPlatform(){ return ($('#videoApiPlatformSwitch .platform-btn.active')?.dataset?.platform || localStorage.getItem(VIDEO_PLATFORM_KEY) || 'apimart') === 'flow2api' ? 'flow2api' : 'apimart'; }
+function currentVideoPlatform(){ return 'apimart'; }
 function isVideoAllOwnersScope(){
   return isLocalClient && videoAllOwnersMode && $('#page-video-manage')?.classList.contains('active');
 }

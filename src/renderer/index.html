@@ -98,7 +98,7 @@
 
         <div class="grid two">
           <div class="card">
-            <div class="card-title-row"><h2>API 与参数</h2><div class="platform-switch" id="imageApiPlatformSwitch"><button type="button" class="platform-btn active" data-platform="apimart">APIMart</button><button type="button" class="platform-btn" data-platform="flow2api">本地 Flow2API</button></div></div>
+            <div class="card-title-row"><h2>APIMart API 与参数</h2></div>
             <label>API Key</label>
             <input id="apiKey" type="password" placeholder="请输入当前平台 API Key / Bearer Token" />
             <div class="api-key-warning" id="apiKeyWarning">API Key 未填写，请先填写后再开始生成。</div>
@@ -141,10 +141,6 @@
                   <option value="wan2.7-image">wan2.7-image</option>
                   <option value="wan2.7-image-pro">wan2.7-image-pro</option>
                   <option value="custom">自定义 APIMart 模型...</option>
-                </optgroup>
-                <optgroup label="本地 Flow2API 图像模型">
-                  <option value="gemini-3.0-pro-image">Nano Banana Pro（gemini-3.0-pro-image）</option>
-                  <option value="gemini-3.1-flash-image">Nano Banana 2（gemini-3.1-flash-image）</option>
                 </optgroup>
               </select><input id="model" value="gemini-3.1-flash-image-preview" placeholder="自定义 APIMart 图像模型 ID" /></div>
               <div><label>尺寸 / 比例</label><select id="size">
@@ -348,12 +344,12 @@
 
       <section class="page" id="page-video">
         <div class="section-head">
-          <div><h1>视频编辑</h1><p>APIMart Omni Flash 支持直接上传视频编辑；本地 Flow2API 提供 Veo 3.1 文生视频、首帧、首尾帧与多素材生成。</p></div>
+          <div><h1>视频编辑</h1><p>使用 APIMart 视频模型进行文生视频、图生视频、多模态参考与视频编辑。</p></div>
           <button class="primary" id="startVideoBtn">开始生成视频</button>
         </div>
         <div class="grid two">
           <div class="card">
-            <div class="card-title-row"><h2 id="videoParameterTitle">APIMart 视频参数</h2><div class="platform-switch" id="videoApiPlatformSwitch"><button type="button" class="platform-btn active" data-platform="apimart">APIMart</button><button type="button" class="platform-btn" data-platform="flow2api">本地 Flow2API</button></div></div>
+            <div class="card-title-row"><h2 id="videoParameterTitle">APIMart 视频参数</h2></div>
             <label id="videoApiKeyLabel">APIMart API Key</label>
             <input id="videoApiKey" type="password" placeholder="默认使用首页 APIMart API Key" />
             <div class="video-platform-state" id="videoPlatformState">Omni Flash · 支持直接上传视频编辑</div>
@@ -600,7 +596,7 @@
       <section class="page" id="page-settings">
         <div class="section-head"><div><h1>设置中心</h1><p>默认输出目录、缓存、轮询间隔、主题偏好。自动主题按 24 小时制切换。</p></div></div>
         <div class="card">
-          <div class="row"><div><label>API 地址</label><select id="apiEndpoint"><option value="https://api.apimart.ai">https://api.apimart.ai（APIMart）</option><option value="http://127.0.0.1:38000">http://127.0.0.1:38000（本地 Flow2API）</option></select></div><div><label>软件名称</label><input id="appName" placeholder="例如：TENYING_AI 1.0" /></div></div>
+          <div class="row"><div><label>API 地址</label><select id="apiEndpoint"><option value="https://api.apimart.ai">https://api.apimart.ai（APIMart）</option></select></div><div><label>软件名称</label><input id="appName" placeholder="例如：TENYING_AI 1.0" /></div></div>
           <div class="row"><div><label>显示模式</label><select id="themeMode"><option value="light">日间模式</option><option value="dark">深色模式</option><option value="auto">自动（按时间）</option></select></div><div><label>界面皮肤</label><select id="skinIdSettings"><option value="starlight">星穹 AI 助手</option><option value="cloud">云海终端</option><option value="sakura">樱雪画室</option><option value="academy">银河学院</option><option value="hangar">极光机库</option><option value="classic">经典毛玻璃</option></select></div></div>
           <div class="row"><div><label>动漫助手</label><label class="switch-line"><input id="mascotEnabledSettings" type="checkbox" checked /> 显示皮肤角色与任务状态助手</label></div><div class="setting-note-box">API 地址已移动到本机设置中心，首页只保留 API Key 和生成参数。</div></div>
           <div class="row"><div><label>输出目录</label><input id="outputDir" /></div><div><label>默认清晰度</label><select id="claritySettings"><option value="0.5K">0.5K 预览</option><option value="1K">1K 标准清晰</option><option value="1.5K">1.5K</option><option value="2K">2K 高清</option><option value="3K">3K</option><option value="4K">4K 超清</option></select></div></div>
