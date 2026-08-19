@@ -2521,6 +2521,20 @@ async function probePublicVideoUrl(urlValue) {
   } finally { clearTimeout(timer); }
 }
 
+async function probePublicVideoUrlWithRetry(urlValue, attempts = 6) {
+  let lastError = null;
+  const total = Math.max(1, Number(attempts || 1));
+  for (let attempt = 1; attempt <= total; attempt++) {
+    try { await probePublicVideoUrl(urlValue); return true; }
+    catch (error) {
+      lastError = error;
+      if (attempt >= total) break;
+      await new Promise(resolve => setTimeout(resolve, Math.min(5000, Math.round(900 * (1.55 ** (attempt - 1))))));
+    }
+  }
+  throw lastError || new Error('公网视频直链自检失败');
+}
+
 
 const AUTO_APIMART_PROXY_CANDIDATES = [
   'http://127.0.0.1:10808',
@@ -3035,7 +3049,14 @@ function normalizeApimartVideoError(err, hasVideoUrl) {
   if (hasVideoUrl && /probe reference video duration|video_url|publicly accessible|duration/i.test(msg)) {
     return '参考视频无法被 APIMart 服务器读取：请使用公网 HTTPS 视频直链，最后路径建议以 .mp4/.mov 结尾，且 ≤100MB。若用本地上传，请先开启 Cloudflare Tunnel 公网访问；不要使用局域网/本机地址、需要密码的页面或网盘预览页。原始错误：' + msg;
   }
+  if (hasVideoUrl && /fetch failed|HTTP 5\d\d|socket|ECONN|network|公网视频.*(?:失败|超时)/i.test(msg)) {
+    return '参考视频公网通道暂时不可用，程序将重建通道并自动重试。原始错误：' + msg;
+  }
   return msg;
+}
+
+function isTransientApimartVideoTransportError(error) {
+  return /fetch failed|HTTP 5\d\d|socket|ECONN|ETIMEDOUT|EAI_AGAIN|network|请求超时|公网视频.*(?:失败|超时|不可用)|所有请求方式都没有拿到标准响应/i.test(String(error?.message || error || ''));
 }
 
 async function getJsonApimart(endpoint, apiKey, timeoutMs=120000) {
@@ -4162,19 +4183,20 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
     }
     if (videoUrls.length) {
       videoUrl = videoUrls[0] || '';
-      for (const additionalVideoUrl of videoUrls.slice(1)) await probePublicVideoUrl(additionalVideoUrl);
       try {
-        await probePublicVideoUrl(videoUrl);
+        for (const candidateUrl of videoUrls) await probePublicVideoUrlWithRetry(candidateUrl, 2);
       } catch (probeError) {
-        const canRenewTunnel = !!localVideoPath
+        const canRenewTunnel = localVideoPaths.length > 0
           && (cfg.public_provider || 'cloudflare') !== 'manual'
           && /HTTP 5\d\d|超时|fetch failed|socket|ECONN|network/i.test(String(probeError?.message || probeError || ''));
         if (!canRenewTunnel) throw probeError;
         addLog(`公网视频通道失效，正在自动重建：${probeError.message || probeError}`, { ownerId, level:'warn' });
         await restartPublicTunnelForVideoReference(readConfig());
-        videoUrl = await buildPublicVideoUrlAuto(localVideoPath, readConfig(), ownerId, req);
-        videoUrls[0] = videoUrl;
-        await probePublicVideoUrl(videoUrl);
+        const rebuiltUrls = [];
+        for (const sourcePath of localVideoPaths) rebuiltUrls.push(await buildPublicVideoUrlAuto(sourcePath, readConfig(), ownerId, req));
+        videoUrls = rebuiltUrls;
+        videoUrl = videoUrls[0] || '';
+        for (const candidateUrl of videoUrls) await probePublicVideoUrlWithRetry(candidateUrl, 8);
       }
       if (rule.videoParam === 'video_url') payload.video_url = videoUrl;
       else if (rule.videoParam === 'video_list') {
@@ -4276,6 +4298,7 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
       throw new Error(`APIMart 未返回 task_id。实际响应：${responseText}。程序已在 V14.4.4 中按标准 fetch 优先并加入 curl/PowerShell/Node 兜底；如果这里仍没有 task_id，请打开日志查看“APIMart 标准请求 / fetch HTTP 原始响应 / curl / PowerShell 响应”，并检查 API Key、余额、模型权限、接口网关是否返回空 JSON。`);
     }
     row.task_id = taskId;
+    row.transport_retry_count = 0;
     row.status = '已提交';
     row.progress = 5;
     row.progress_text = '已提交，等待批量查询结果';
@@ -4291,6 +4314,30 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
     row.updated_at = nowISO();
     const retryLimit = Math.max(0, Number(row.retry_times || body.retry_times || 0));
     const retryCount = Math.max(0, Number(row.retry_count || 0));
+    const transportError = isTransientApimartVideoTransportError(e);
+    const transportRetryCount = Math.max(0, Number(row.transport_retry_count || 0));
+    if (transportError && transportRetryCount < 3) {
+      const nextTransportRetry = transportRetryCount + 1;
+      row.transport_retry_count = nextTransportRetry;
+      row.status = '重试中';
+      row.progress = Math.max(1, Number(row.progress || 0));
+      row.progress_text = `网络通道恢复重试 ${nextTransportRetry}/3`;
+      row.error_message = normalizeApimartVideoError(e, !!(row.local_video_path || row.video_url));
+      row.finished_at = '';
+      row.updated_at = nowISO();
+      getDB()._save();
+      addLog(`APIMart 视频网络通道异常，不消耗失败重试次数，恢复重试 ${nextTransportRetry}/3：${row.id}`, { ownerId, level:'warn' });
+      await new Promise(resolve => setTimeout(resolve, Math.min(8000, 1500 * nextTransportRetry)));
+      return createApimartVideoTask({ ...body, retry_times:retryLimit }, ownerId, req, cfg, row);
+    }
+    if (transportError) {
+      row.progress_text = '网络通道恢复失败';
+      row.error_message = normalizeApimartVideoError(e, !!(row.local_video_path || row.video_url));
+      closePublicVideoByPath(row.local_video_path);
+      getDB()._save();
+      addLog(`视频网络通道恢复失败：${row.error_message}`, { ownerId, level:'error' });
+      return row;
+    }
     if (!isPermanentApimartVideoError(e) && retryCount < retryLimit) {
       const nextRetry = retryCount + 1;
       row.retry_count = nextRetry;

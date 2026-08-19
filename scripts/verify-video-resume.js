@@ -17,6 +17,11 @@ assert(main.includes('function resumeApimartVideoTasks(apiKey, owner = \'\')'), 
 assert(main.includes("p === '/api/video_resume_pending'"), 'Missing video resume API');
 assert(main.includes('consecutiveQueryErrors >= 6'), 'Missing bounded remote query retry');
 assert(main.includes("task.status = '生成中'"), 'Video polling must expose a generation state');
+assert(main.includes('async function probePublicVideoUrlWithRetry'), 'Missing Cloudflare video URL readiness retry');
+assert(main.includes('probePublicVideoUrlWithRetry(candidateUrl, 8)'), 'Rebuilt Cloudflare tunnel must wait until the edge URL is ready');
+assert(main.includes('for (const sourcePath of localVideoPaths) rebuiltUrls.push'), 'Multi-video tunnel recovery must rebuild every source URL');
+assert(main.includes('function isTransientApimartVideoTransportError'), 'Missing APIMart video transport error classification');
+assert(main.includes('不消耗失败重试次数'), 'Network recovery must not consume model failure retries');
 assert(app.includes('async function resumePendingVideoTasks(rows = [])'), 'Renderer does not request video task recovery');
 assert(app.includes("api('/api/video_resume_pending'"), 'Renderer video resume API call is missing');
 assert(app.includes('VIDEO_RESUME_ACTIVE_STATUSES'), 'Renderer active video statuses are missing');
@@ -26,4 +31,4 @@ assert(css.includes('body[data-skin] #page-video>.grid>.card'), 'Video workspace
 assert(css.includes('.video-realtime-panel .video-library>.video-card'), 'Recent video cards need an explicit non-shrinking layout');
 assert(css.includes('flex:0 0 auto'), 'Recent video cards must not collapse inside the scrolling library');
 
-console.log('[verify-video-resume] OK: interrupted APIMart video polling resumes once and video UI inherits the active skin.');
+console.log('[verify-video-resume] OK: interrupted polling, Cloudflare readiness recovery, and video UI skin behavior are wired.');
