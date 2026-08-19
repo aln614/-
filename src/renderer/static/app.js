@@ -39,6 +39,8 @@ let lastBatchesLoadAt = 0;
 let lastUserInputAt = 0;
 let refreshLoopTimer = null;
 let refreshDeferredTimer = null;
+let refreshLoopFailureCount = 0;
+let lastImmediateRefreshAt = 0;
 let previewX = 0;
 let previewY = 0;
 let previewFitScale = 1;
@@ -230,6 +232,8 @@ function getClientId(){
 
 async function api(path, opts = {}) {
   opts = {...opts};
+  const method = String(opts.method || 'GET').toUpperCase();
+  if(method === 'GET' && typeof opts.cache === 'undefined') opts.cache = 'no-store';
   const cid = getClientId();
   opts.headers = {...(opts.headers || {}), 'X-Client-Id': cid, 'X-LAIG-Client-ID': cid, 'X-Public-Access': getPublicAccess()};
   const res = await fetch(path, opts);
@@ -4879,7 +4883,7 @@ async function refreshAll(options = {}){
   const busyWithUser = Date.now() - lastUserInputAt < 900;
   if(!options.immediate && busyWithUser && !$('#page-api')?.classList.contains('active') && !$('#page-logs')?.classList.contains('active')){
     clearTimeout(refreshDeferredTimer);
-    refreshDeferredTimer = setTimeout(()=>refreshAll({...options, immediate:true}), 1100);
+    refreshDeferredTimer = setTimeout(()=>refreshAll({...options, immediate:true}).catch(error=>console.warn('[status-refresh] deferred refresh failed', error)), 1100);
     return;
   }
   refreshAllInFlight = true;
@@ -4891,10 +4895,18 @@ async function refreshAll(options = {}){
     const historyActive = $('#page-history')?.classList.contains('active');
     const batchesPanelActive = $('#batchList')?.closest('.page')?.classList.contains('active');
     const needBatches = !isInlineNoteEditing && (options.forceBatches === true || historyActive || batchesPanelActive || (!batches.length && Date.now() - lastBatchesLoadAt > 30000));
-    const jobs = [loadStatus()];
-    if(needBatches) jobs.push(loadBatches({history:historyActive}));
-    if(needLogs){ lastLogsLoadAt = Date.now(); jobs.push(loadLogs()); }
-    await Promise.all(jobs);
+    // Core task status is refreshed first. A slow logs/history endpoint must not
+    // prevent completed tasks from leaving the realtime panel.
+    await loadStatus();
+    const secondaryJobs = [];
+    if(needBatches) secondaryJobs.push(loadBatches({history:historyActive}));
+    if(needLogs){ lastLogsLoadAt = Date.now(); secondaryJobs.push(loadLogs()); }
+    if(secondaryJobs.length){
+      const results = await Promise.allSettled(secondaryJobs);
+      for(const result of results){
+        if(result.status === 'rejected') console.warn('[status-refresh] secondary refresh failed', result.reason);
+      }
+    }
     const imagesActive = $('#page-images')?.classList.contains('active');
     if(imagesActive && !document.body.classList.contains('mobile-ui') && !imageRowsCache.length) await loadImages();
     if($('#page-history')?.classList.contains('active')) renderHistory();
@@ -4905,7 +4917,7 @@ async function refreshAll(options = {}){
       const queuedOptions = refreshAllQueuedOptions || {};
       refreshAllQueued = false;
       refreshAllQueuedOptions = null;
-      setTimeout(()=>refreshAll(queuedOptions), queuedOptions.immediate ? 100 : 600);
+      setTimeout(()=>refreshAll(queuedOptions).catch(error=>console.warn('[status-refresh] queued refresh failed', error)), queuedOptions.immediate ? 100 : 600);
     }
   }
 }
@@ -4917,7 +4929,7 @@ function setRightPanelStatLabels(video=false){
   if(stats[0]) stats[0].textContent = video ? '今日视频任务' : '今日总任务';
   if(stats[1]) stats[1].textContent = '今日已完成';
   if(stats[2]) stats[2].textContent = '今日失败';
-  if(stats[3]) stats[3].textContent = '今日生成中';
+  if(stats[3]) stats[3].textContent = '今日处理中';
 }
 function updateRightPanelStats(data, video=false){
   setRightPanelStatLabels(video);
@@ -10951,10 +10963,35 @@ startup();
 function scheduleRefreshLoop(delay = 6500){
   clearTimeout(refreshLoopTimer);
   refreshLoopTimer = setTimeout(async()=>{
-    if(!isInlineNoteEditing && !$('#publicLoginOverlay')?.classList.contains('active')) await refreshAll();
-    const activeWork = document.querySelector('.mini-task-card,.status.run,.video-pending:not(.failed)');
-    scheduleRefreshLoop(activeWork ? 2500 : 10000);
+    let refreshFailed = false;
+    try{
+      if(!isInlineNoteEditing && !$('#publicLoginOverlay')?.classList.contains('active')) await refreshAll();
+      refreshLoopFailureCount = 0;
+    }catch(error){
+      refreshFailed = true;
+      refreshLoopFailureCount = Math.min(6, refreshLoopFailureCount + 1);
+      console.warn('[status-refresh] polling failed and will retry', error);
+    }finally{
+      const activeWork = document.querySelector('.mini-task-card,.status.run,.video-pending:not(.failed)');
+      const normalDelay = activeWork ? 2500 : 10000;
+      const retryDelay = Math.min(15000, 1200 * (2 ** Math.max(0, refreshLoopFailureCount - 1)));
+      scheduleRefreshLoop(refreshFailed ? retryDelay : normalDelay);
+    }
   }, delay);
 }
+
+function requestImmediateStatusRefresh(reason = ''){
+  if(document.hidden || $('#publicLoginOverlay')?.classList.contains('active')) return;
+  const now = Date.now();
+  if(now - lastImmediateRefreshAt < 500) return;
+  lastImmediateRefreshAt = now;
+  refreshAll({immediate:true, forceBatches:true}).catch(error=>console.warn(`[status-refresh] ${reason || 'immediate'} refresh failed`, error));
+}
+
+window.addEventListener('focus', ()=>requestImmediateStatusRefresh('window-focus'));
+window.addEventListener('online', ()=>requestImmediateStatusRefresh('network-online'));
+document.addEventListener('visibilitychange', ()=>{
+  if(!document.hidden) requestImmediateStatusRefresh('window-visible');
+});
 scheduleRefreshLoop(1800);
 

@@ -3,6 +3,9 @@ const path = require('path');
 const os = require('os');
 const https = require('https');
 const http = require('http');
+const net = require('net');
+const { Readable } = require('stream');
+const { pipeline } = require('stream/promises');
 const { spawn } = require('child_process');
 const { downloadToFile } = require('./cache');
 
@@ -47,6 +50,32 @@ function getProxyCandidates(explicit='') {
 }
 function getProxyUrl(explicit='') { return getProxyCandidates(explicit)[0] || ''; }
 function isApimartUrl(url='') { return /api\.apimart\.ai/i.test(String(url || '')); }
+const localProxyReachabilityCache = new Map();
+async function localProxyIsReachable(proxyUrl = '') {
+  let parsed;
+  try { parsed = new URL(proxyUrl); } catch { return true; }
+  if (!['127.0.0.1','localhost','::1'].includes(String(parsed.hostname || '').toLowerCase())) return true;
+  const port = Number(parsed.port || 0);
+  if (!port) return false;
+  const key = `${parsed.hostname}:${port}`;
+  const cached = localProxyReachabilityCache.get(key);
+  if (cached && Date.now() - cached.at < 15_000) return cached.ok;
+  const ok = await new Promise(resolve => {
+    const socket = net.connect({ host:parsed.hostname, port });
+    let settled = false;
+    const finish = value => {
+      if (settled) return;
+      settled = true;
+      try { socket.destroy(); } catch {}
+      resolve(value);
+    };
+    socket.setTimeout(350, () => finish(false));
+    socket.once('connect', () => finish(true));
+    socket.once('error', () => finish(false));
+  });
+  localProxyReachabilityCache.set(key, { at:Date.now(), ok });
+  return ok;
+}
 function runProcessAsync(exe, args, opts = {}, input = '') {
   return new Promise((resolve, reject) => {
     const child = spawn(exe, args, { windowsHide:true, ...opts });
@@ -134,7 +163,7 @@ async function curlDownloadToFile(targetUrl, outputPath, proxyUrl = '') {
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
   const args = ['-sS','-L','--connect-timeout','4','--max-time','420'];
   if (proxy) args.push('--proxy', proxy);
-  args.push('-o', outputPath, targetUrl);
+  args.push('-H', 'Accept: image/avif,image/webp,image/apng,image/*,*/*;q=0.8', '-H', 'User-Agent: Mozilla/5.0 TENYING_AI/1.0', '-o', outputPath, targetUrl);
   const exe = process.platform === 'win32' ? 'curl.exe' : 'curl';
   const r = await runProcessAsync(exe, args, { timeoutMs: 425000 });
   if (r.status !== 0) throw new Error(`curl 下载失败${proxy ? '（代理 '+proxy+'）' : ''}：${(r.stderr || r.stdout || '').slice(0,800)}`);
@@ -143,13 +172,50 @@ async function curlDownloadToFile(targetUrl, outputPath, proxyUrl = '') {
   markGoodProxy(proxy);
   return outputPath;
 }
+async function electronNetDownloadToFile(targetUrl, outputPath) {
+  let electronNet = null;
+  try { electronNet = require('electron').net; } catch {}
+  if (!electronNet || typeof electronNet.fetch !== 'function') throw new Error('Electron 网络栈不可用');
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 180_000);
+  const tempPath = `${outputPath}.${process.pid}.electron-download`;
+  try {
+    const response = await electronNet.fetch(targetUrl, {
+      method:'GET',
+      redirect:'follow',
+      signal:controller.signal,
+      headers:{
+        Accept:'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+        'User-Agent':'Mozilla/5.0 TENYING_AI/1.0'
+      }
+    });
+    if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`);
+    fs.mkdirSync(path.dirname(outputPath), { recursive:true });
+    if (typeof Readable.fromWeb === 'function') {
+      await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(tempPath));
+    } else {
+      fs.writeFileSync(tempPath, Buffer.from(await response.arrayBuffer()));
+    }
+    const stat = fs.existsSync(tempPath) ? fs.statSync(tempPath) : { size:0 };
+    if (!stat.size) throw new Error('下载文件为空');
+    try { if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath); } catch {}
+    fs.renameSync(tempPath, outputPath);
+    return outputPath;
+  } finally {
+    clearTimeout(timer);
+    try { if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath); } catch {}
+  }
+}
 async function downloadResultToFile(targetUrl, outputPath, proxyUrl = '') {
   const errors = [];
   // 用户电脑直连经常失败，先走已验证的代理候选下载远端结果。
   for (const proxy of getProxyCandidates(proxyUrl)) {
+    if (!await localProxyIsReachable(proxy)) continue;
     try { return await curlDownloadToFile(targetUrl, outputPath, proxy); }
     catch (e) { errors.push(`[${proxy}] ${e.message || e}`); }
   }
+  try { return await electronNetDownloadToFile(targetUrl, outputPath); }
+  catch (e) { errors.push(`Electron 网络栈下载失败：${e.message || e}`); }
   try { return await downloadToFile(targetUrl, outputPath); }
   catch (e) {
     errors.push(`直连下载失败：${e.message || e}`);

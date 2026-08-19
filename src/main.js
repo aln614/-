@@ -1016,7 +1016,7 @@ function toCamelConfig(cfg) {
 }
 function send(res, obj, code = 200, extraHeaders = {}) {
   const body = Buffer.from(JSON.stringify(obj), 'utf8');
-  const headers = {...BASE_SECURITY_HEADERS, 'Content-Type':'application/json; charset=utf-8', 'Access-Control-Allow-Origin':'*', ...extraHeaders};
+  const headers = {...BASE_SECURITY_HEADERS, 'Content-Type':'application/json; charset=utf-8', 'Access-Control-Allow-Origin':'*', 'Cache-Control':'no-store, max-age=0', ...extraHeaders};
   const acceptsGzip = /(?:^|,)\s*gzip\s*(?:,|$)/i.test(String(res.req?.headers?.['accept-encoding'] || ''));
   if (acceptsGzip && body.length >= 32 * 1024) {
     zlib.gzip(body, { level:zlib.constants.Z_BEST_SPEED }, (error, compressed) => {
@@ -6093,7 +6093,7 @@ function imageTaskProgress(owner) {
   const st = getDB()._store;
   const lookups = storeLookups();
   const filterOwner = (r) => !owner || r.owner_id === owner;
-  const activeSet = new Set(['等待中','提交生成中','生成中','下载中']);
+  const activeSet = new Set(['等待中','提交生成中','生成中','下载中','下载待恢复']);
   return (st.tasks || [])
     .filter(t => filterOwner(t) && activeSet.has(t.status))
     .sort((a,b)=>String(b.updated_at||b.created_at||'').localeCompare(String(a.updated_at||a.created_at||'')))
@@ -6202,7 +6202,7 @@ function appStats(owner) {
     total: tasks.length,
     done: tasks.filter(t => t.status === '已完成').length,
     fail: tasks.filter(t => t.status === '失败').length,
-    running: tasks.filter(t => ['等待中','提交生成中','生成中','下载中'].includes(t.status)).length,
+    running: tasks.filter(t => ['等待中','提交生成中','生成中','下载中','下载待恢复'].includes(t.status)).length,
     batches,
     video_stats: videoTodayStats(owner),
     image_task_progress: imageTaskProgress(owner),
@@ -6222,7 +6222,7 @@ function hostCumulativeStats() {
       total_tasks: allTasks.length,
       completed_tasks: allTasks.filter(t => t.status === '已完成').length,
       failed_tasks: allTasks.filter(t => t.status === '失败').length,
-      running_tasks: allTasks.filter(t => ['等待中','提交生成中','生成中','下载中'].includes(t.status)).length,
+      running_tasks: allTasks.filter(t => ['等待中','提交生成中','生成中','下载中','下载待恢复'].includes(t.status)).length,
       generated_images: allImages.length,
       batches: (s.batches || []).length
     }
@@ -9072,6 +9072,7 @@ app.whenReady().then(() => {
   startNetworkTimeSync();
   queue = new TaskQueue();
   queue.recoverInterruptedBatches();
+  queue.startRemoteDownloadRecovery();
   startMidjourneyReconciler();
   if (!SERVER_ONLY) {
     createWindow();
@@ -9098,5 +9099,5 @@ app.on('activate', () => {
   if (!mainWindow || mainWindow.isDestroyed()) createWindow();
   bringMainWindowToFront();
 });
-app.on('before-quit', () => { isAppQuitting = true; try { stopMidjourneyReconciler(); } catch {} try { if (queue && typeof queue.clearAllRunning === 'function') queue.clearAllRunning(); } catch {} try { const db = getDB(); if (db && typeof db._flushSync === 'function') db._flushSync(); } catch {} try { mirrorRuntimeDataToOutputDir(); } catch {} try { stopTunnelProcess({ preserveConfig:true }); } catch {} try { if (server) server.close(); } catch {} });
+app.on('before-quit', () => { isAppQuitting = true; try { stopMidjourneyReconciler(); } catch {} try { if (queue && typeof queue.stopRemoteDownloadRecovery === 'function') queue.stopRemoteDownloadRecovery(); } catch {} try { if (queue && typeof queue.clearAllRunning === 'function') queue.clearAllRunning(); } catch {} try { const db = getDB(); if (db && typeof db._flushSync === 'function') db._flushSync(); } catch {} try { mirrorRuntimeDataToOutputDir(); } catch {} try { stopTunnelProcess({ preserveConfig:true }); } catch {} try { if (server) server.close(); } catch {} });
 app.on('will-quit', () => { try { globalShortcut.unregisterAll(); } catch {} activeOpenAppShortcut = ''; try { if (tray && !tray.isDestroyed()) tray.destroy(); } catch {} tray = null; });

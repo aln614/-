@@ -31,6 +31,17 @@ function flowRiskBackoffMs(err) {
   return Math.max(15_000, Math.min(300_000, seconds * 1000));
 }
 function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+const REMOTE_DOWNLOAD_ERROR_MARKER = '远端结果已生成，但下载到本地失败';
+function isRemoteDownloadFailure(value) {
+  const text = typeof value === 'string'
+    ? value
+    : String(value && (value.error_message || value.message || value) || '');
+  return text.includes(REMOTE_DOWNLOAD_ERROR_MARKER);
+}
+function remoteDownloadBackoffMs(attempt = 1) {
+  const delays = [60_000, 120_000, 300_000, 600_000, 900_000, 1_800_000];
+  return delays[Math.min(delays.length - 1, Math.max(0, Number(attempt || 1) - 1))];
+}
 
 class TaskQueue extends EventEmitter {
   constructor() {
@@ -43,6 +54,10 @@ class TaskQueue extends EventEmitter {
     this.batchTaskCache = new Map();
     this.flow2ApiBackoffUntil = 0;
     this.flow2ApiRiskStreak = 0;
+    this.remoteDownloadRecoveryTimer = null;
+    this.remoteDownloadRecoveryDueAt = 0;
+    this.remoteDownloadRecoveryInFlight = false;
+    this.remoteDownloadRecoveryStopped = true;
   }
 
   async waitForFlow2ApiBackoff(batchId, taskId, token) {
@@ -56,6 +71,132 @@ class TaskQueue extends EventEmitter {
       await sleep(Math.min(1000, Math.max(100, this.flow2ApiBackoffUntil - Date.now())));
     }
     return true;
+  }
+
+  startRemoteDownloadRecovery(initialDelayMs = 4000) {
+    this.remoteDownloadRecoveryStopped = false;
+    this.normalizeRemoteDownloadFailures();
+    this.scheduleRemoteDownloadRecovery(initialDelayMs);
+  }
+
+  normalizeRemoteDownloadFailures() {
+    const db = getDB();
+    const nowMs = Date.now();
+    const now = nowISO();
+    const changedBatchIds = new Set();
+    for (const task of db._store.tasks || []) {
+      if (task.status !== '失败' || !String(task.remote_task_id || '').trim() || !isRemoteDownloadFailure(task)) continue;
+      if (nowMs - parseTimeMs(task.created_at || task.updated_at) > 24 * 60 * 60 * 1000) continue;
+      task.status = '下载待恢复';
+      task.progress = 99;
+      task.progress_text = '远端已生成，等待恢复成品下载';
+      task.finished_at = '';
+      task.updated_at = now;
+      changedBatchIds.add(task.batch_id);
+    }
+    if (!changedBatchIds.size) return 0;
+    for (const batchId of changedBatchIds) {
+      const batch = (db._store.batches || []).find(row => row.id === batchId);
+      if (!batch) continue;
+      const tasks = (db._store.tasks || []).filter(task => task.batch_id === batchId);
+      batch.success_count = tasks.filter(task => task.status === '已完成').length;
+      batch.fail_count = tasks.filter(task => task.status === '失败').length;
+      batch.running_count = tasks.filter(task => ['等待中','提交生成中','生成中','查询中','下载中'].includes(task.status)).length;
+      batch.status = tasks.some(task => task.status === '下载待恢复') ? '下载待恢复' : batch.status;
+      batch.finished_at = '';
+      batch.updated_at = now;
+    }
+    db._save();
+    this.emit('changed');
+    return changedBatchIds.size;
+  }
+
+  stopRemoteDownloadRecovery() {
+    this.remoteDownloadRecoveryStopped = true;
+    if (this.remoteDownloadRecoveryTimer) clearTimeout(this.remoteDownloadRecoveryTimer);
+    this.remoteDownloadRecoveryTimer = null;
+    this.remoteDownloadRecoveryDueAt = 0;
+  }
+
+  scheduleRemoteDownloadRecovery(delayMs = 60_000) {
+    if (this.remoteDownloadRecoveryStopped) return;
+    const delay = Math.max(1000, Number(delayMs || 0));
+    const dueAt = Date.now() + delay;
+    if (this.remoteDownloadRecoveryTimer && this.remoteDownloadRecoveryDueAt <= dueAt) return;
+    if (this.remoteDownloadRecoveryTimer) clearTimeout(this.remoteDownloadRecoveryTimer);
+    this.remoteDownloadRecoveryDueAt = dueAt;
+    this.remoteDownloadRecoveryTimer = setTimeout(async () => {
+      this.remoteDownloadRecoveryTimer = null;
+      this.remoteDownloadRecoveryDueAt = 0;
+      try { await this.retryRemoteDownloadFailures(); }
+      catch (error) { addLog(`恢复远端图片下载异常：${error.message || error}`, { level:'warn' }); }
+      finally { this.scheduleRemoteDownloadRecovery(60_000); }
+    }, delay);
+    if (typeof this.remoteDownloadRecoveryTimer.unref === 'function') this.remoteDownloadRecoveryTimer.unref();
+  }
+
+  async retryRemoteDownloadFailures() {
+    if (this.remoteDownloadRecoveryInFlight) return { taskCount:0, batchCount:0 };
+    this.remoteDownloadRecoveryInFlight = true;
+    try {
+      const db = getDB();
+      const nowMs = Date.now();
+      const dueTasks = (db._store.tasks || []).filter(task =>
+        ['失败','下载待恢复'].includes(task.status)
+        && String(task.remote_task_id || '').trim()
+        && isRemoteDownloadFailure(task)
+        && nowMs - parseTimeMs(task.created_at || task.updated_at) <= 24 * 60 * 60 * 1000
+        && Number(task.remote_download_retry_at || 0) <= nowMs
+      ).sort((a, b) => parseTimeMs(b.updated_at || b.created_at) - parseTimeMs(a.updated_at || a.created_at)).slice(0, 24);
+      if (!dueTasks.length) return { taskCount:0, batchCount:0 };
+
+      const byBatch = new Map();
+      for (const task of dueTasks) {
+        if (!byBatch.has(task.batch_id)) byBatch.set(task.batch_id, []);
+        byBatch.get(task.batch_id).push(task);
+      }
+
+      const started = [];
+      let taskCount = 0;
+      for (const [batchId, tasks] of byBatch) {
+        if (this.running.has(batchId)) continue;
+        const batch = (db._store.batches || []).find(row => row.id === batchId);
+        if (!batch || String(batch.model || '').toLowerCase() === 'midjourney') continue;
+        const now = nowISO();
+        for (const task of tasks) {
+          const recoveryAttempt = Number(task.remote_download_retry_count || 0) + 1;
+          Object.assign(task, {
+            status:'下载中',
+            progress:99,
+            progress_text:'远端已生成，正在恢复成品下载',
+            finished_at:'',
+            recovery_started_at:now,
+            updated_at:now,
+            remote_download_retry_count:recoveryAttempt,
+            remote_download_retry_at:Date.now() + remoteDownloadBackoffMs(recoveryAttempt)
+          });
+        }
+        const batchTasks = (db._store.tasks || []).filter(task => task.batch_id === batchId);
+        batch.success_count = batchTasks.filter(task => task.status === '已完成').length;
+        batch.fail_count = batchTasks.filter(task => task.status === '失败').length;
+        batch.running_count = batchTasks.filter(task => ['等待中','提交生成中','生成中','查询中','下载中'].includes(task.status)).length;
+        batch.status = '下载中';
+        batch.finished_at = '';
+        batch.updated_at = now;
+        taskCount += tasks.length;
+        started.push(batchId);
+      }
+      if (!started.length) return { taskCount:0, batchCount:0 };
+      db._save();
+      addLog(`自动恢复 ${taskCount} 个已生成图片的本地下载，不会重新提交生成`, { level:'warn' });
+      this.emit('changed');
+      for (const batchId of started) {
+        setImmediate(() => this.runBatch(batchId).catch(error => addLog(`恢复成品下载失败：${error.message || error}`, { batchId, level:'error' })));
+      }
+      return { taskCount, batchCount:started.length };
+    } finally {
+      this.remoteDownloadRecoveryInFlight = false;
+    }
   }
 
   clearAllRunning() {
@@ -88,10 +229,11 @@ class TaskQueue extends EventEmitter {
         if (!activeStatuses.has(String(task.status || ''))) continue;
         const previousStatus = String(task.status || '');
         const hasRemote = !!String(task.remote_task_id || '').trim();
-        task.status = hasRemote ? '生成中' : '等待中';
+        const recoveringDownload = hasRemote && previousStatus === '下载中';
+        task.status = recoveringDownload ? '下载中' : (hasRemote ? '生成中' : '等待中');
         if (!hasRemote && previousStatus !== '等待中') task.attempt = Math.max(0, Number(task.attempt || 0) - 1);
-        task.progress = hasRemote ? Math.max(3, Number(task.progress || 0)) : 0;
-        task.progress_text = hasRemote ? '程序重启，继续查询远端结果' : '程序重启，等待重新提交';
+        task.progress = recoveringDownload ? 99 : (hasRemote ? Math.max(3, Number(task.progress || 0)) : 0);
+        task.progress_text = recoveringDownload ? '程序重启，继续恢复成品下载' : (hasRemote ? '程序重启，继续查询远端结果' : '程序重启，等待重新提交');
         task.error_message = '';
         task.updated_at = now;
         // 离线时间不计入单任务运行超时，但保留原始创建时间用于历史展示。
@@ -110,7 +252,7 @@ class TaskQueue extends EventEmitter {
       batch.running_count = remoteActive;
       batch.updated_at = now;
       if (active.length) {
-        batch.status = '生成中';
+        batch.status = active.every(task => task.status === '下载中') ? '下载中' : '生成中';
         batch.finished_at = '';
         recoveredBatchIds.push(batch.id);
       } else {
@@ -224,21 +366,30 @@ class TaskQueue extends EventEmitter {
       const batchTasks = (db._store.tasks || [])
         .filter(task => task.batch_id === batchId)
         .sort((a, b) => Number(a.task_index) - Number(b.task_index));
+      const recoveryOnly = batchTasks.some(task => task.status === '下载中' && String(task.remote_task_id || '').trim())
+        && !batchTasks.some(task => task.status === '等待中' || task.status === '生成中');
+      const workerCount = recoveryOnly ? Math.min(2, concurrency) : concurrency;
       this.batchTaskCache.set(batchId, batchTasks);
-      db.prepare('UPDATE batches SET status=?, updated_at=? WHERE id=?').run('生成中', nowISO(), batchId);
+      db.prepare('UPDATE batches SET status=?, updated_at=? WHERE id=?').run(recoveryOnly ? '下载中' : '生成中', nowISO(), batchId);
       this.emit('changed');
-      addLog(`批次开始生成，并发：${concurrency}`, { ownerId: batch.owner_id, batchId });
+      addLog(recoveryOnly ? `批次恢复成品下载，并发：${workerCount}` : `批次开始生成，并发：${workerCount}`, { ownerId: batch.owner_id, batchId });
 
-      const workers = Array.from({ length: concurrency }, () => this.worker(batchId, token));
+      const workers = Array.from({ length: workerCount }, () => this.worker(batchId, token));
       await Promise.all(workers);
       if (token !== this.resetToken) return;
       const finalBatch = db.prepare('SELECT * FROM batches WHERE id=?').get(batchId);
       if (finalBatch.status !== '已停止') {
-        const status = Number(finalBatch.fail_count || 0) >= Number(finalBatch.task_count || 0) && Number(finalBatch.success_count || 0) === 0
-          ? '失败'
-          : (finalBatch.fail_count > 0 && finalBatch.success_count < finalBatch.task_count ? '部分完成' : '已完成');
-        db.prepare('UPDATE batches SET status=?, running_count=0, finished_at=?, updated_at=? WHERE id=?').run(status, nowISO(), nowISO(), batchId);
-        addLog(`批次结束：成功 ${finalBatch.success_count}，失败 ${finalBatch.fail_count}`, { ownerId: batch.owner_id, batchId });
+        const downloadWaiting = (db._store.tasks || []).filter(task => task.batch_id === batchId && task.status === '下载待恢复').length;
+        if (downloadWaiting) {
+          db.prepare('UPDATE batches SET status=?, running_count=0, finished_at=?, updated_at=? WHERE id=?').run('下载待恢复', '', nowISO(), batchId);
+          addLog(`批次生成已结束：成功保存 ${finalBatch.success_count}，等待恢复下载 ${downloadWaiting}`, { ownerId: batch.owner_id, batchId, level:'warn' });
+        } else {
+          const status = Number(finalBatch.fail_count || 0) >= Number(finalBatch.task_count || 0) && Number(finalBatch.success_count || 0) === 0
+            ? '失败'
+            : (finalBatch.fail_count > 0 && finalBatch.success_count < finalBatch.task_count ? '部分完成' : '已完成');
+          db.prepare('UPDATE batches SET status=?, running_count=0, finished_at=?, updated_at=? WHERE id=?').run(status, nowISO(), nowISO(), batchId);
+          addLog(`批次结束：成功 ${finalBatch.success_count}，失败 ${finalBatch.fail_count}`, { ownerId: batch.owner_id, batchId });
+        }
       }
       this.emit('changed');
     } finally {
@@ -255,7 +406,7 @@ class TaskQueue extends EventEmitter {
     while (!this.stopFlags.has(batchId) && token === this.resetToken) {
       const candidates = this.batchTaskCache.get(batchId) || [];
       const task = candidates.find(t =>
-        !this.claimedTasks.has(t.id) && (t.status === '等待中' || (t.status === '生成中' && String(t.remote_task_id || '') !== ''))
+        !this.claimedTasks.has(t.id) && (t.status === '等待中' || (['生成中','下载中'].includes(t.status) && String(t.remote_task_id || '') !== ''))
       );
       if (!task) break;
       this.claimedTasks.add(task.id);
@@ -278,11 +429,15 @@ class TaskQueue extends EventEmitter {
           const canContinue = await this.waitForFlow2ApiBackoff(batchId, task.id, token);
           if (!canContinue) return;
         }
-        const attempt = Number(task.attempt || 0) + (task.status === '生成中' && task.remote_task_id ? 0 : 1);
-        const nextStatus = task.remote_task_id ? '生成中' : '提交生成中';
+        const recoveringDownload = task.status === '下载中' && !!String(task.remote_task_id || '').trim();
+        const resumingRemote = ['生成中','下载中'].includes(task.status) && !!String(task.remote_task_id || '').trim();
+        const attempt = Number(task.attempt || 0) + (resumingRemote ? 0 : 1);
+        const nextStatus = recoveringDownload ? '下载中' : (task.remote_task_id ? '生成中' : '提交生成中');
         const platformName = String(cfg.imageApiPlatform || '').toLowerCase() === 'flow2api' ? '本地 Flow2API' : 'APIMart';
-        db.prepare('UPDATE tasks SET status=?, attempt=?, progress=?, progress_text=?, updated_at=? WHERE id=?').run(nextStatus, attempt, task.remote_task_id ? Math.max(3, Number(task.progress || 0)) : 1, task.remote_task_id ? '批量查询远端结果中' : `正在提交到 ${platformName}`, nowISO(), task.id);
-        if (!(task.status === '生成中' && task.remote_task_id)) db.prepare('UPDATE batches SET running_count=running_count+1, updated_at=? WHERE id=?').run(nowISO(), batchId);
+        const nextProgress = recoveringDownload ? 99 : (task.remote_task_id ? Math.max(3, Number(task.progress || 0)) : 1);
+        const nextProgressText = recoveringDownload ? '远端已生成，正在恢复成品下载' : (task.remote_task_id ? '批量查询远端结果中' : `正在提交到 ${platformName}`);
+        db.prepare('UPDATE tasks SET status=?, attempt=?, progress=?, progress_text=?, updated_at=? WHERE id=?').run(nextStatus, attempt, nextProgress, nextProgressText, nowISO(), task.id);
+        if (!resumingRemote) db.prepare('UPDATE batches SET running_count=running_count+1, updated_at=? WHERE id=?').run(nowISO(), batchId);
         this.emit('changed');
         try {
         const ext = '.png';
@@ -316,8 +471,8 @@ class TaskQueue extends EventEmitter {
           },
           onProgress: (info = {}) => {
             const mapped = friendlyImageProgress(info);
-            const p = mapped.progress;
-            const txt = mapped.text;
+            const p = recoveringDownload ? Math.max(99, mapped.progress) : mapped.progress;
+            const txt = recoveringDownload ? '远端已生成，正在恢复成品下载' : mapped.text;
             const last = this.progressUpdateCache.get(task.id) || { at:0, progress:-1, text:'' };
             const nowMs = Date.now();
             // 进度展示要更平滑，同时避免过高频率写库。
@@ -361,6 +516,7 @@ class TaskQueue extends EventEmitter {
         const timedOut = elapsedMsSince(task.recovery_started_at || task.created_at) >= taskTimeoutMs(cfg);
         const flowRiskCooldown = flow2apiMode && isFlowRiskCooldownError(err);
         const terminalError = isTerminalGenerationError(err);
+        const remoteDownloadFailure = isRemoteDownloadFailure(err);
         if (flowRiskCooldown) {
           this.flow2ApiRiskStreak = Math.min(4, this.flow2ApiRiskStreak + 1);
           const adaptiveBackoff = Math.min(300_000, 45_000 * (2 ** (this.flow2ApiRiskStreak - 1)));
@@ -369,19 +525,29 @@ class TaskQueue extends EventEmitter {
             Date.now() + Math.max(flowRiskBackoffMs(err), adaptiveBackoff)
           );
         }
-        const shouldRetry = !timedOut && !terminalError && (flowRiskCooldown || attempt <= maxRetry);
+        const shouldRetry = !remoteDownloadFailure && !timedOut && !terminalError && (flowRiskCooldown || attempt <= maxRetry);
         const nextAttempt = flowRiskCooldown
           ? Math.max(0, attempt - 1)
           : (String(task.remote_task_id || '').trim() ? attempt + 1 : attempt);
         const retryError = flowRiskCooldown
           ? 'Flow2API reCAPTCHA 会话正在恢复，任务将在当前批次内自动重试'
           : (err.message || String(err));
+        const failedStatus = remoteDownloadFailure ? '下载待恢复' : (shouldRetry ? '等待中' : '失败');
         db.transaction(() => {
-          db.prepare('UPDATE tasks SET status=?, attempt=?, error_message=?, updated_at=? WHERE id=?').run(shouldRetry ? '等待中' : '失败', nextAttempt, timedOut ? `单任务累计超时：${Math.round(elapsedMsSince(task.recovery_started_at || task.created_at)/1000)} 秒` : retryError, nowISO(), task.id);
-          db.prepare('UPDATE batches SET fail_count=fail_count+?, running_count=MAX(running_count-1,0), updated_at=? WHERE id=?').run(shouldRetry ? 0 : 1, nowISO(), batchId);
+          db.prepare('UPDATE tasks SET status=?, attempt=?, error_message=?, updated_at=? WHERE id=?').run(failedStatus, nextAttempt, timedOut ? `单任务累计超时：${Math.round(elapsedMsSince(task.recovery_started_at || task.created_at)/1000)} 秒` : retryError, nowISO(), task.id);
+          db.prepare('UPDATE batches SET fail_count=fail_count+?, running_count=MAX(running_count-1,0), updated_at=? WHERE id=?').run(shouldRetry || remoteDownloadFailure ? 0 : 1, nowISO(), batchId);
         })();
+        if (remoteDownloadFailure) {
+          task.progress = 99;
+          task.progress_text = '远端已生成，等待恢复成品下载';
+          task.finished_at = '';
+          const retryAt = Number(task.remote_download_retry_at || 0);
+          if (!retryAt || retryAt <= Date.now()) task.remote_download_retry_at = Date.now() + 5000;
+          this.scheduleRemoteDownloadRecovery(Math.max(1000, Number(task.remote_download_retry_at || 0) - Date.now()));
+        }
         db._save();
-        addLog(`任务 ${task.task_index} ${shouldRetry ? '失败重试' : '失败'}：${retryError}`, { ownerId: task.owner_id, batchId, level: shouldRetry ? 'warning' : 'error' });
+        const outcome = remoteDownloadFailure ? '生成成功，等待恢复下载' : (shouldRetry ? '失败重试' : '失败');
+        addLog(`任务 ${task.task_index} ${outcome}：${retryError}`, { ownerId: task.owner_id, batchId, level: shouldRetry || remoteDownloadFailure ? 'warning' : 'error' });
       }
       this.emit('changed');
       } finally {
