@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
-const { nativeImage } = require('electron');
+const os = require('os');
+const { app, BrowserWindow, nativeImage } = require('electron');
 const https = require('https');
 const http = require('http');
 
@@ -30,6 +31,62 @@ function createThumb(srcPath, thumbPath, size = 300) {
   } catch (err) {
     return null;
   }
+}
+
+let chromiumImageConversionQueue = Promise.resolve();
+
+async function convertImageWithChromium(srcPath, tempPath) {
+  if (!app?.isReady?.() || typeof BrowserWindow !== 'function') throw new Error('Chromium 图片转换器尚未就绪');
+  const run = async() => {
+    const window = new BrowserWindow({
+      show:false,
+      webPreferences:{ nodeIntegration:true, contextIsolation:false, sandbox:false, backgroundThrottling:false }
+    });
+    try {
+      await window.loadURL('data:text/html,<canvas id="canvas"></canvas>');
+      return await window.webContents.executeJavaScript(`(async()=>{
+        const fs=require('fs');
+        const input=fs.readFileSync(${JSON.stringify(srcPath)});
+        const bitmap=await createImageBitmap(new Blob([input]));
+        const canvas=document.getElementById('canvas');
+        canvas.width=bitmap.width; canvas.height=bitmap.height;
+        canvas.getContext('2d',{alpha:true}).drawImage(bitmap,0,0); bitmap.close();
+        const blob=await new Promise((resolve,reject)=>canvas.toBlob(value=>value?resolve(value):reject(new Error('toBlob failed')),'image/png'));
+        fs.writeFileSync(${JSON.stringify(tempPath)},Buffer.from(await blob.arrayBuffer()));
+        return blob.size;
+      })()`);
+    } finally {
+      if (!window.isDestroyed()) window.destroy();
+    }
+  };
+  const pending = chromiumImageConversionQueue.then(run, run);
+  chromiumImageConversionQueue = pending.catch(()=>{});
+  return pending;
+}
+
+async function convertImageToUploadPng(srcPath) {
+  const source = String(srcPath || '').trim();
+  if (!source || !fs.existsSync(source)) throw new Error('待转换图片不存在');
+  const tempPath = path.join(
+    os.tmpdir(),
+    `tenying-apimart-upload-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.png`
+  );
+  try {
+    const image = nativeImage?.createFromPath?.(source);
+    const png = image && !image.isEmpty() ? image.toPNG() : null;
+    if (png && png.length) fs.writeFileSync(tempPath, png);
+    else await convertImageWithChromium(source, tempPath);
+    if (!fs.existsSync(tempPath) || !fs.statSync(tempPath).size) throw new Error('图片转换 PNG 失败');
+    return tempPath;
+  } catch (error) {
+    removeTemporaryUploadFile(tempPath);
+    throw new Error(`当前图片无法解码或转换：${error.message || error}`);
+  }
+}
+
+function removeTemporaryUploadFile(filePath = '') {
+  if (!/^tenying-apimart-upload-/i.test(path.basename(String(filePath || '')))) return;
+  try { if (fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch {}
 }
 
 function fileToDataUrl(filePath) {
@@ -69,4 +126,4 @@ async function downloadToFile(url, outputPath) {
   }
 }
 
-module.exports = { safeName, ensureDir, makeDirs, createThumb, fileToDataUrl, downloadToFile };
+module.exports = { safeName, ensureDir, makeDirs, createThumb, convertImageToUploadPng, removeTemporaryUploadFile, fileToDataUrl, downloadToFile };

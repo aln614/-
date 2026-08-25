@@ -5414,10 +5414,45 @@ function releaseBatchMediaItem(item){
   }
 }
 function releaseBatchMediaItems(items=[]){ for(const item of items || []) releaseBatchMediaItem(item); }
-function batchImageFileToItem(file){
-  if(!isPublicClient) return fileToData(file).then(item=>attachBatchMediaSource(item, file));
-  const objectUrl = URL.createObjectURL(file);
-  return Promise.resolve(attachBatchMediaSource({name:file.name, type:file.type, size:file.size || 0, data:objectUrl}, file, objectUrl));
+function canvasToBlob(canvas, type, quality){
+  return new Promise((resolve,reject)=>canvas.toBlob(blob=>blob ? resolve(blob) : reject(new Error('浏览器图片转换失败')), type, quality));
+}
+async function normalizeBatchImageFile(file){
+  const isWebp = String(file?.type || '').toLowerCase() === 'image/webp' || /\.webp$/i.test(String(file?.name || ''));
+  if(!isWebp) return file;
+  let bitmap;
+  try{
+    bitmap = await createImageBitmap(file);
+    const canvas = document.createElement('canvas');
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const context = canvas.getContext('2d', {alpha:true});
+    if(!context) throw new Error('浏览器无法创建图片转换画布');
+    context.drawImage(bitmap, 0, 0);
+    let blob = await canvasToBlob(canvas, 'image/png');
+    let extension = '.png';
+    let mime = 'image/png';
+    if(blob.size > 19 * 1024 * 1024){
+      context.globalCompositeOperation = 'destination-over';
+      context.fillStyle = '#ffffff';
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      blob = await canvasToBlob(canvas, 'image/jpeg', 0.96);
+      extension = '.jpg';
+      mime = 'image/jpeg';
+    }
+    const baseName = String(file.name || 'input').replace(/\.webp$/i, '') || 'input';
+    return new File([blob], `${baseName}${extension}`, {type:mime, lastModified:file.lastModified || Date.now()});
+  }catch(error){
+    throw new Error(`WebP 图片“${file?.name || '未命名'}”无法转换：${error.message || error}`);
+  }finally{
+    try{ bitmap?.close?.(); }catch{}
+  }
+}
+async function batchImageFileToItem(file){
+  const uploadFile = await normalizeBatchImageFile(file);
+  if(!isPublicClient) return attachBatchMediaSource(await fileToData(uploadFile), uploadFile);
+  const objectUrl = URL.createObjectURL(uploadFile);
+  return attachBatchMediaSource({name:uploadFile.name, type:uploadFile.type, size:uploadFile.size || 0, data:objectUrl}, uploadFile, objectUrl);
 }
 function schedulePublicBatchThumbRender(){
   if(publicBatchThumbRenderRaf) return;

@@ -13,7 +13,7 @@ const { spawn } = require('child_process');
 const { initDB, getDB, addLog, listBatches, listImages, listLogs, nowISO, uuid, setNetworkTimeOffset, getNetworkTimeInfo } = require('./services/db');
 const { TaskQueue } = require('./services/taskQueue');
 const { chatCompletion, getApimartChatModels, refreshApimartChatModels, APIMART_IMAGE_MODELS } = require('./services/apiClient');
-const { safeName, ensureDir, makeDirs, createThumb, downloadToFile } = require('./services/cache');
+const { safeName, ensureDir, makeDirs, createThumb, convertImageToUploadPng, removeTemporaryUploadFile, downloadToFile } = require('./services/cache');
 
 let mainWindow = null;
 let server = null;
@@ -3258,13 +3258,29 @@ async function uploadImageToApimartByCurl(apiKey, filePath, proxyUrl = '') {
   markGoodApimartProxy(proxyUrl);
   return url;
 }
-async function uploadImageToApimart(apiKey, filePath) {
+function isInvalidApimartImageContentError(error) {
+  return /invalid image content|unsupported image|invalid image format/i.test(String(error?.message || error || ''));
+}
+async function uploadImageToApimart(apiKey, filePath, normalized = false) {
   apiKey = assertApimartUploadApiKey(apiKey);
   const errors = [];
   for (const proxy of getApimartProxyCandidates(readConfig().apimart_proxy_url || '')) {
     try { return await uploadImageToApimartByCurl(apiKey, filePath, proxy); }
     catch(e) {
       if (isApimartAuthenticationError(e)) throw createApimartAuthenticationError();
+      if (isInvalidApimartImageContentError(e)) {
+        if (normalized) throw new Error(`APIMart 仍无法识别转换后的图片 ${path.basename(filePath)}`);
+        let converted = '';
+        try {
+          converted = await convertImageToUploadPng(filePath);
+          addLog(`APIMart 无法识别 ${path.basename(filePath)}，已自动转换为 PNG 后重试`, { level:'warn' });
+          return await uploadImageToApimart(apiKey, converted, true);
+        } catch (convertError) {
+          throw new Error(`APIMart 无法识别图片 ${path.basename(filePath)}，自动转换 PNG 后仍上传失败：${convertError.message || convertError}`);
+        } finally {
+          removeTemporaryUploadFile(converted);
+        }
+      }
       errors.push(`[${proxy}] ${e.message || e}`);
     }
   }
@@ -3286,6 +3302,15 @@ async function uploadImageToApimart(apiKey, filePath) {
     } finally { clearTimeout(timer); }
   } catch(e) {
     if (isApimartAuthenticationError(e)) throw createApimartAuthenticationError();
+    if (isInvalidApimartImageContentError(e) && !normalized) {
+      let converted = '';
+      try {
+        converted = await convertImageToUploadPng(filePath);
+        return await uploadImageToApimart(apiKey, converted, true);
+      } finally {
+        removeTemporaryUploadFile(converted);
+      }
+    }
     errors.push('fetch直连上传失败：' + (e.message || e));
     throw new Error('上传参考图失败：' + errors.join(' | '));
   }

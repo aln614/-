@@ -7,7 +7,7 @@ const net = require('net');
 const { Readable } = require('stream');
 const { pipeline } = require('stream/promises');
 const { spawn } = require('child_process');
-const { downloadToFile } = require('./cache');
+const { downloadToFile, convertImageToUploadPng, removeTemporaryUploadFile } = require('./cache');
 
 function cleanBase(base) { return String(base || '').replace(/\/+$/, ''); }
 const AUTO_PROXY_CANDIDATES = [
@@ -762,7 +762,11 @@ async function uploadImageToApimartByCurl(baseUrl, apiKey, filePath, proxyUrl=''
   markGoodProxy(proxy);
   return url;
 }
-async function uploadImageToApimart(baseUrl, apiKey, filePath, proxyUrl=''){
+function isInvalidApimartImageContentError(error) {
+  return /invalid image content|unsupported image|invalid image format/i.test(String(error?.message || error || ''));
+}
+
+async function uploadImageToApimart(baseUrl, apiKey, filePath, proxyUrl='', normalized=false){
   if(!filePath) return '';
   apiKey = assertApimartUploadApiKey(apiKey);
   const stat = fs.statSync(filePath);
@@ -771,6 +775,18 @@ async function uploadImageToApimart(baseUrl, apiKey, filePath, proxyUrl=''){
     try { return await uploadImageToApimartByCurl(baseUrl, apiKey, filePath, proxy); }
     catch (e) {
       if(isApimartAuthenticationError(e)) throw apimartAuthenticationError();
+      if(isInvalidApimartImageContentError(e)) {
+        if(normalized) throw new Error(`APIMart 仍无法识别转换后的图片 ${path.basename(filePath)}`);
+        let converted = '';
+        try {
+          converted = await convertImageToUploadPng(filePath);
+          return await uploadImageToApimart(baseUrl, apiKey, converted, proxyUrl, true);
+        } catch (convertError) {
+          throw new Error(`APIMart 无法识别图片 ${path.basename(filePath)}，自动转换 PNG 后仍上传失败：${convertError.message || convertError}`);
+        } finally {
+          removeTemporaryUploadFile(converted);
+        }
+      }
       errors.push(`curl上传失败[${proxy}]：${e.message || e}`);
     }
   }
@@ -789,6 +805,15 @@ async function uploadImageToApimart(baseUrl, apiKey, filePath, proxyUrl=''){
     return url;
   } catch (e) {
     if(isApimartAuthenticationError(e)) throw apimartAuthenticationError();
+    if(isInvalidApimartImageContentError(e) && !normalized) {
+      let converted = '';
+      try {
+        converted = await convertImageToUploadPng(filePath);
+        return await uploadImageToApimart(baseUrl, apiKey, converted, proxyUrl, true);
+      } finally {
+        removeTemporaryUploadFile(converted);
+      }
+    }
     errors.push('fetch直连上传失败：' + (e.message || e));
     throw new Error('上传参考图失败：' + errors.join(' | '));
   }
@@ -1177,7 +1202,14 @@ async function generateOne({ cfg, prompt, mainImagePath, refImages = [], outputP
     }
     if (rule.textOnly) throw new Error(`${model} 仅支持文生图，不支持上传参考图`);
     if (maxImages <= 0) throw new Error(`${model} 当前输出数量已占满参考图名额，请减少 n 后再上传参考图`);
-    for (const p of allImagePaths.slice(0, maxImages)) imageUrls.push(await uploadImageToApimart(base, cfg.apiKey, p, proxyUrl));
+    for (const [index, p] of allImagePaths.slice(0, maxImages).entries()) {
+      try {
+        imageUrls.push(await uploadImageToApimart(base, cfg.apiKey, p, proxyUrl));
+      } catch (error) {
+        const label = index === 0 && mainImagePath ? '主图' : `参考图 ${mainImagePath ? index : index + 1}`;
+        throw new Error(`${label}（${path.basename(p)}）上传失败：${error.message || error}`);
+      }
+    }
   }
 
   const rawPayload = {
