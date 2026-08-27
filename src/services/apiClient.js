@@ -366,6 +366,7 @@ const APIMART_IMAGE_MODELS = [
   'doubao-seedream-5-0-pro','doubao-seedream-5.0-pro',
   'flux-kontext-pro','flux-kontext-max',
   'flux-2-flex','flux-2-pro','flux-2-max',
+  'ltx-2.3-text-image',
   'qwen-image','qwen-image-2.0','qwen-image-2.0-pro','qwen-image-3.0','qwen-image-3.0-pro','z-image-turbo',
   'grok-imagine-1.0','grok-imagine-1.0-edit',
   'grok-imagine-1.5-apimart','grok-imagine-1.0-edit-apimart','grok-imagine-1.5-edit-apimart',
@@ -453,6 +454,11 @@ const FLUX2_FLEX_RULE = {
   ...FLUX2_RULE,
   allowSteps: true, stepsMin: 1, stepsMax: 50, defaultSteps: 50,
   allowGuidance: true, guidanceMin: 1.5, guidanceMax: 10, defaultGuidance: 5
+};
+const LTX23_TEXT_IMAGE_RULE = {
+  endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 0,
+  nMin: 1, nMax: 1, defaultN: 1,
+  noSize: true, noResolution: true, textOnly: true
 };
 const GROK_IMAGINE_15_RULE = {
   endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 1,
@@ -563,6 +569,7 @@ const APIMART_MODEL_RULES = {
   'flux-2-flex': FLUX2_FLEX_RULE,
   'flux-2-pro': FLUX2_RULE,
   'flux-2-max': FLUX2_RULE,
+  'ltx-2.3-text-image': LTX23_TEXT_IMAGE_RULE,
   'qwen-image-2.0': QWEN_IMAGE_2_RULE,
   'qwen-image-2.0-pro': QWEN_IMAGE_2_RULE,
   'grok-imagine-1.0': GROK_IMAGINE_15_RULE,

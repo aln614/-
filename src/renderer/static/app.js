@@ -993,6 +993,7 @@ const APIMART_MODEL_OPTIONS = [
   ['flux-2-flex','Flux 2.0 Flex'],
   ['flux-2-pro','Flux 2.0 Pro'],
   ['flux-2-max','Flux 2.0 Max'],
+  ['ltx-2.3-text-image','LTX 2.3 Text Image'],
   ['qwen-image-2.0','Qwen Image 2.0'],
   ['qwen-image-2.0-pro','Qwen Image 2.0 Pro'],
   ['qwen-image-3.0','Qwen Image 3.0'],
@@ -1324,6 +1325,7 @@ function isFlux2Model(model){
 function isFluxImageModel(model){
   return isFluxKontextModel(model) || isFlux2Model(model);
 }
+function isLtx23TextImageModel(model){ return imageModelKey(model) === 'ltx-2.3-text-image'; }
 function isQwenImage3Model(model){
   return ['qwen-image-3.0','qwen-image-3.0-pro'].includes(imageModelKey(model));
 }
@@ -1364,6 +1366,8 @@ function applyDocumentedImageUiGuard(model){
     setSizeIfUnsupported(['auto','1:1','3:2','2:3','4:3','3:4','16:9','9:16','5:4','4:5','21:9']);
     setResolution(['1K'], '1K');
     clampImageOutputCount(4);
+  }else if(isLtx23TextImageModel(m)){
+    clampImageOutputCount(1);
   }else if(isQwenImage2Model(m)){
     setSizeIfUnsupported(['1:1','4:3','3:4','16:9','9:16','3:2','2:3']);
     setResolution(['1K','2K'], '1K');
@@ -1593,6 +1597,10 @@ function updateSizeHint(){
   }
   if(isFlux2Model(model)){
     $('#sizeHint').textContent = `当前比例：${v}；Flux 2.0 提交参数 size=${actual}，resolution=${clarity}；最多 8 张参考图。`;
+    return;
+  }
+  if(isLtx23TextImageModel(model)){
+    $('#sizeHint').textContent = 'LTX 2.3 Text Image 仅支持文生图，固定输出 1 张；尺寸与清晰度由模型自动决定。';
     return;
   }
   let supportNote = '';
@@ -4777,6 +4785,12 @@ async function submitCurrentImageBatch(opts = {}){
     toast(keyValidation.message);
     return null;
   }
+  if(isLtx23TextImageModel($('#model')?.value || $('#modelPreset')?.value) && (mainImages.length || refImages.length)){
+    const message = 'LTX 2.3 Text Image 仅支持文生图，请先清空主图和参考图';
+    if(opts.fromAgent) throw new Error(message);
+    toast(message);
+    return null;
+  }
   const body = {...collectConfig(), client_id:getClientId(), prompts: $('#prompts').value, prompt_multiline_tasks: isPromptMultilineTasksEnabled(), main_images: mainImages, reference_images: refImages};
   const button = $('#startBatchBtn');
   if(!opts.fromAgent && button){ button.disabled = true; button.textContent = '提交中...'; }
@@ -7004,6 +7018,8 @@ function registerApimartVideoUiRules(items = []){
       resolutionAspectRatios:item.resolutionAspectRatios || null,
       supportsImages:item.supportsImages !== false,
       supportsVideo:item.supportsVideo === true,
+      videoDisallowsImages:item.videoDisallowsImages === true,
+      promptMaxLength:Number(item.promptMaxLength || 0),
       maxVideoCount:Number(item.maxVideoCount || 1),
       minImageCount:Number(item.minImageCount || 0),
       maxImageCount:Number(item.maxImageCount || 0),
@@ -7143,6 +7159,8 @@ registerApimartVideoUiRules([
   { model:'veo3.1-fast-official', label:'VEO3.1 Official Fast', resolutions:['720p','1080p','4k'], defaultResolution:'720p', aspects:['16:9','9:16'], durations:[4,6,8], defaultDuration:8, maxImageCount:2 },
   { model:'veo3.1-quality-official', label:'VEO3.1 Official Quality', resolutions:['720p','1080p','4k'], defaultResolution:'720p', aspects:['16:9','9:16'], durations:[4,6,8], defaultDuration:8, maxImageCount:2 },
   { model:'flux-3-video', label:'FLUX 3 Video', resolutions:['hd','fhd'], defaultResolution:'hd', aspects:['auto','21:9','2:1','16:9','4:3','3:4','9:16'], defaultAspect:'auto', durationMin:5, durationMax:20, defaultDuration:5, supportsVideo:true, durationWithVideo:true, maxImageCount:10, maxVideoCount:1, note:'Supports text, 1-10 ordered keyframes, and one video continuation.' },
+  { model:'ltx-2.3-text-video', label:'LTX 2.3 Text to Video', resolutions:['auto'], defaultResolution:'auto', aspects:['auto'], defaultAspect:'auto', supportsAspect:false, supportsDuration:false, supportsImages:false, note:'APIMart 实时目录已开放；输出规格由模型自动决定。' },
+  { model:'ltx-2.3-image-video', label:'LTX 2.3 Image to Video', resolutions:['auto'], defaultResolution:'auto', aspects:['auto'], defaultAspect:'auto', supportsAspect:false, supportsDuration:false, minImageCount:1, maxImageCount:1, note:'需要 1 张参考图；输出规格由模型自动决定。' },
   { model:'happyhorse-1.0', label:'HappyHorse 1.0', resolutions:['720P','1080P'], defaultResolution:'1080P', aspects:['16:9','9:16','1:1','4:3','3:4'], durationMin:3, durationMax:15, defaultDuration:5, supportsVideo:true, maxImageCount:9, videoMaxImageCount:5, promptOptionalWithMedia:true },
   { model:'wan3.0-video', label:'Wan3.0 Video', resolutions:['480P','720P','1080P'], defaultResolution:'1080P', aspects:['adaptive','16:9','4:3','1:1','3:4','9:16'], defaultAspect:'adaptive', durationMin:2, durationMax:30, defaultDuration:5, supportsAutoDuration:true, supportsVideo:true, durationWithVideo:true, maxImageCount:10, maxVideoCount:5, referenceVideoDurationRange:[1,15], referenceVideoTotalDurationMax:15, referenceVideoDurationPlusOutputMax:30, supportsAudioReference:true, maxAudioCount:5, audioReferenceParam:'audio_urls', audioMinDuration:1, audioMaxDuration:15, audioTotalDuration:15, promptOptionalWithMedia:true, supportsDocumentReference:true, supportsLinkReference:true, supportsGeneratedAudio:true, defaultGeneratedAudio:true, note:'支持首帧/首尾帧、多图/视频/音频参考，以及单个文档或公开网页参考；文档与网页不能同时使用。' },
   { model:'wan2.5-preview', label:'Wan2.5 Preview', resolutions:['480p','720p','1080p'], defaultResolution:'720p', aspects:['16:9','9:16','1:1','4:3','3:4'], resolutionAspectRatios:{'480p':['16:9','9:16','1:1']}, durations:[5,10], defaultDuration:5, maxImageCount:1, supportsAudioReference:true, maxAudioCount:1, audioReferenceParam:'audio_url', audioMinDuration:3, audioMaxDuration:30, promptOptionalWithMedia:true },
@@ -7158,6 +7176,8 @@ registerApimartVideoUiRules([
   { model:'viduq3-pro', label:'Vidu Q3 Pro', resolutions:['540p','720p','1080p'], aspects:['16:9','9:16','4:3','3:4','1:1'], durationMin:1, durationMax:16, defaultDuration:5, maxImageCount:2, promptOptionalWithMedia:true },
   { model:'viduq3-turbo', label:'Vidu Q3 Turbo', resolutions:['540p','720p','1080p'], aspects:['16:9','9:16','4:3','3:4','1:1'], durationMin:1, durationMax:16, defaultDuration:5, maxImageCount:2, promptOptionalWithMedia:true },
   { model:'grok-imagine-1.5-video-apimart', label:'Grok Imagine 1.5 Video', resolutions:['480p','720p'], defaultResolution:'480p', aspects:['16:9','9:16','1:1','3:2','2:3'], durationMin:6, durationMax:15, defaultDuration:6, maxImageCount:7 },
+  { model:'grok-imagine-video', label:'Grok Imagine Video Official', resolutions:['480p','720p'], defaultResolution:'480p', aspects:['auto','1:1','16:9','9:16','4:3','3:4','3:2','2:3'], defaultAspect:'auto', durationMin:1, durationMax:15, defaultDuration:8, supportsVideo:true, videoDisallowsImages:true, promptMaxLength:8000, note:'支持文生、参考图生成和单视频编辑；视频编辑自动跟随源视频规格。' },
+  { model:'grok-imagine-video-1.5', label:'Grok Imagine Video 1.5 Official', resolutions:['480p','720p','1080p'], defaultResolution:'480p', aspects:['auto','1:1','16:9','9:16','4:3','3:4','3:2','2:3'], defaultAspect:'auto', durationMin:1, durationMax:15, defaultDuration:8, promptMaxLength:8000, note:'支持文生和参考图生成，不支持上传视频编辑。' },
   { model:'pixverse-v6', label:'Pixverse v6', resolutions:['360p','540p','720p','1080p'], defaultResolution:'540p', aspects:['16:9','4:3','1:1','3:4','9:16','2:3','3:2','21:9'], durationMin:1, durationMax:15, defaultDuration:5, firstLastDurations:[5,8], maxImageCount:7 }
 ]);
 // Per-model media limits and generated-audio behavior from the current APIMart
@@ -7201,12 +7221,12 @@ applyApimartVideoUiDocumentDeltas([
   {model:'pixverse-v6', supportsGeneratedAudio:true, defaultGeneratedAudio:false}
 ]);
 const APIMART_VIDEO_MODEL_GROUPS_UI = [
-  ['Omni / Google / FLUX', ['gemini-omni-flash-preview','omni-flash-ext','veo3.1-fast','veo3.1-quality','veo3.1-lite','veo3.1-fast-official','veo3.1-quality-official','flux-3-video']],
+  ['Omni / Google / FLUX / LTX', ['gemini-omni-flash-preview','omni-flash-ext','veo3.1-fast','veo3.1-quality','veo3.1-lite','veo3.1-fast-official','veo3.1-quality-official','flux-3-video','ltx-2.3-text-video','ltx-2.3-image-video']],
   ['Doubao Seedance', ['doubao-seedance-1-0-pro-fast','doubao-seedance-1-0-pro-quality','doubao-seedance-1-5-pro','doubao-seedance-2.0','doubao-seedance-2.0-fast','doubao-seedance-2.0-mini','doubao-seedance-2.5']],
   ['Sora / MiniMax / SkyReels', ['sora-2','sora-2-pro','MiniMax-Hailuo-02','MiniMax-Hailuo-2.3','MiniMax-Hailuo-2.3-Fast','MiniMax-H3','skyreels-v4-fast','skyreels-v4-std']],
   ['HappyHorse / Wan', ['happyhorse-1.0','happyhorse-1.1','wan3.0-video','wan2.5-preview','wan2.6','wan2.6-i2v-flash','wan2.7','wan2.7-r2v','wan2.7-videoedit']],
   ['Kling', ['kling-v2-6','kling-v2-6-motion-control','kling-v3','kling-v3-motion-control','kling-v3-omni','kling-video-o1','kling-3.0-turbo']],
-  ['Vidu / Grok / Pixverse', ['viduq3','viduq3-mix','viduq3-pro','viduq3-turbo','grok-imagine-1.5-video-apimart','pixverse-v6']]
+  ['Vidu / Grok / Pixverse', ['viduq3','viduq3-mix','viduq3-pro','viduq3-turbo','grok-imagine-1.5-video-apimart','grok-imagine-video','grok-imagine-video-1.5','pixverse-v6']]
 ];
 function apimartVideoModelOptionsHtml(){
   return APIMART_VIDEO_MODEL_GROUPS_UI.map(([label, models])=>{
@@ -7843,6 +7863,7 @@ async function submitVideoTask(opts = {}){
   const promptOptionalForCurrentMode = apimartRule?.promptOptionalModes?.includes(selectedVideoMode === 'auto' && !refVideoMode && videoRefImages.length === 1 ? 'first_frame' : selectedVideoMode);
   const prompts = splitVideoPromptInput();
   if(!prompts.length && !(platform === 'apimart' && (apimartRule?.promptOptionalWithMedia && hasReferenceMedia || promptOptionalForCurrentMode))) return reject('请输入视频提示词');
+  if(Number(apimartRule?.promptMaxLength || 0) > 0 && prompts.some(prompt=>Array.from(prompt).length > apimartRule.promptMaxLength)) return reject(`${apimartRule.label} 的提示词最多支持 ${apimartRule.promptMaxLength} 个字符`);
   if(wan3DocumentFile && wan3LinkUrl) return reject('Wan3.0 文档参考和网页参考不能同时使用');
   // V14.5.5：取消前端提交前硬拦截，避免元数据误读导致 5 秒视频被拒。
   // 视频真实可用性由 APIMart 远端返回结果决定，本地只负责提交与显示真实错误。
@@ -7855,6 +7876,7 @@ async function submitVideoTask(opts = {}){
     if(apimartRule.minImageCount > videoRefImages.length) return reject(`${apimartRule.label} 至少需要 ${apimartRule.minImageCount} 张参考图`);
     if(apimartRule.maxImageCount > 0 && videoRefImages.length > apimartRule.maxImageCount) return reject(`${apimartRule.label} 最多支持 ${apimartRule.maxImageCount} 张参考图`);
     if(refVideoMode && !apimartRule.supportsVideo) return reject(`${apimartRule.label} 不支持上传视频，请切换支持视频输入的模型`);
+    if(refVideoMode && videoRefImages.length && apimartRule.videoDisallowsImages) return reject(`${apimartRule.label} 的视频编辑模式不能同时上传参考图片`);
     if(apimartRule.requiredVideo && !refVideoMode) return reject(`${apimartRule.label} 必须上传视频或填写公开视频 URL`);
     if(refVideoMode && apimartRule.disallowFrameReferenceMix && ['first_frame','first_last_frame'].includes(selectedVideoMode)) return reject(`${apimartRule.label} 的首帧 / 首尾帧模式不能与参考视频同时使用，请切换为自动识别或多素材生成`);
     if(refVideoMode && apimartRule.videoMaxImageCount > 0 && videoRefImages.length > apimartRule.videoMaxImageCount) return reject(`${apimartRule.label} 的视频编辑最多支持 ${apimartRule.videoMaxImageCount} 张参考图`);

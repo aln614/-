@@ -2695,6 +2695,8 @@ registerApimartVideoRules([
   { model:'veo3.1-quality', label:'VEO3.1 Quality', resolutions:['720p','1080p','4k'], aspectRatios:['16:9','9:16'], durations:[8], defaultDuration:8, supportsImageUrls:true, maxImageCount:2, generationTypeParam:'generation_type', supportsReferenceGeneration:false },
   { model:'veo3.1-lite', label:'VEO3.1 Lite', resolutions:['720p','1080p','4k'], aspectRatios:['16:9','9:16'], durations:[8], defaultDuration:8, supportsImageUrls:false, maxImageCount:0 },
   { model:'flux-3-video', label:'FLUX 3 Video', resolutions:['hd','fhd'], defaultResolution:'hd', aspectRatios:['auto','21:9','2:1','16:9','4:3','1:1','3:4','9:16'], defaultAspectRatio:'auto', durationRange:[5,20], defaultDuration:5, supportsImageUrls:true, supportsVideoUrls:true, videoParam:'video_url', maxImageCount:10, maxVideoCount:1, durationWithVideo:true, audioParam:'audio', defaultAudio:true },
+  { model:'ltx-2.3-text-video', label:'LTX 2.3 Text to Video', resolutions:['auto'], defaultResolution:'auto', resolutionParam:false, aspectRatios:['auto'], defaultAspectRatio:'auto', aspectParam:false, supportsDuration:false, supportsImageUrls:false, maxImageCount:0 },
+  { model:'ltx-2.3-image-video', label:'LTX 2.3 Image to Video', resolutions:['auto'], defaultResolution:'auto', resolutionParam:false, aspectRatios:['auto'], defaultAspectRatio:'auto', aspectParam:false, supportsDuration:false, supportsImageUrls:true, minImageCount:1, maxImageCount:1 },
   { model:'MiniMax-Hailuo-02', label:'MiniMax Hailuo 02', resolutions:['512p','768p','1080p'], defaultResolution:'768p', aspectParam:false, durations:[5,10], supportsImageUrls:false, imageParam:'first_frame_image', supportsLastFrame:true, maxImageCount:2, resolutionDurationRules:{'1080p':[5]}, watermarkParam:'watermark', promptOptimizerParam:'prompt_optimizer', fastPretreatmentParam:'fast_pretreatment' },
   { model:'MiniMax-Hailuo-2.3', label:'MiniMax Hailuo 2.3', resolutions:['768p','1080p'], defaultResolution:'768p', aspectParam:false, durations:[6,10], defaultDuration:6, supportsImageUrls:false, imageParam:'first_frame_image', maxImageCount:1, resolutionDurationRules:{'1080p':[6]}, watermarkParam:'watermark', promptOptimizerParam:'prompt_optimizer' },
   { model:'MiniMax-Hailuo-2.3-Fast', label:'MiniMax Hailuo 2.3 Fast', resolutions:['768p','1080p'], defaultResolution:'768p', aspectParam:false, durations:[6,10], defaultDuration:6, supportsImageUrls:false, imageParam:'first_frame_image', minImageCount:1, maxImageCount:1, resolutionDurationRules:{'1080p':[6]}, watermarkParam:'watermark', promptOptimizerParam:'prompt_optimizer' },
@@ -2722,6 +2724,8 @@ registerApimartVideoRules([
   { model:'viduq3-pro', label:'Vidu Q3 Pro', resolutions:['540p','720p','1080p'], aspectRatios:['16:9','9:16','4:3','3:4','1:1'], durationRange:[1,16], supportsImageUrls:true, maxImageCount:2, supportsLastFrame:true, omitAspectWithImages:true, audioParam:'audio', defaultAudio:true, promptOptionalWithMedia:true },
   { model:'viduq3-turbo', label:'Vidu Q3 Turbo', resolutions:['540p','720p','1080p'], aspectRatios:['16:9','9:16','4:3','3:4','1:1'], durationRange:[1,16], supportsImageUrls:true, maxImageCount:2, supportsLastFrame:true, omitAspectWithImages:true, audioParam:'audio', defaultAudio:true, promptOptionalWithMedia:true },
   { model:'grok-imagine-1.5-video-apimart', label:'Grok Imagine 1.5 Video', resolutions:['480p','720p'], defaultResolution:'480p', resolutionParam:'quality', aspectRatios:['16:9','9:16','1:1','3:2','2:3'], aspectParam:'size', durationRange:[6,15], defaultDuration:6, supportsImageUrls:true, maxImageCount:7, omitAspectWithImages:true },
+  { model:'grok-imagine-video', label:'Grok Imagine Video Official', resolutions:['480p','720p'], defaultResolution:'480p', aspectRatios:['auto','1:1','16:9','9:16','4:3','3:4','3:2','2:3'], defaultAspectRatio:'auto', durationRange:[1,15], defaultDuration:8, supportsImageUrls:true, supportsVideoUrls:true, videoParam:'video_object', maxVideoCount:1, durationWithVideo:false, omitResolutionWithVideo:true, omitAspectWithVideo:true, videoDisallowsImages:true, promptMaxLength:8000 },
+  { model:'grok-imagine-video-1.5', label:'Grok Imagine Video 1.5 Official', resolutions:['480p','720p','1080p'], defaultResolution:'480p', aspectRatios:['auto','1:1','16:9','9:16','4:3','3:4','3:2','2:3'], defaultAspectRatio:'auto', durationRange:[1,15], defaultDuration:8, supportsImageUrls:true, supportsVideoUrls:false, promptMaxLength:8000 },
   { model:'pixverse-v6', label:'Pixverse v6', resolutions:['360p','540p','720p','1080p'], defaultResolution:'540p', aspectRatios:['16:9','4:3','1:1','3:4','9:16','2:3','3:2','21:9'], aspectParam:'size', durationRange:[1,15], firstLastDurations:[5,8], supportsImageUrls:true, imageParam:'pixverse', maxImageCount:7, omitAspectWithImageModes:['first_frame','first_last_frame'], audioParam:'audio', defaultAudio:false, watermarkParam:'watermark', negativePromptParam:'negative_prompt', motionModeParam:'motion_mode' },
   { model:'Omni-Flash-Ext', label:'Omni Flash Ext', resolutions:['720p','1080p','4k'], defaultResolution:'720p', aspectRatios:['16:9','9:16'], defaultAspectRatio:'16:9', durations:[4,6,8,10], defaultDuration:6, supportsImageUrls:true, supportsVideoUrls:true, videoParam:'video_urls', allowedImageCounts:[0,1,3], durationWithVideo:false }
 ]);
@@ -4044,6 +4048,7 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
     if (rule.minReferenceCount && imageUrls.length + videoUrls.length < Number(rule.minReferenceCount)) throw new Error(`${rule.label || videoModel} 至少需要一张参考图片或一个参考视频。`);
     if (rule.maxReferenceCount && imageUrls.length + videoUrls.length > Number(rule.maxReferenceCount)) throw new Error(`${rule.label || videoModel} 的参考图片和视频合计最多 ${rule.maxReferenceCount} 个。`);
     if (rule.requiredVideo && !videoUrls.length) throw new Error(`${rule.label || videoModel} 必须上传视频或填写公开视频 URL。`);
+    if (videoUrls.length && imageUrls.length && rule.videoDisallowsImages) throw new Error(`${rule.label || videoModel} 的视频编辑模式不能同时上传参考图片。`);
     if (videoUrls.length && Number(rule.videoMaxImageCount || 0) > 0 && imageUrls.length > Number(rule.videoMaxImageCount)) {
       throw new Error(`${rule.label || videoModel} 的视频编辑最多支持 ${rule.videoMaxImageCount} 张参考图片。`);
     }
@@ -4097,6 +4102,9 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
     if (!prompt && !(rule.promptOptionalWithMedia && (imageUrls.length || videoUrls.length || audioUrls.length || documentFileUrl || linkUrl)) && !promptOptionalForMode) {
       throw new Error('请输入视频提示词；当前模型只有在已上传参考素材时才能省略提示词。');
     }
+    if (prompt && Number(rule.promptMaxLength || 0) > 0 && Array.from(prompt).length > Number(rule.promptMaxLength)) {
+      throw new Error(`${rule.label || videoModel} 的提示词最多支持 ${rule.promptMaxLength} 个字符。`);
+    }
     const forceAutomaticDuration = (rule.forceAutoDurationForVideoEdit === true && mode === 'video_edit')
       || (rule.supportsAutoDuration === true && body.auto_duration === true);
     const requestedDuration = forceAutomaticDuration
@@ -4125,7 +4133,7 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
     // Field names are model-specific: for example Grok uses quality/size while Kling uses mode.
     if (rule.modeFromResolution) {
       payload.mode = String(normalizedResolution).toLowerCase() === '4k' ? '4k' : (String(normalizedResolution).toLowerCase() === '1080p' ? 'pro' : 'std');
-    } else if (rule.resolutionParam !== false) {
+    } else if (rule.resolutionParam !== false && !(videoUrls.length && rule.omitResolutionWithVideo)) {
       payload[rule.resolutionParam || 'resolution'] = normalizedResolution;
     }
     const omitAspect = (imageUrls.length && (rule.omitAspectWithImages || (Array.isArray(rule.omitAspectWithImageModes) && rule.omitAspectWithImageModes.includes(mode)))) || (videoUrls.length && rule.omitAspectWithVideo);
@@ -4207,6 +4215,7 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
         for (const candidateUrl of videoUrls) await probePublicVideoUrlWithRetry(candidateUrl, 8);
       }
       if (rule.videoParam === 'video_url') payload.video_url = videoUrl;
+      else if (rule.videoParam === 'video_object') payload.video = { url:videoUrl };
       else if (rule.videoParam === 'video_list') {
         payload.video_list = [{ video_url:videoUrl, refer_type:'base', keep_original_sound:'no' }];
       } else if (rule.videoParam === 'ref_videos') {

@@ -45,7 +45,7 @@ for (const group of pickerBlock.matchAll(/\['[^']+',\s*\[([^\]]+)\]\]/g)) {
   for (const model of group[1].matchAll(/'([^']+)'/g)) picker.add(model[1].toLowerCase());
 }
 
-assert(backend.size === 45, `Expected 45 official backend models, found ${backend.size}`);
+assert(backend.size === 49, `Expected 49 official backend models, found ${backend.size}`);
 assert(picker.size === backend.size, `Model picker/backend count mismatch: picker=${picker.size}, backend=${backend.size}`);
 for (const model of picker) assert(backend.has(model), `Model picker has no backend rule: ${model}`);
 for (const model of backend.keys()) assert(picker.has(model), `Backend model is missing from picker: ${model}`);
@@ -74,6 +74,12 @@ assert(/payload\[rule\.outputFormatParam\]/.test(main) && /body\.output_format/.
 assert(/model:'grok-imagine-1\.5-video-apimart'[^\n]*durationRange:\[6,15\],\s*defaultDuration:6/.test(main), 'Grok Imagine 1.5 Video must support 6-15 seconds with default 6');
 assert(/model:'grok-imagine-1\.5-video-apimart'[^\n]*durationMin:6,\s*durationMax:15,\s*defaultDuration:6/.test(app), 'Grok Imagine 1.5 Video slider must support 6-15 seconds with default 6');
 assert(/model:'grok-imagine-1\.5-video-apimart'[^\n]*resolutionParam:'quality'[^\n]*aspectParam:'size'/.test(main), 'Grok must submit quality and size fields');
+assert(/model:'grok-imagine-video'[^\n]*durationRange:\[1,15\][^\n]*supportsVideoUrls:true[^\n]*videoParam:'video_object'[^\n]*omitResolutionWithVideo:true[^\n]*videoDisallowsImages:true/.test(main), 'Official Grok base video must support 1-15 second generation and exclusive video-object editing');
+assert(/model:'grok-imagine-video-1\.5'[^\n]*resolutions:\['480p','720p','1080p'\][^\n]*durationRange:\[1,15\][^\n]*supportsVideoUrls:false/.test(main), 'Official Grok 1.5 video must support generation up to 1080p and reject video editing');
+assert(/rule\.videoParam === 'video_object'[^\n]*payload\.video = \{ url:videoUrl \}/.test(main), 'Official Grok video editing must submit video as an object');
+assert(/rule\.omitResolutionWithVideo/.test(main) && /rule\.videoDisallowsImages/.test(main), 'Video-edit-only payload fields must be stripped and conflicting references rejected');
+assert(/model:'ltx-2\.3-text-video'[^\n]*resolutionParam:false[^\n]*supportsDuration:false[^\n]*supportsImageUrls:false/.test(main), 'LTX 2.3 text-to-video must use the minimal catalog contract');
+assert(/model:'ltx-2\.3-image-video'[^\n]*resolutionParam:false[^\n]*supportsDuration:false[^\n]*minImageCount:1[^\n]*maxImageCount:1/.test(main), 'LTX 2.3 image-to-video must require exactly one image');
 assert(/model:'sora-2'[^\n]*durations:\[4,8,12,16,20\],\s*defaultDuration:4/.test(main), 'Sora 2 default duration must be 4 seconds');
 assert(/model:'sora-2'[^\n]*supportsImageUrls:true,\s*maxImageCount:1,\s*omitAspectWithImages:true/.test(main), 'Sora 2 must submit image_urls and omit aspect_ratio when an image determines orientation');
 assert(/model:'veo3\.1-fast'[^\n]*durations:\[8\]/.test(main) && /model:'veo3\.1-quality'[^\n]*durations:\[8\]/.test(main), 'VEO3.1 generation must be fixed to 8 seconds');
