@@ -1,13 +1,13 @@
 {
   "name": "local-api-image-generator-webui",
-  "version": "1.0.80",
+  "version": "1.0.81",
   "description": "TENYING AI APIMart image and video generator with batch management",
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
     "start:docker": "node src/docker-server.js",
     "docker:build": "docker build -t tenying-ai:1.0.46 .",
-    "check": "node --check src/main.js && node --check src/renderer/static/app.js && node --check src/services/apiClient.js && node scripts/verify-image-models.js && node scripts/verify-midjourney.js && node scripts/verify-chat-models.js && node scripts/verify-task-retry-db.js && node scripts/verify-status-recovery.js && node scripts/verify-video-duration-rules.js && node scripts/verify-main-image-task-warning.js && node scripts/verify-video-resume.js && node scripts/verify-shortcuts.js && node scripts/verify-public-batch-submit.js && node scripts/verify-public-api-key-validation.js && node scripts/verify-apimart-balance.js && node scripts/verify-agent-image-model-fallback.js && node scripts/verify-lan-defaults.js && node scripts/verify-skins.js && node scripts/verify-asset-library-drag.js && node scripts/verify-recent-upload-cache.js && node scripts/verify-updater.js && node scripts/verify-apimart-only.js && node scripts/verify-image-upload-normalization.js",
+    "check": "node --check src/main.js && node --check src/renderer/static/app.js && node --check src/services/apiClient.js && node scripts/verify-image-models.js && node scripts/verify-midjourney.js && node scripts/verify-chat-models.js && node scripts/verify-task-retry-db.js && node scripts/verify-status-recovery.js && node scripts/verify-video-duration-rules.js && node scripts/verify-main-image-task-warning.js && node scripts/verify-video-resume.js && node scripts/verify-shortcuts.js && node scripts/verify-public-batch-submit.js && node scripts/verify-public-api-key-validation.js && node scripts/verify-apimart-balance.js && node scripts/verify-agent-image-model-fallback.js && node scripts/verify-lan-defaults.js && node scripts/verify-skins.js && node scripts/verify-asset-library-drag.js && node scripts/verify-recent-upload-cache.js && node scripts/verify-updater.js && node scripts/verify-apimart-only.js && node scripts/verify-image-upload-normalization.js && node scripts/verify-global-task-modes.js",
     "lan-client:check": "node --check lan-client/main.js && node --check lan-client/preload.js && node lan-client/verify.js",
     "lan-client:dist": "npm run lan-client:check && electron-builder --project lan-client --win portable --config.win.signAndEditExecutable=false --config.forceCodeSigning=false",
     "sync:unpacked": "npm run check && node scripts/sync-unpacked-asar.js --restart",

@@ -41,6 +41,8 @@ let refreshLoopTimer = null;
 let refreshDeferredTimer = null;
 let refreshLoopFailureCount = 0;
 let lastImmediateRefreshAt = 0;
+let globalRunningPollTimer = null;
+let globalRunningPollInFlight = false;
 let previewX = 0;
 let previewY = 0;
 let previewFitScale = 1;
@@ -4471,32 +4473,40 @@ document.addEventListener('paste', async e => {
   const imageFiles = [];
   const videoFiles = [];
   const audioFiles = [];
-  for(const it of items){
-    const type = String(it.type || '').toLowerCase();
-    const file = typeof it.getAsFile === 'function' ? it.getAsFile() : null;
-    if(!file) continue;
-    if(type.startsWith('image/')) imageFiles.push(file);
+  const otherFiles = [];
+  const pastedFiles = clipboardFiles.length
+    ? clipboardFiles
+    : items.map(it=>typeof it.getAsFile === 'function' ? it.getAsFile() : null).filter(Boolean);
+  for(const file of pastedFiles){
+    const type = String(file.type || '').toLowerCase();
+    const name = String(file.name || '').toLowerCase();
+    if(type.startsWith('image/') || /\.(png|jpe?g|webp|gif|bmp|avif|tiff?)$/.test(name)) imageFiles.push(file);
     else if(type.startsWith('video/')) videoFiles.push(file);
     else if(type.startsWith('audio/')) audioFiles.push(file);
+    else otherFiles.push(file);
   }
-  if(!imageFiles.length && !videoFiles.length && !audioFiles.length) return;
+  if(!imageFiles.length && !videoFiles.length && !audioFiles.length && !otherFiles.length) return;
 
   if($('#page-video')?.classList.contains('active')){
     e.preventDefault();
-    let addedVideo = 0, addedAudio = 0, addedImage = 0;
-    if(videoFiles.length || audioFiles.length){
-      await handleVideoFile([...videoFiles, ...audioFiles]);
+    let addedVideo = 0, addedAudio = 0, addedImage = 0, addedAttachment = 0;
+    const ignoreMainFiles = videoMultiFirstFrameEnabled() && (videoFiles.length || audioFiles.length || otherFiles.length);
+    if(ignoreMainFiles) toast('多首帧模式仅接收下方参考图区的图片，其他文件未加入');
+    if(!ignoreMainFiles && (videoFiles.length || audioFiles.length || otherFiles.length)){
+      await handleVideoFile([...videoFiles, ...audioFiles, ...otherFiles]);
       addedVideo = videoFiles.length;
       addedAudio = audioFiles.length;
+      addedAttachment = otherFiles.length;
     }
     if(imageFiles.length){
       await handleVideoRefs(imageFiles);
       addedImage = imageFiles.length;
     }
-    if(addedVideo || addedAudio || addedImage){
+    if(addedVideo || addedAudio || addedImage || addedAttachment){
       const msg = [];
       if(addedVideo) msg.push(`主任务视频 ${addedVideo} 个`);
       if(addedAudio) msg.push(`参考音频 ${addedAudio} 段`);
+      if(addedAttachment) msg.push(`附件 ${addedAttachment} 个`);
       if(addedImage) msg.push(`参考图 ${addedImage} 张`);
       toast(`已通过粘贴加入：${msg.join('，')}`);
     }
@@ -4895,20 +4905,38 @@ async function loadStatus(){
   apimartBalanceLastTaskSignature = balanceTaskSignature;
   if(isVideoRealtimeMode() && s.video_stats) updateRightPanelStats(s.video_stats, true);
   else updateRightPanelStats(s, false);
-  $('#runningState').textContent = `运行：${s.running}`;
+  const globalRunning = Number(s.global_active_tasks ?? s.host_cumulative?.running_tasks ?? s.running ?? 0);
+  $('#runningState').textContent = `运行：${globalRunning}`;
   $('#apiMetricStatus').textContent = s.api.status;
   const hc = s.host_cumulative || {};
-  const hostStats = s.is_local_client !== false && typeof hc.total_tasks !== 'undefined';
+  const hostStats = typeof hc.total_tasks !== 'undefined';
   $('#apiMetricRunning').textContent = hostStats ? hc.running_tasks : s.running;
   $('#apiMetricDone').textContent = hostStats ? hc.completed_tasks : s.done;
   if($('#apiMetricImages')) $('#apiMetricImages').textContent = hostStats ? hc.total_tasks : (s.total || 0);
   $('#apiMetricFail').textContent = hostStats ? hc.failed_tasks : s.fail;
+  if($('#apiMetricImageTasks')) $('#apiMetricImageTasks').textContent = hostStats ? (hc.image_tasks || 0) : (s.total || 0);
+  if($('#apiMetricVideoTasks')) $('#apiMetricVideoTasks').textContent = hostStats ? (hc.video_tasks || 0) : (s.video_stats?.total || 0);
   if(typeof s.is_local_client !== 'undefined'){ isLocalClient = s.is_local_client !== false; isPublicClient = s.is_public_client === true; applyPermissionUI(); }
   if(s.local_url || s.lan_url) updateLanDisplay({lan_enabled: $('#lanEnabled').checked, ...s});
   // V9.1: API监控中心保持简化；右侧实时任务面板保留最近图片和最近批次。
   renderMiniBatches(s.batches || []);
   renderImageTaskProgress(s.image_task_progress || []);
   loadMiniImages(s.image_task_progress || []);
+}
+
+async function refreshGlobalRunningState(){
+  if(globalRunningPollInFlight || document.hidden || $('#publicLoginOverlay')?.classList.contains('active')) return;
+  globalRunningPollInFlight = true;
+  try{
+    const summary = await api('/api/status?summary=1');
+    const running = Number(summary.global_active_tasks ?? summary.host_cumulative?.running_tasks ?? 0);
+    if($('#runningState')) $('#runningState').textContent = `运行：${running}`;
+    if($('#apiMetricRunning')) $('#apiMetricRunning').textContent = String(running);
+  }catch(error){
+    console.warn('[global-running] refresh failed', error);
+  }finally{
+    globalRunningPollInFlight = false;
+  }
 }
 
 async function loadBatches(opts = {}){
@@ -5069,7 +5097,26 @@ async function exportSelectedBatchesZip(){
   }catch(e){
     toast(e.message || '下载选中批次失败');
   }finally{
-    if(btn){ btn.disabled = false; btn.textContent = '下载选中批次图片'; }
+    if(btn){ btn.disabled = false; btn.textContent = '下载选中批次'; }
+  }
+}
+async function deleteSelectedHistoryBatches(){
+  const ids = Array.from(selectedHistoryBatches);
+  if(!ids.length){ toast('请先选择要删除的批次'); return; }
+  if(!confirm(`确定删除选中的 ${ids.length} 个批次吗？批次内的图片、视频和本地缓存文件也会删除，此操作不可恢复。`)) return;
+  const btn = $('#deleteSelectedBatchesBtn');
+  if(btn){ btn.disabled = true; btn.textContent = '删除中...'; }
+  try{
+    const result = await api('/api/delete_batches', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({batch_ids:ids})});
+    const deletedIds = new Set(result.deleted_batch_ids || ids);
+    deletedIds.forEach(id=>selectedHistoryBatches.delete(id));
+    await refreshAll({forceBatches:true, immediate:true});
+    toast(`已删除 ${result.deleted_batches || deletedIds.size} 个批次（图片 ${result.deleted_image_batches || 0}，视频 ${result.deleted_video_batches || 0}）`);
+  }catch(error){
+    toast(error.message || '批量删除失败');
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = '删除选中'; }
+    updateHistorySelectionUi();
   }
 }
 function currentBatchNote(id){
@@ -5269,6 +5316,7 @@ $('#historySelectAllBatches')?.addEventListener('change', e=>{
 });
 $('#clearHistoryBatchSelectionBtn')?.addEventListener('click',()=>{ selectedHistoryBatches.clear(); updateHistorySelectionUi(); });
 $('#downloadSelectedBatchesBtn')?.addEventListener('click', exportSelectedBatchesZip);
+$('#deleteSelectedBatchesBtn')?.addEventListener('click', deleteSelectedHistoryBatches);
 
 function fillBatchSelect(){
   const sel = $('#imageBatchSelect');
@@ -6922,6 +6970,7 @@ let videoRefImages = [];
 let videoFilesData = [];
 let videoAudioFilesData = [];
 let wan3DocumentFileData = null;
+let videoAttachmentFileData = null;
 let videoTasksCache = [];
 let videoSelectedIds = new Set();
 let lastBatchesSignature = '';
@@ -7248,6 +7297,7 @@ function isApimartOmniVideoModel(){
 function videoModeAutoLabel(){
   const hasVideo = hasReferenceVideo();
   const images = videoRefImages.length;
+  if(videoMultiFirstFrameEnabled()) return '多首帧（每张参考图独立生成）';
   if(hasWan3ReferenceDocument()) return '文档 / 网页参考生成';
   if(videoAudioFilesData.length) return '多模态参考';
   if(hasVideo) return '上传视频编辑';
@@ -7257,6 +7307,7 @@ function videoModeAutoLabel(){
   return '文生视频';
 }
 function currentVideoModeValue(){
+  if(videoMultiFirstFrameEnabled()) return 'first_frame';
   const v = $('#videoModeSelect')?.value || 'auto';
   return v === 'auto' ? 'auto' : v;
 }
@@ -7283,8 +7334,11 @@ function isWan3VideoModel(model = $('#videoModel')?.value){
 function wan3UsesAutomaticDuration(){
   return isWan3VideoModel() && $('#wan3AutoDuration')?.checked === true;
 }
+function effectiveVideoAttachmentFile(){
+  return videoAttachmentFileData || wan3DocumentFileData || null;
+}
 function hasWan3ReferenceDocument(){
-  return isWan3VideoModel() && Boolean(wan3DocumentFileData || ($('#wan3LinkUrl')?.value || '').trim());
+  return isWan3VideoModel() && Boolean(effectiveVideoAttachmentFile() || ($('#wan3LinkUrl')?.value || '').trim());
 }
 function updateWan3ReferenceControls(){
   const enabled = isWan3VideoModel();
@@ -7298,8 +7352,9 @@ function updateWan3ReferenceControls(){
   if(autoDuration) autoDuration.disabled = !enabled;
   const fileName = $('#wan3DocumentName');
   if(fileName){
-    fileName.textContent = wan3DocumentFileData
-      ? `已选择：${wan3DocumentFileData.name || '文档'}（文档与网页参考不能同时使用）`
+    const selectedFile = effectiveVideoAttachmentFile();
+    fileName.textContent = selectedFile
+      ? `已选择：${selectedFile.name || '附件'}（文档与网页参考不能同时使用）`
       : '支持 DOC/DOCX、XLS/XLSX、PPT/PPTX、PDF、TXT、KEY、PAGES、NUMBERS、MD，最大 100MB。';
   }
 }
@@ -7311,6 +7366,7 @@ async function handleWan3DocumentFile(files){
   if(!allowed.has(ext)) return toast('Wan3.0 文档参考仅支持 DOC/DOCX、XLS/XLSX、PPT/PPTX、PDF、TXT、KEY、PAGES、NUMBERS 或 MD');
   if(file.size > 100 * 1024 * 1024) return toast('Wan3.0 文档参考不能超过 100MB');
   wan3DocumentFileData = await fileToData(file);
+  videoAttachmentFileData = null;
   updateWan3ReferenceControls();
   updateVideoModeUI();
   updateVideoTaskEstimate();
@@ -7578,6 +7634,7 @@ function updateVideoModeUI(){
   updateWan3ReferenceControls();
   updateVideoGeneratedAudioControl();
   updateVideoSourceAudioSettingControl();
+  updateVideoMultiFirstFrameControl();
   const images = videoRefImages.length;
   const selectedMode = currentVideoModeValue();
   let mode = selectedMode === 'auto' ? videoModeAutoLabel() : videoModeLabel(selectedMode);
@@ -7658,8 +7715,9 @@ function syncVideoApiKeyToHome(value=''){
   saveClientConfig(cfg);
   updateApiKeyWarning();
 }
-function hasReferenceVideo(){ return !!(videoFilesData.length || ($('#videoUrlInput')?.value || '').trim()); }
-function videoMultiReferenceEnabled(){ return currentVideoPlatform() === 'apimart' && $('#videoMultiReference')?.checked === true; }
+function videoMultiFirstFrameEnabled(){ return currentVideoPlatform() === 'apimart' && $('#videoMultiFirstFrame')?.checked === true; }
+function hasReferenceVideo(){ return !videoMultiFirstFrameEnabled() && !!(videoFilesData.length || ($('#videoUrlInput')?.value || '').trim()); }
+function videoMultiReferenceEnabled(){ return !videoMultiFirstFrameEnabled() && currentVideoPlatform() === 'apimart' && $('#videoMultiReference')?.checked === true; }
 function selectCompatibleMultiVideoReferenceModel(videoCount = videoFilesData.length){
   const requiredCount = Math.max(2, Number(videoCount || 0));
   const preferredModels = ['doubao-seedance-2.5','wan3.0-video','MiniMax-H3','doubao-seedance-2.0','doubao-seedance-2.0-fast','doubao-seedance-2.0-mini','wan2.7-r2v'];
@@ -7673,19 +7731,67 @@ function updateVideoMultiReferenceControl(){
   const label = $('#videoMultiReferenceLabel');
   if(!input || !label) return;
   const rule = currentApimartVideoRule();
-  const supported = currentVideoPlatform() === 'apimart' && rule.supportsVideo && Number(rule.maxVideoCount || 1) > 1;
-  const compatibleModel = !supported ? selectCompatibleMultiVideoReferenceModel() : '';
+  const supported = !videoMultiFirstFrameEnabled() && currentVideoPlatform() === 'apimart' && rule.supportsVideo && Number(rule.maxVideoCount || 1) > 1;
+  const compatibleModel = !videoMultiFirstFrameEnabled() && !supported ? selectCompatibleMultiVideoReferenceModel() : '';
   input.disabled = !supported;
   if(!supported) input.checked = false;
   label.classList.toggle('is-disabled', !supported);
   label.classList.toggle('can-switch-model', !!compatibleModel);
-  label.title = supported
+  label.title = videoMultiFirstFrameEnabled()
+    ? '多首帧与多模态参考不能同时启用'
+    : supported
     ? `${rule.label} 最多支持 ${rule.maxVideoCount} 个参考视频`
     : (compatibleModel ? `当前 ${rule.label} 仅支持 1 个参考视频；点击可切换到 ${APIMART_VIDEO_MODEL_RULES_UI[compatibleModel.toLowerCase()].label} 并启用多模态参考` : `当前 ${rule.label} 不支持多模态参考`);
 }
+function videoMultiFirstFrameSupported(rule = currentApimartVideoRule()){
+  return currentVideoPlatform() === 'apimart'
+    && rule.supportsImages !== false
+    && rule.requiredVideo !== true
+    && Number(rule.minImageCount || 0) <= 1
+    && (Number(rule.maxImageCount || 0) === 0 || Number(rule.maxImageCount) >= 1)
+    && (!Array.isArray(rule.allowedImageCounts) || rule.allowedImageCounts.includes(1));
+}
+function updateVideoMultiFirstFrameControl(){
+  const input = $('#videoMultiFirstFrame');
+  const label = $('#videoMultiFirstFrameLabel');
+  const mode = $('#videoModeSelect');
+  if(!input || !label) return;
+  const rule = currentApimartVideoRule();
+  const supported = videoMultiFirstFrameSupported(rule);
+  if(!supported && input.checked){
+    input.checked = false;
+    toast(`${rule.label} 不支持单张图片首帧生成，已关闭“多首帧”`);
+  }
+  input.disabled = !supported;
+  const active = supported && input.checked;
+  label.classList.toggle('is-disabled', !supported);
+  label.classList.toggle('active', active);
+  label.title = supported
+    ? '仅使用下方参考图；每张图片分别创建一个首帧视频任务'
+    : `${rule.label} 不支持单张图片首帧生成`;
+  if(mode){
+    if(active){
+      if(!mode.dataset.beforeMultiFirstFrame) mode.dataset.beforeMultiFirstFrame = mode.value || 'auto';
+      mode.value = 'first_frame';
+      mode.disabled = true;
+      mode.title = '多首帧模式固定为首帧生成';
+    }else{
+      if(mode.dataset.beforeMultiFirstFrame && [...mode.options].some(option=>option.value === mode.dataset.beforeMultiFirstFrame)) mode.value = mode.dataset.beforeMultiFirstFrame;
+      delete mode.dataset.beforeMultiFirstFrame;
+      mode.disabled = false;
+      mode.title = '';
+    }
+  }
+  if(active && $('#videoMultiReference')) $('#videoMultiReference').checked = false;
+  $('#videoDrop')?.classList.toggle('multi-first-frame-ignored', active);
+  if($('#videoFile')) $('#videoFile').disabled = active;
+  if($('#videoUrlInput')) $('#videoUrlInput').disabled = active;
+  if($('#wan3DocumentFile')) $('#wan3DocumentFile').disabled = active || !isWan3VideoModel();
+  if($('#wan3LinkUrl')) $('#wan3LinkUrl').disabled = active || !isWan3VideoModel();
+}
 function enableMultiVideoReferenceWithCompatibleModel(){
   const input = $('#videoMultiReference');
-  if(!input || currentVideoPlatform() !== 'apimart') return false;
+  if(!input || currentVideoPlatform() !== 'apimart' || videoMultiFirstFrameEnabled()) return false;
   if(input.disabled){
     const replacementModel = selectCompatibleMultiVideoReferenceModel();
     const model = $('#videoModel');
@@ -7740,23 +7846,37 @@ function splitVideoPromptInput(){
 }
 function updateVideoTaskEstimate(){
   const prompts = splitVideoPromptInput();
+  const multiFirstFrame = videoMultiFirstFrameEnabled();
   const videoCount = videoFilesData.length || (($('#videoUrlInput')?.value || '').trim() ? 1 : 1);
   const multiVideoReference = videoMultiReferenceEnabled() && videoFilesData.length > 1;
-  const sourceTaskCount = multiVideoReference ? 1 : videoCount;
+  const sourceTaskCount = multiFirstFrame ? videoRefImages.length : (multiVideoReference ? 1 : videoCount);
   const repeats = Math.max(1, Number($('#videoRepeatCount')?.value || 1));
   const retries = Math.max(0, Number($('#videoRetryTimes')?.value || 0));
-  const total = Math.max(1, prompts.length || 1) * Math.max(1, sourceTaskCount) * repeats;
+  const total = multiFirstFrame && !sourceTaskCount ? 0 : Math.max(1, prompts.length || 1) * Math.max(1, sourceTaskCount) * repeats;
   const audioSuffix = videoAudioFilesData.length ? ` + 参考音频 ${videoAudioFilesData.length}` : '';
-  const videoFactor = multiVideoReference ? `多模态参考 ${videoFilesData.length} 个视频合并为 1${audioSuffix}` : `主任务视频 ${Math.max(1,videoCount)}${audioSuffix}`;
+  const videoFactor = multiFirstFrame
+    ? `参考图 ${videoRefImages.length} 张（每张独立首帧任务）`
+    : multiVideoReference ? `多模态参考 ${videoFilesData.length} 个视频合并为 1${audioSuffix}` : `主任务视频 ${Math.max(1,videoCount)}${audioSuffix}`;
   const el = $('#videoTaskEstimate'); if(el) el.textContent = `预计任务：提示词 ${Math.max(1,prompts.length||1)} × ${videoFactor} × 重复 ${repeats} × 失败重试 ${retries} = ${total}`;
-  const rule = $('#videoTaskRule'); if(rule) rule.textContent = multiVideoReference ? `已启用多模态参考：${videoFilesData.length} 个主任务视频 = 1 个独立任务` : '一个主任务视频 = 一个独立任务';
+  const rule = $('#videoTaskRule');
+  if(rule) rule.textContent = multiFirstFrame
+    ? `已启用多首帧：仅执行参考图区图片，${videoRefImages.length} 张图片 = ${videoRefImages.length} 个独立首帧任务`
+    : multiVideoReference ? `已启用多模态参考：${videoFilesData.length} 个主任务视频 = 1 个独立任务` : '一个主任务视频 = 一个独立任务';
+}
+function clearVideoAttachmentFile(){
+  videoAttachmentFileData = null;
+  wan3DocumentFileData = null;
+  if($('#wan3DocumentFile')) $('#wan3DocumentFile').value = '';
+  renderVideoInputs();
 }
 function renderVideoInputs(){
   const vf = $('#videoFilePreview');
   if(vf){
     const videoCards = videoFilesData.map((f,i)=>`<div class="video-file-thumb upload-video-thumb" data-upload-index="${i}" title="主任务视频：${escapeHtml(f.name||'')}，时长 ${escapeHtml(videoDurationText(f.duration_seconds)||'-')}"><div class="video-click-zone upload-video-click-zone" data-upload-index="${i}" title="左键点击画中画预览；左右键同时点击显示视频信息"><div class="video-first-frame" data-upload-index="${i}" data-src="${escapeHtml(f.data||'')}"><div class="video-lazy-icon">▶</div><small>懒加载第一帧</small></div></div><small title="${escapeHtml(f.name||'')}">${escapeHtml(f.name||'')}</small><em>${escapeHtml(videoDurationText(f.duration_seconds)||'')}</em><button type="button" onclick="videoFilesData.splice(${i},1);renderVideoInputs()">×</button></div>`).join('');
     const audioCards = videoAudioFilesData.map((f,i)=>`<div class="video-file-thumb upload-audio-thumb" title="参考音频：${escapeHtml(f.name||'')}，时长 ${escapeHtml(videoDurationText(f.duration_seconds)||'-')}"><div class="upload-audio-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 10v4h4l5 4V6l-5 4H4zm12.2-2.4a1 1 0 0 1 1.4.1 6.3 6.3 0 0 1 0 8.6 1 1 0 1 1-1.5-1.3 4.3 4.3 0 0 0 0-6 1 1 0 0 1 .1-1.4zm2.7-2.5a1 1 0 0 1 1.4.1 10 10 0 0 1 0 13.4 1 1 0 1 1-1.5-1.3 8 8 0 0 0 0-10.8 1 1 0 0 1 .1-1.4z"/></svg></div><small title="${escapeHtml(f.name||'')}">${escapeHtml(f.name||'')}</small><em>参考音频 ${escapeHtml(videoDurationText(f.duration_seconds)||'')}</em><button type="button" onclick="videoAudioFilesData.splice(${i},1);renderVideoInputs()">×</button></div>`).join('');
-    vf.innerHTML = videoCards + audioCards;
+    const attachment = effectiveVideoAttachmentFile();
+    const attachmentCard = attachment ? `<div class="video-file-thumb upload-attachment-thumb" title="通用附件：${escapeHtml(attachment.name||'')}"><div class="upload-attachment-mark" aria-hidden="true">FILE</div><small title="${escapeHtml(attachment.name||'')}">${escapeHtml(attachment.name||'')}</small><em>模型附件</em><button type="button" onclick="clearVideoAttachmentFile()">×</button></div>` : '';
+    vf.innerHTML = videoCards + audioCards + attachmentCard;
     initLazyVideoFirstFrames(vf);
   }
   const box = $('#videoRefThumbs');
@@ -7773,14 +7893,25 @@ async function handleVideoFile(files, options={}){
   if(!list.length) return;
   const recentVideos = [];
   const recentAudios = [];
-  const hasUploadedVideo = list.some(file=>/\.(mp4|mov)$/i.test(file.name || '') || /^video\//i.test(file.type || ''));
+  const imagePattern = /\.(png|jpe?g|webp|gif|bmp|avif|tiff?|heic|heif)$/i;
+  const videoPattern = /\.(mp4|mov|webm|mkv|avi|m4v|mpeg|mpg|mts|m2ts|ts)$/i;
+  const audioPattern = /\.(mp3|wav|m4a|aac|flac|ogg|opus|wma|aiff?)$/i;
+  const documentPattern = /\.(docx?|xlsx?|pptx?|pdf|txt|key|pages|numbers|md)$/i;
+  const hasUploadedVideo = list.some(file=>videoPattern.test(file.name || '') || /^video\//i.test(file.type || ''));
   if(hasUploadedVideo && currentVideoPlatform() === 'flow2api' && !flow2VideoModelSupportsUploadedVideo()){
     if($('#videoModel')) $('#videoModel').value = 'omni';
     toast('本地 Flow2API 上传视频编辑仅支持 Omni Flash，已切换模型');
   }
+  let skippedImages = 0;
+  let attachmentCount = 0;
   for(const f of list){
     const name = (f.name || '').toLowerCase();
-    if(/\.(mp3|wav)$/.test(name) || /^(audio\/mpeg|audio\/wav|audio\/x-wav)$/i.test(f.type || '')) {
+    const type = String(f.type || '').toLowerCase();
+    if(type.startsWith('image/') || imagePattern.test(name)){
+      skippedImages += 1;
+      continue;
+    }
+    if(type.startsWith('audio/') || audioPattern.test(name)) {
       if(f.size > 15 * 1024 * 1024) { toast('已跳过超过 15MB 的参考音频：' + (f.name||'')); continue; }
       const duration = await getAudioDurationSeconds(f);
       if(!Number.isFinite(duration) || duration <= 0) toast(`提示：${f.name||''} 本地未能准确读取音频时长，仍会交由当前模型校验。`);
@@ -7790,17 +7921,38 @@ async function handleVideoFile(files, options={}){
       recentAudios.push(f);
       continue;
     }
-    if(!(/\.mp4$|\.mov$/.test(name))) { toast('已跳过非 mp4/mov 视频：' + (f.name||'')); continue; }
-    if(f.size > 100 * 1024 * 1024) { toast('已跳过超过 100MB 的视频：' + (f.name||'')); continue; }
-    const duration = await getVideoDurationSeconds(f);
-    // 不再因为本地元数据读取失败/读成 0 秒而跳过。真实可用性交给 APIMart 远端校验。
-    if(!Number.isFinite(duration) || duration <= 0) toast(`提示：${f.name||''} 本地未能准确读取视频时长，仍会继续提交。`);
-    else if(duration < 2.5 || duration > 10.5) toast(`提示：${f.name||''} 读取到的视频时长为 ${duration.toFixed(1)} 秒，仍会继续提交，若超出 APIMart 限制会显示远端真实错误。`);
-    const item = await fileToData(f);
-    item.duration_seconds = (Number.isFinite(duration) && duration > 0) ? Number(duration.toFixed(3)) : '';
-    videoFilesData.push(item);
-    recentVideos.push(f);
+    if(type.startsWith('video/') || videoPattern.test(name)){
+      if(f.size > 256 * 1024 * 1024) { toast('已跳过超过 256MB 的视频：' + (f.name||'')); continue; }
+      const duration = await getVideoDurationSeconds(f);
+      // 不再因为本地元数据读取失败/读成 0 秒而跳过。真实可用性交给 APIMart 远端校验。
+      if(!Number.isFinite(duration) || duration <= 0) toast(`提示：${f.name||''} 本地未能准确读取视频时长，仍会继续提交。`);
+      else if(duration < 2.5 || duration > 10.5) toast(`提示：${f.name||''} 读取到的视频时长为 ${duration.toFixed(1)} 秒，仍会继续提交，若超出 APIMart 限制会显示远端真实错误。`);
+      const item = await fileToData(f);
+      item.duration_seconds = (Number.isFinite(duration) && duration > 0) ? Number(duration.toFixed(3)) : '';
+      videoFilesData.push(item);
+      recentVideos.push(f);
+      continue;
+    }
+    if(f.size > 100 * 1024 * 1024){
+      toast('已跳过超过 100MB 的通用附件：' + (f.name || ''));
+      continue;
+    }
+    videoAttachmentFileData = await fileToData(f);
+    wan3DocumentFileData = null;
+    if($('#wan3DocumentFile')) $('#wan3DocumentFile').value = '';
+    attachmentCount += 1;
+    if(documentPattern.test(name) && currentVideoPlatform() === 'apimart' && !currentApimartVideoRule().supportsDocumentReference){
+      const model = $('#videoModel');
+      if(model && [...model.options].some(option=>option.value === 'wan3.0-video')){
+        model.value = 'wan3.0-video';
+        updateVideoResolutionOptions();
+        updateVideoDurationOptions();
+        toast('已识别为文档附件，并切换到支持文档参考的 Wan3.0 Video');
+      }
+    }
   }
+  if(skippedImages) toast(`已跳过 ${skippedImages} 张图片；图片请上传到下方“上传参考图”区域`);
+  if(attachmentCount > 1) toast(`已选择 ${attachmentCount} 个通用附件；当前模型接口一次使用 1 个，已保留最后一个`);
   renderVideoInputs();
   if(options.cache !== false){
     if(recentVideos.length) cacheRecentVideoUploadedFiles(recentVideos, 'video');
@@ -7833,6 +7985,8 @@ function clearVideoInputs(){
   videoAudioFilesData=[];
   videoRefImages=[];
   wan3DocumentFileData=null;
+  videoAttachmentFileData=null;
+  if($('#videoMultiFirstFrame')) $('#videoMultiFirstFrame').checked=false;
   $('#videoPrompt').value='';
   $('#videoUrlInput').value='';
   if($('#wan3DocumentFile')) $('#wan3DocumentFile').value='';
@@ -7852,14 +8006,19 @@ async function submitVideoTask(opts = {}){
   const platform = currentVideoPlatform();
   const apiKey = ($('#videoApiKey')?.value || '').trim();
   if(!apiKey) return reject(`请先填写${platform === 'flow2api' ? ' Flow2API' : '首页 APIMart'} API Key，填写后才能开始生成视频`);
+  const multiFirstFrame = videoMultiFirstFrameEnabled();
+  if(multiFirstFrame && platform !== 'apimart') return reject('多首帧模式仅支持 APIMart 视频模型');
+  if(multiFirstFrame && !videoRefImages.length) return reject('请先在“上传参考图”区域添加图片；多首帧会让每张图片分别创建一个首帧视频任务');
   const refVideoMode = hasReferenceVideo();
   const apimartRule = platform === 'apimart' ? currentApimartVideoRule() : null;
   const seedance25 = isSeedance25VideoModel();
   const wan3 = isWan3VideoModel();
-  const wan3DocumentFile = wan3 ? wan3DocumentFileData : null;
-  const wan3LinkUrl = wan3 ? String($('#wan3LinkUrl')?.value || '').trim() : '';
+  const activeAudioFiles = multiFirstFrame ? [] : videoAudioFilesData;
+  const wan3DocumentFile = multiFirstFrame ? null : effectiveVideoAttachmentFile();
+  const wan3LinkUrl = multiFirstFrame ? '' : (wan3 ? String($('#wan3LinkUrl')?.value || '').trim() : '');
   const selectedVideoMode = currentVideoModeValue();
-  const hasReferenceMedia = refVideoMode || videoRefImages.length > 0 || videoAudioFilesData.length > 0 || Boolean(wan3DocumentFile || wan3LinkUrl);
+  const referenceImageCount = multiFirstFrame ? 1 : videoRefImages.length;
+  const hasReferenceMedia = refVideoMode || videoRefImages.length > 0 || activeAudioFiles.length > 0 || Boolean(wan3DocumentFile || wan3LinkUrl);
   const promptOptionalForCurrentMode = apimartRule?.promptOptionalModes?.includes(selectedVideoMode === 'auto' && !refVideoMode && videoRefImages.length === 1 ? 'first_frame' : selectedVideoMode);
   const prompts = splitVideoPromptInput();
   if(!prompts.length && !(platform === 'apimart' && (apimartRule?.promptOptionalWithMedia && hasReferenceMedia || promptOptionalForCurrentMode))) return reject('请输入视频提示词');
@@ -7872,9 +8031,9 @@ async function submitVideoTask(opts = {}){
     if(wan3DocumentFile && !apimartRule.supportsDocumentReference) return reject(`${apimartRule.label} 不支持文档参考`);
     if(wan3LinkUrl && !apimartRule.supportsLinkReference) return reject(`${apimartRule.label} 不支持网页参考`);
     if(videoRefImages.length && !apimartRule.supportsImages) return reject(`${apimartRule.label} 不支持参考图输入`);
-    if(Array.isArray(apimartRule.allowedImageCounts) && !apimartRule.allowedImageCounts.includes(videoRefImages.length)) return reject(`${apimartRule.label} 的参考图数量仅支持 ${apimartRule.allowedImageCounts.join(' / ')} 张，当前为 ${videoRefImages.length} 张`);
-    if(apimartRule.minImageCount > videoRefImages.length) return reject(`${apimartRule.label} 至少需要 ${apimartRule.minImageCount} 张参考图`);
-    if(apimartRule.maxImageCount > 0 && videoRefImages.length > apimartRule.maxImageCount) return reject(`${apimartRule.label} 最多支持 ${apimartRule.maxImageCount} 张参考图`);
+    if(Array.isArray(apimartRule.allowedImageCounts) && !apimartRule.allowedImageCounts.includes(referenceImageCount)) return reject(`${apimartRule.label} 的单个任务参考图数量仅支持 ${apimartRule.allowedImageCounts.join(' / ')} 张，当前为 ${referenceImageCount} 张`);
+    if(apimartRule.minImageCount > referenceImageCount) return reject(`${apimartRule.label} 至少需要 ${apimartRule.minImageCount} 张参考图`);
+    if(apimartRule.maxImageCount > 0 && referenceImageCount > apimartRule.maxImageCount) return reject(`${apimartRule.label} 最多支持 ${apimartRule.maxImageCount} 张参考图`);
     if(refVideoMode && !apimartRule.supportsVideo) return reject(`${apimartRule.label} 不支持上传视频，请切换支持视频输入的模型`);
     if(refVideoMode && videoRefImages.length && apimartRule.videoDisallowsImages) return reject(`${apimartRule.label} 的视频编辑模式不能同时上传参考图片`);
     if(apimartRule.requiredVideo && !refVideoMode) return reject(`${apimartRule.label} 必须上传视频或填写公开视频 URL`);
@@ -7892,10 +8051,10 @@ async function submitVideoTask(opts = {}){
       if(apimartRule.outputDurationAtMostReferenceVideo && Number.isFinite(selectedDuration) && selectedDuration > 0 && selectedDuration > Math.min(...sourceVideoDurations)) return reject(`${apimartRule.label} 的输出时长不能超过源视频时长`);
       if(apimartRule.referenceVideoDurationPlusOutputMax > 0 && Number.isFinite(selectedDuration) && selectedDuration > 0 && sourceVideoTotal + selectedDuration > apimartRule.referenceVideoDurationPlusOutputMax) return reject(`${apimartRule.label} 的参考视频总时长与输出时长之和不能超过 ${apimartRule.referenceVideoDurationPlusOutputMax} 秒`);
     }
-    if(videoAudioFilesData.length){
+    if(activeAudioFiles.length){
       if(!apimartRule.supportsAudioReference) return reject(`${apimartRule.label} 不支持上传参考音频。请使用支持多模态参考的模型，例如 MiniMax H3、Seedance 2.0、SkyReels V4、Wan2.5、Wan2.6、Wan2.7 或 Wan2.7 R2V。`);
-      if(apimartRule.maxAudioCount > 0 && videoAudioFilesData.length > apimartRule.maxAudioCount) return reject(`${apimartRule.label} 最多支持 ${apimartRule.maxAudioCount} 段参考音频`);
-      const audioDurations = videoAudioFilesData.map(item=>Number(item.duration_seconds)).filter(Number.isFinite);
+      if(apimartRule.maxAudioCount > 0 && activeAudioFiles.length > apimartRule.maxAudioCount) return reject(`${apimartRule.label} 最多支持 ${apimartRule.maxAudioCount} 段参考音频`);
+      const audioDurations = activeAudioFiles.map(item=>Number(item.duration_seconds)).filter(Number.isFinite);
       if(apimartRule.audioMinDuration > 0 && audioDurations.some(value=>value < apimartRule.audioMinDuration)) return reject(`${apimartRule.label} 的单段参考音频不能短于 ${apimartRule.audioMinDuration} 秒`);
       if(apimartRule.audioMaxDuration > 0 && audioDurations.some(value=>value > apimartRule.audioMaxDuration)) return reject(`${apimartRule.label} 的单段参考音频不能超过 ${apimartRule.audioMaxDuration} 秒`);
       if(apimartRule.audioTotalDuration > 0 && audioDurations.reduce((sum,value)=>sum + value, 0) > apimartRule.audioTotalDuration) return reject(`${apimartRule.label} 的参考音频总时长不能超过 ${apimartRule.audioTotalDuration} 秒`);
@@ -7919,20 +8078,20 @@ async function submitVideoTask(opts = {}){
     if(currentVideoModeValue() === 'veo_remix'){
       if(!isApimartTaskExtensionModel()) return reject('任务续写仅支持 VEO3.1 Fast / Quality、Pixverse v6 或 Gemini Omni Flash');
       if(!String($('#videoSourceTaskId')?.value || '').trim()) return reject('请填写已完成的原任务 ID');
-      if(refVideoMode || videoRefImages.length || videoAudioFilesData.length) return reject('任务续写使用原任务 ID，不能同时上传参考图片、视频或音频');
+      if(refVideoMode || videoRefImages.length || activeAudioFiles.length) return reject('任务续写使用原任务 ID，不能同时上传参考图片、视频或音频');
     }
   }
   if(currentVideoModeValue() === 'video_edit' && !refVideoMode) return reject('已选择“上传视频编辑”，请先上传主任务视频或填写公开视频 URL');
   if(platform === 'flow2api' && refVideoMode && !flow2VideoModelSupportsUploadedVideo()) {
     return reject('本地 Flow2API 上传视频编辑仅支持 Omni Flash，请切换模型后重试');
   }
-  if(platform === 'flow2api' && videoAudioFilesData.length) return reject('本地 Flow2API 当前不支持参考音频上传，请切换到 APIMart 的多模态视频模型');
+  if(platform === 'flow2api' && activeAudioFiles.length) return reject('本地 Flow2API 当前不支持参考音频上传，请切换到 APIMart 的多模态视频模型');
   const multiVideoReference = videoMultiReferenceEnabled() && videoFilesData.length > 1;
   if(multiVideoReference && videoFilesData.length > Number(apimartRule?.maxVideoCount || 1)) return reject(`${apimartRule?.label || '当前模型'} 最多支持 ${apimartRule?.maxVideoCount || 1} 个参考视频，当前为 ${videoFilesData.length} 个。`);
   const platformCfg = loadClientConfig(platform) || {};
-  const effectiveVideoMode = videoAudioFilesData.length && selectedVideoMode === 'auto' && (apimartRule?.audioRequiresReference || apimartRule?.audioRequiresImage) ? 'multi_reference' : selectedVideoMode;
+  const effectiveVideoMode = multiFirstFrame ? 'first_frame' : (activeAudioFiles.length && selectedVideoMode === 'auto' && (apimartRule?.audioRequiresReference || apimartRule?.audioRequiresImage) ? 'multi_reference' : selectedVideoMode);
   const seedance25AutomaticDuration = seedance25UsesAutomaticDuration();
-  const body = { video_platform:platform, api_endpoint:platform === 'flow2api' ? (platformCfg.api_endpoint || 'http://127.0.0.1:38000') : 'https://api.apimart.ai', api_key:apiKey, video_model:$('#videoModel')?.value || '', video_mode:effectiveVideoMode, video_reference_type:currentVideoReferenceType(), multi_video_reference:multiVideoReference, seed:$('#videoSeed')?.value?.trim() || '', copies:Number($('#videoRepeatCount')?.value || 1), retry_times:Number($('#videoRetryTimes')?.value || 0), prompts:$('#videoPrompt').value, prompt_multiline_tasks: $('#videoPromptMultilineTasks') ? $('#videoPromptMultilineTasks').checked : false, resolution:$('#videoResolution').value, aspect_ratio:seedance25RequiresAdaptiveAspect() ? 'adaptive' : $('#videoAspect').value, video_url:$('#videoUrlInput').value.trim(), video_files:videoFilesData, audio_files:videoAudioFilesData, ref_images:videoRefImages, document_file:wan3DocumentFile, link_url:wan3LinkUrl, auto_duration:wan3UsesAutomaticDuration(), character_orientation:$('#videoCharacterOrientation')?.value || 'image', source_task_id:$('#videoSourceTaskId')?.value?.trim() || '', audio_setting:$('#videoSourceAudioSetting')?.value || 'auto' };
+  const body = { video_platform:platform, api_endpoint:platform === 'flow2api' ? (platformCfg.api_endpoint || 'http://127.0.0.1:38000') : 'https://api.apimart.ai', api_key:apiKey, video_model:$('#videoModel')?.value || '', video_mode:effectiveVideoMode, video_reference_type:currentVideoReferenceType(), multi_video_reference:multiVideoReference, multi_first_frame:multiFirstFrame, seed:$('#videoSeed')?.value?.trim() || '', copies:Number($('#videoRepeatCount')?.value || 1), retry_times:Number($('#videoRetryTimes')?.value || 0), prompts:$('#videoPrompt').value, prompt_multiline_tasks: $('#videoPromptMultilineTasks') ? $('#videoPromptMultilineTasks').checked : false, resolution:$('#videoResolution').value, aspect_ratio:seedance25RequiresAdaptiveAspect() ? 'adaptive' : $('#videoAspect').value, video_url:multiFirstFrame ? '' : $('#videoUrlInput').value.trim(), video_files:multiFirstFrame ? [] : videoFilesData, audio_files:activeAudioFiles, ref_images:videoRefImages, document_file:wan3DocumentFile, link_url:wan3LinkUrl, auto_duration:multiFirstFrame ? false : wan3UsesAutomaticDuration(), character_orientation:$('#videoCharacterOrientation')?.value || 'image', source_task_id:$('#videoSourceTaskId')?.value?.trim() || '', audio_setting:$('#videoSourceAudioSetting')?.value || 'auto' };
   if(platform === 'apimart' && apimartRule?.supportsGeneratedAudio === true && !seedance25){
     body.generate_audio = apimartRule.forceGeneratedAudio === true || $('#videoGenerateAudio')?.checked === true;
   }
@@ -8784,6 +8943,13 @@ function setupVideoPage(){
     updateVideoMultiReferenceControl();
     updateVideoTaskEstimate();
   });
+  $('#videoMultiFirstFrame')?.addEventListener('change', ()=>{
+    if($('#videoMultiFirstFrame')?.checked && $('#videoMultiReference')) $('#videoMultiReference').checked = false;
+    updateVideoModeUI();
+    updateVideoDurationOptions();
+    updateVideoDurationVisibility();
+    updateVideoTaskEstimate();
+  });
   $('#videoMultiReferenceLabel')?.addEventListener('click', event=>{
     const input = $('#videoMultiReference');
     if(input?.disabled && videoFilesData.length > 1){
@@ -8933,6 +9099,10 @@ function setupVideoPage(){
       e.preventDefault();
       el.classList.remove('drag');
       const target = id === 'videoDrop' ? 'video' : 'video_ref';
+      if(target === 'video' && videoMultiFirstFrameEnabled()){
+        toast('多首帧模式仅使用下方参考图，请将图片拖到“上传参考图”区域');
+        return;
+      }
       if(await handleRecentUploadDrop(e, target)) return;
       if(target === 'video_ref' && await handleGeneratedImageDrop(e, target)) return;
       id === 'videoDrop' ? handleVideoFile(e.dataTransfer.files) : handleVideoRefs(e.dataTransfer.files);
@@ -10936,6 +11106,8 @@ async function startup(){
     setupApimartBalance();
     calcEstimate();
     await refreshAll();
+    if(globalRunningPollTimer) clearInterval(globalRunningPollTimer);
+    globalRunningPollTimer = setInterval(refreshGlobalRunningState, 2000);
     setupVideoPage();
     bindImageApiPlatformSwitch();
     setupShortcutSettings();

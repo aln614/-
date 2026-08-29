@@ -39,7 +39,7 @@ const MEDIA_BODY_LIMIT_BYTES = Number(process.env.LAIG_MEDIA_BODY_LIMIT_MB || 15
 const BATCH_MEDIA_FILE_LIMIT_BYTES = Number(process.env.LAIG_BATCH_MEDIA_FILE_LIMIT_MB || 256) * 1024 * 1024;
 const RECENT_UPLOAD_FILE_LIMIT_BYTES = Number(process.env.LAIG_RECENT_UPLOAD_FILE_LIMIT_MB || 256) * 1024 * 1024;
 const STATUS_CACHE_TTL_MS = 650;
-const HOST_STATS_CACHE_TTL_MS = 8000;
+const HOST_STATS_CACHE_TTL_MS = 900;
 const STALE_CLEANUP_TTL_MS = 15000;
 const MIDJOURNEY_RECONCILE_INTERVAL_MS = 10000;
 const BASE_SECURITY_HEADERS = {
@@ -2186,6 +2186,8 @@ function ensureVideoStore() {
 const activeApimartVideoPolls = new Set();
 const APIMART_VIDEO_ACTIVE_STATUSES = new Set(['已提交', '生成中', '查询中', '下载中']);
 const APIMART_VIDEO_TERMINAL_STATUSES = new Set(['已完成', '失败', '已取消', '取消']);
+const IMAGE_TASK_RUNNING_STATUSES = new Set(['等待中', '提交中', '提交生成中', '已提交', '生成中', '查询中', '下载中', '下载待恢复', '重试中']);
+const VIDEO_TASK_RUNNING_STATUSES = new Set(['等待中', '等待提交', '提交中', '提交生成中', '已提交', '生成中', '查询中', '下载中', '重试中']);
 const STALE_VIDEO_SUBMIT_ERROR = '任务长时间停留在提交中，且没有后端 task_id，已自动标记失败。请重新提交。';
 function videoRemoteTaskId(row = {}) {
   return String(row.task_id || row.remote_task_id || '').trim();
@@ -2221,7 +2223,11 @@ function cleanupStaleVideoTasks(owner = '') {
     row.updated_at = nowISO();
     changed = true;
   }
-  if (changed) getDB()._save();
+  if (changed) {
+    getDB()._save();
+    invalidateAppStatsCache();
+    hostCumulativeStatsCache = { ts:0, data:null };
+  }
   return changed;
 }
 function repairLegacyGeminiOmniVideoFailures() {
@@ -2236,6 +2242,13 @@ function repairLegacyGeminiOmniVideoFailures() {
   }
   if (changed) getDB()._save();
   return changed;
+}
+let lastGlobalStaleVideoCleanupAt = 0;
+function cleanupStaleVideoTasksThrottled(owner = '') {
+  if (owner) return cleanupStaleVideoTasks(owner);
+  if (Date.now() - lastGlobalStaleVideoCleanupAt < STALE_CLEANUP_TTL_MS) return false;
+  lastGlobalStaleVideoCleanupAt = Date.now();
+  return cleanupStaleVideoTasks('');
 }
 function pickTaskIdFromApimart(obj={}) {
   const candidates = [];
@@ -4378,10 +4391,15 @@ async function createApimartVideoBatch(body, ownerId, req, cfg) {
   if (!apiKey) throw new Error('请填写 APIMart API Key');
   let prompts = splitVideoPrompts(body.prompts || body.prompt || '', body.prompt_multiline_tasks === true);
 
-  const videoFiles = Array.isArray(body.video_files) ? body.video_files : (body.video_file ? [body.video_file] : []);
-  const audioFiles = Array.isArray(body.audio_files) ? body.audio_files : (body.audio_file ? [body.audio_file] : []);
-  const videoUrlInput = String(body.video_url || '').trim();
+  const multiFirstFrame = body.multi_first_frame === true;
+  const videoFiles = multiFirstFrame ? [] : (Array.isArray(body.video_files) ? body.video_files : (body.video_file ? [body.video_file] : []));
+  const audioFiles = multiFirstFrame ? [] : (Array.isArray(body.audio_files) ? body.audio_files : (body.audio_file ? [body.audio_file] : []));
+  const videoUrlInput = multiFirstFrame ? '' : String(body.video_url || '').trim();
   const refImages = Array.isArray(body.ref_images) ? body.ref_images : [];
+  const documentFile = multiFirstFrame ? null : (body.document_file || null);
+  const documentUrl = multiFirstFrame ? '' : String(body.file_url || '').trim();
+  const linkUrl = multiFirstFrame ? '' : String(body.link_url || '').trim();
+  if (multiFirstFrame && !refImages.length) throw new Error('多首帧模式至少需要在“上传参考图”区域添加 1 张图片。');
 
   // V12.7 修复：批量上传多个参考视频时，先逐个落盘并生成各自独立的 public-video URL。
   // 避免并发提交时反复转换 dataURL / 复用同一个链接，导致提交到 APIMart 的参考视频看起来都一样。
@@ -4418,6 +4436,14 @@ async function createApimartVideoBatch(body, ownerId, req, cfg) {
 
   const multiVideoReference = body.multi_video_reference === true && sourceVideos.length > 1;
   const videoRule = getApimartVideoRule(canonicalApimartVideoModel(body.video_model || 'omni-flash-ext'));
+  if (multiFirstFrame) {
+    const acceptsSingleImage = !videoRule.requiredVideo
+      && (videoRule.supportsImageUrls || videoRule.supportsImageWithRoles || !!videoRule.imageParam)
+      && Number(videoRule.maxImageCount || 1) >= 1
+      && (!Array.isArray(videoRule.allowedImageCounts) || videoRule.allowedImageCounts.includes(1))
+      && Number(videoRule.minImageCount || 0) <= 1;
+    if (!acceptsSingleImage) throw new Error(`${videoRule.label || body.video_model} 不支持“每张参考图独立首帧生成”，请切换支持单张图生视频的模型。`);
+  }
   if (multiVideoReference) {
     const maxVideoCount = Number(videoRule.maxVideoCount || 1);
     if (!videoRule.supportsVideoUrls || maxVideoCount < 2) throw new Error(`${videoRule.label || body.video_model} 不支持多模态参考。`);
@@ -4448,19 +4474,28 @@ async function createApimartVideoBatch(body, ownerId, req, cfg) {
   if (!prompts.length) {
     const hasReferenceMedia = refImageUrls.length > 0 || localAudioPaths.length > 0
       || sourceVideos.some(item => item.local_video_path || item.video_url)
-      || Boolean(body.document_file || String(body.file_url || '').trim() || String(body.link_url || '').trim());
+      || Boolean(documentFile || documentUrl || linkUrl);
     if (!videoRule.promptOptionalWithMedia || !hasReferenceMedia) throw new Error('请输入视频提示词');
     prompts = [''];
   }
 
-  const taskSources = multiVideoReference ? [{
-    source_index: 1,
-    name: sourceVideos.map(item=>item.name).filter(Boolean).join(', '),
-    local_video_paths: sourceVideos.map(item=>item.local_video_path).filter(Boolean),
-    video_urls: sourceVideos.map(item=>item.video_url).filter(Boolean),
-    source_video_durations: sourceVideos.map(item=>item.duration_seconds).filter(value=>Number.isFinite(Number(value)) && Number(value) > 0),
-    duration_seconds: ''
-  }] : sourceVideos;
+  const taskSources = multiFirstFrame
+    ? refImageUrls.map((imageUrl, index) => ({
+      source_index:index + 1,
+      name:`参考图 ${index + 1}`,
+      local_video_path:'',
+      video_url:'',
+      ref_image_urls:[imageUrl],
+      duration_seconds:''
+    }))
+    : multiVideoReference ? [{
+      source_index: 1,
+      name: sourceVideos.map(item=>item.name).filter(Boolean).join(', '),
+      local_video_paths: sourceVideos.map(item=>item.local_video_path).filter(Boolean),
+      video_urls: sourceVideos.map(item=>item.video_url).filter(Boolean),
+      source_video_durations: sourceVideos.map(item=>item.duration_seconds).filter(value=>Number.isFinite(Number(value)) && Number(value) > 0),
+      duration_seconds: ''
+    }] : sourceVideos;
   const tasks = [];
   const copies = safeInt(body.copies, 1, 1, 4);
   for (const src of taskSources) {
@@ -4472,24 +4507,30 @@ async function createApimartVideoBatch(body, ownerId, req, cfg) {
   const concurrency = safeInt(body.concurrency, 1, 1, 50);
   const videoBatchId = uuid('video_batch_');
   const videoBatchName = `Video_${beijingDateKey().replace(/-/g,'')}_${new Date().toISOString().slice(11,19).replace(/:/g,'')}`;
-  addLog(`视频批量任务开始，并发：${concurrency}，视频：${sourceVideos.length}${multiVideoReference ? '（多模态参考合并）' : ''}，提示词：${prompts.length}，任务：${tasks.length}`, { ownerId });
+  addLog(`视频批量任务开始，并发：${concurrency}，${multiFirstFrame ? `多首帧参考图：${refImageUrls.length}` : `视频：${sourceVideos.length}${multiVideoReference ? '（多模态参考合并）' : ''}`}，提示词：${prompts.length}，任务：${tasks.length}`, { ownerId });
   const rows = await runLimited(tasks, concurrency, async(item)=>{
-    addLog(`提交视频任务：第 ${item.source_index} 个视频 ${item.name || ''}`, { ownerId });
+    addLog(`提交视频任务：第 ${item.source_index} 个${multiFirstFrame ? '首帧参考图' : '视频'} ${item.name || ''}`, { ownerId });
     return await createApimartVideoTask({
       ...body,
       prompt:item.prompt,
+      video_mode:multiFirstFrame ? 'first_frame' : body.video_mode,
+      multi_video_reference:multiFirstFrame ? false : body.multi_video_reference,
+      multi_first_frame:multiFirstFrame,
       video_file:null,
       video_files:[],
       audio_file:null,
       audio_files:[],
       audio_durations:audioDurations,
       ref_images:[],
-      ref_image_urls:refImageUrls,
+      ref_image_urls:item.ref_image_urls || refImageUrls,
       video_url:item.video_url || '',
       video_urls:item.video_urls || [],
       local_video_path:item.local_video_path || '',
       local_video_paths:item.local_video_paths || [],
       local_audio_paths:localAudioPaths,
+      document_file:documentFile,
+      file_url:documentUrl,
+      link_url:linkUrl,
       source_video_name:item.name || '',
       source_video_duration:item.duration_seconds || '',
       source_video_durations:item.source_video_durations || [],
@@ -4500,7 +4541,7 @@ async function createApimartVideoBatch(body, ownerId, req, cfg) {
   const okRows = rows.filter(x=>x && x.id);
   const failRows = rows.filter(x=>!x || !x.id);
   addLog(`视频批量任务提交完成，成功：${okRows.length}，失败：${failRows.length}`, { ownerId, level: failRows.length ? 'warn' : 'info' });
-  return { ok:true, count:tasks.length, video_count:sourceVideos.length, prompt_count:prompts.length, success:okRows.length, fail:failRows.length, rows:okRows.map(formatVideoTask), errors:failRows.map(x=>x && x.error).filter(Boolean) };
+  return { ok:true, count:tasks.length, video_count:multiFirstFrame ? 0 : sourceVideos.length, reference_image_count:multiFirstFrame ? refImageUrls.length : undefined, multi_first_frame:multiFirstFrame, prompt_count:prompts.length, success:okRows.length, fail:failRows.length, rows:okRows.map(formatVideoTask), errors:failRows.map(x=>x && x.error).filter(Boolean) };
 }
 function deleteVideoTasks(ids = [], owner='') {
   const st = ensureVideoStore();
@@ -4585,7 +4626,7 @@ function videoTodayStats(owner='') {
     total: rows.length,
     done: rows.filter(v => v.status === '已完成').length,
     fail: rows.filter(v => v.status === '失败').length,
-    running: rows.filter(v => ['等待中','提交中','提交生成中','生成中','查询中','下载中'].includes(v.status)).length
+    running: rows.filter(v => VIDEO_TASK_RUNNING_STATUSES.has(String(v.status || ''))).length
   };
 }
 
@@ -6204,7 +6245,7 @@ function imageTaskProgress(owner) {
 }
 function cleanupStaleImageTasks(owner = '') {
   const st = getDB()._store;
-  const activeSet = new Set(['等待中','提交生成中','生成中','下载中']);
+  const activeSet = IMAGE_TASK_RUNNING_STATUSES;
   const cutoff = Date.now() - 30 * 60 * 1000;
   let changed = false;
   for (const task of st.tasks || []) {
@@ -6233,7 +6274,11 @@ function cleanupStaleImageTasks(owner = '') {
     }
     changed = true;
   }
-  if (changed) getDB()._save();
+  if (changed) {
+    getDB()._save();
+    invalidateAppStatsCache();
+    hostCumulativeStatsCache = { ts:0, data:null };
+  }
   return changed;
 }
 
@@ -6266,7 +6311,7 @@ function appStats(owner) {
     total: tasks.length,
     done: tasks.filter(t => t.status === '已完成').length,
     fail: tasks.filter(t => t.status === '失败').length,
-    running: tasks.filter(t => ['等待中','提交生成中','生成中','下载中','下载待恢复'].includes(t.status)).length,
+    running: tasks.filter(t => IMAGE_TASK_RUNNING_STATUSES.has(String(t.status || ''))).length,
     batches,
     video_stats: videoTodayStats(owner),
     image_task_progress: imageTaskProgress(owner),
@@ -6280,17 +6325,35 @@ function hostCumulativeStats() {
   if (hostCumulativeStatsCache.data && Date.now() - hostCumulativeStatsCache.ts < HOST_STATS_CACHE_TTL_MS) return hostCumulativeStatsCache.data;
   const s = getDB()._store;
   const allTasks = s.tasks || [];
+  const allVideoTasks = Array.isArray(s.video_tasks) ? s.video_tasks : [];
   const allImages = s.images || [];
+  const completedImageTasks = allTasks.filter(t => t.status === '已完成').length;
+  const completedVideoTasks = allVideoTasks.filter(t => t.status === '已完成').length;
+  const failedImageTasks = allTasks.filter(t => t.status === '失败').length;
+  const failedVideoTasks = allVideoTasks.filter(t => t.status === '失败').length;
+  const runningImageTasks = allTasks.filter(t => IMAGE_TASK_RUNNING_STATUSES.has(String(t.status || ''))).length;
+  const runningVideoTasks = allVideoTasks.filter(t => VIDEO_TASK_RUNNING_STATUSES.has(String(t.status || ''))).length;
   const data = {
     host_cumulative: {
-      total_tasks: allTasks.length,
-      completed_tasks: allTasks.filter(t => t.status === '已完成').length,
-      failed_tasks: allTasks.filter(t => t.status === '失败').length,
-      running_tasks: allTasks.filter(t => ['等待中','提交生成中','生成中','下载中','下载待恢复'].includes(t.status)).length,
+      total_tasks: allTasks.length + allVideoTasks.length,
+      image_tasks: allTasks.length,
+      video_tasks: allVideoTasks.length,
+      completed_tasks: completedImageTasks + completedVideoTasks,
+      completed_image_tasks: completedImageTasks,
+      completed_video_tasks: completedVideoTasks,
+      failed_tasks: failedImageTasks + failedVideoTasks,
+      failed_image_tasks: failedImageTasks,
+      failed_video_tasks: failedVideoTasks,
+      running_tasks: runningImageTasks + runningVideoTasks,
+      running_image_tasks: runningImageTasks,
+      running_video_tasks: runningVideoTasks,
       generated_images: allImages.length,
-      batches: (s.batches || []).length
+      generated_videos: allVideoTasks.filter(t => t.status === '已完成' && (t.file_path || t.remote_url)).length,
+      batches: (s.batches || []).length,
+      video_batches: new Set(allVideoTasks.map(t => t.video_batch_id).filter(Boolean)).size
     }
   };
+  data.global_active_tasks = data.host_cumulative.running_tasks;
   hostCumulativeStatsCache = { ts: Date.now(), data };
   return data;
 }
@@ -6452,6 +6515,54 @@ function deleteBatch(batchId, owner) {
   s.batches = s.batches.filter(b => !(b.id === batchId && canAccess(b)));
   getDB()._save();
   return { ok: true, deleted_batch: batchId, deleted_images: imgs.length };
+}
+
+function deleteHistoryBatches(batchIds = [], owner = '') {
+  const selected = new Set((Array.isArray(batchIds) ? batchIds : []).map(id => String(id || '').trim()).filter(Boolean).slice(0, 2000));
+  if (!selected.size) throw new Error('请选择要删除的批次');
+  const db = getDB();
+  const s = db._store;
+  const canAccess = row => !owner || row.owner_id === owner;
+  const imageBatches = (s.batches || []).filter(row => selected.has(row.id) && canAccess(row));
+  const imageBatchIds = new Set(imageBatches.map(row => row.id));
+  const videoRows = (s.video_tasks || []).filter(row => selected.has(String(row.video_batch_id || '')) && canAccess(row));
+  const videoBatchIds = new Set(videoRows.map(row => String(row.video_batch_id || '')).filter(Boolean));
+  if (!imageBatchIds.size && !videoBatchIds.size) throw new Error('选中的批次不存在或没有删除权限');
+
+  for (const batch of imageBatches) {
+    try { if (queue && typeof queue.stopBatch === 'function') queue.stopBatch(batch.id); } catch {}
+  }
+  const images = (s.images || []).filter(row => imageBatchIds.has(row.batch_id) && canAccess(row));
+  for (const row of images) {
+    try { if (row.file_path && fs.existsSync(row.file_path)) fs.unlinkSync(row.file_path); } catch {}
+    try { if (row.thumb_path && fs.existsSync(row.thumb_path)) fs.unlinkSync(row.thumb_path); } catch {}
+  }
+  for (const batch of imageBatches) {
+    try { if (batch.output_dir && fs.existsSync(batch.output_dir)) fs.rmSync(batch.output_dir, { recursive:true, force:true }); } catch {}
+  }
+  for (const row of videoRows) {
+    try { if (row.file_path && fs.existsSync(row.file_path)) fs.unlinkSync(row.file_path); } catch {}
+    try { if (row.thumb_path && fs.existsSync(row.thumb_path)) fs.unlinkSync(row.thumb_path); } catch {}
+    activeApimartVideoPolls.delete(row.id);
+  }
+
+  s.images = (s.images || []).filter(row => !(imageBatchIds.has(row.batch_id) && canAccess(row)));
+  s.tasks = (s.tasks || []).filter(row => !(imageBatchIds.has(row.batch_id) && canAccess(row)));
+  s.logs = (s.logs || []).filter(row => !imageBatchIds.has(row.batch_id));
+  s.batches = (s.batches || []).filter(row => !(imageBatchIds.has(row.id) && canAccess(row)));
+  s.video_tasks = (s.video_tasks || []).filter(row => !(videoBatchIds.has(String(row.video_batch_id || '')) && canAccess(row)));
+  db._save();
+  invalidateAppStatsCache();
+  hostCumulativeStatsCache = { ts:0, data:null };
+  return {
+    ok:true,
+    deleted_batches:imageBatchIds.size + videoBatchIds.size,
+    deleted_image_batches:imageBatchIds.size,
+    deleted_video_batches:videoBatchIds.size,
+    deleted_images:images.length,
+    deleted_videos:videoRows.length,
+    deleted_batch_ids:[...imageBatchIds, ...videoBatchIds]
+  };
 }
 
 async function clearAllSoftwareData(confirmText = '') {
@@ -8511,7 +8622,13 @@ async function apiHandler(req, res, parsed) {
     if (method === 'POST' && p === '/api/assets/unshare') { const body=await readBody(req); return send(res, assetShare(body, local, cfg, deviceOwner, false)); }
     if (method === 'POST' && p === '/api/assets/export_zip') { const body=await readBody(req); const zipPath=assetExportZip(body, local, cfg, deviceOwner); return send(res,{ok:true,url:`/download?path=${encodeURIComponent(zipPath)}`}); }
     if (method === 'GET' && p === '/api/announcements') return send(res, await getAnnouncements(parsed.query.force === '1'));
-    if (method === 'GET' && p === '/api/status') { cleanupStaleImageTasksThrottled(deviceOwner); return send(res, { ...appStats(deviceOwner), time_info: getNetworkTimeInfo(), ...hostCumulativeStats(), ...urls(cfg), is_local_client: local, is_public_client: publicHost, device_data_isolation: cfg.device_data_isolation !== false, host_status_visible: true }); }
+    if (method === 'GET' && p === '/api/status') {
+      cleanupStaleImageTasksThrottled('');
+      cleanupStaleVideoTasksThrottled('');
+      const cumulative = hostCumulativeStats();
+      if (parsed.query.summary === '1') return send(res, { ok:true, global_active_tasks:cumulative.global_active_tasks, host_cumulative:cumulative.host_cumulative, checked_at:nowISO() });
+      return send(res, { ...appStats(deviceOwner), time_info: getNetworkTimeInfo(), ...cumulative, ...urls(cfg), is_local_client: local, is_public_client: publicHost, device_data_isolation: cfg.device_data_isolation !== false, host_status_visible: true });
+    }
     if (method === 'GET' && p === '/api/batches') {
       const pageSize = Math.max(1, Math.min(local ? 6000 : 1000, Number(parsed.query.limit || (local ? 6000 : 1000))));
       return send(res, listBatches({ownerId:dataOwner, page:1, pageSize}).rows.map(normalizeBatch));
@@ -8554,6 +8671,7 @@ async function apiHandler(req, res, parsed) {
     }
     if (method === 'POST' && p === '/api/stop_batch') { const body=await readBody(req); const b=getDB()._store.batches.find(x=>x.id===body.batch_id && (!owner || x.owner_id===owner)); if(!b) throw new Error('无权限或批次不存在'); queue.stopBatch(body.batch_id); return send(res,{ok:true}); }
     if (method === 'POST' && p === '/api/delete_batch') { const body=await readBody(req); return send(res, deleteBatch(body.batch_id, owner)); }
+    if (method === 'POST' && p === '/api/delete_batches') { const body=await readBody(req); return send(res, deleteHistoryBatches(body.batch_ids || [], owner)); }
     if (method === 'POST' && p === '/api/repeat_batch') { const body=await readBody(req); const ret=await repeatBatch(body.batch_id, owner, deviceOwner, body); return send(res,{ok:true, id:ret.id, task_count:ret.taskCount}); }
     if (method === 'POST' && p === '/api/update_batch_note') { const body=await readBody(req); const b=getDB()._store.batches.find(x=>x.id===body.batch_id && (!owner || x.owner_id===owner)); if(!b) throw new Error('无权限或批次不存在'); b.note=body.note||''; b.updated_at=nowISO(); getDB()._save(); return send(res,{ok:true}); }
     if (method === 'GET' && p === '/api/images') {

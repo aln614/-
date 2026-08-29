@@ -138,7 +138,7 @@ assert(/video-prompt-mode-actions/.test(html), 'Video prompt switches must be gr
 assert(/multi_video_reference:multiVideoReference/.test(app), 'Video submit must send the multi-video reference flag');
 assert(/videoMultiReference.*addEventListener\('change'/.test(app), 'Multi-video reference switch must refresh task estimates');
 assert(/enableMultiVideoReferenceWithCompatibleModel/.test(app) && /selectCompatibleMultiVideoReferenceModel/.test(app), 'Unsupported models must guide users to a compatible multi-video model');
-assert(/const taskSources = multiVideoReference \? \[\{/.test(main), 'Multi-video reference mode must merge uploads into one task source');
+assert(/const taskSources = multiFirstFrame[\s\S]{0,900}: multiVideoReference \? \[\{/.test(main), 'Multi-video reference mode must merge uploads into one task source');
 assert(/payload\.video_urls = videoUrls/.test(main), 'Multi-video models must submit all reference video URLs');
 assert(/model:'MiniMax-H3'[^\n]*maxVideoCount:3/.test(main), 'MiniMax H3 must allow up to three reference videos');
 assert(/model:'MiniMax-H3'[^\n]*audioReferenceParam:'audio_urls'[^\n]*maxAudioCount:3/.test(main), 'MiniMax H3 must submit up to three reference audio URLs');
@@ -151,9 +151,9 @@ assert(/model:'skyreels-v4-fast'[^\n]*audioReferenceParam:'ref_image_audio_url'/
 assert(/payload\.audio_urls = audioUrls/.test(main), 'Array-based audio reference models must submit audio_urls');
 assert(/targetImage\.reference_voice = audioUrls\[0\]/.test(main), 'Wan2.7 reference voice must attach to the reference image');
 assert(/local_audio_paths:localAudioPaths/.test(main), 'Video batches must reuse the same audio reference paths');
-assert(/videoAudioFilesData/.test(app) && /audio_files:videoAudioFilesData/.test(app), 'The main video upload flow must keep audio separate from video tasks');
+assert(/videoAudioFilesData/.test(app) && /audio_files:activeAudioFiles/.test(app), 'The main video upload flow must keep audio separate from video tasks');
 assert(/getAudioDurationSeconds/.test(app), 'Reference audio must read local metadata when available');
-assert(/id="videoFile"[^>]*audio\/mpeg[^>]*\.mp3[^>]*\.wav/.test(html), 'The main video upload input must accept MP3 and WAV audio');
+assert(/type\.startsWith\('audio\/'\)/.test(app) && /audioPattern/.test(app), 'The unrestricted main-file input must still classify audio separately');
 assert(/多模态参考/.test(html) && !/多视频参考/.test(html), 'The multi-video control must be renamed to 多模态参考');
 
 console.log(`Video duration validation passed (${backend.size} backend models, ${frontend.size} frontend models).`);

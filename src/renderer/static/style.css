@@ -193,6 +193,10 @@ body.dark .danger-zone h2{color:#ffb4a8;}
 #videoMultiReferenceLabel.is-disabled input{cursor:not-allowed;}
 #videoMultiReferenceLabel.can-switch-model{opacity:.82;cursor:pointer;}
 #videoMultiReferenceLabel.can-switch-model input{cursor:pointer;}
+#videoMultiFirstFrameLabel.is-disabled{opacity:.5;cursor:not-allowed;}
+#videoMultiFirstFrameLabel.active{color:#087f7a!important;border-color:rgba(20,184,166,.5)!important;background:rgba(20,184,166,.14)!important;box-shadow:0 0 0 2px rgba(20,184,166,.08);}
+#videoDrop.multi-first-frame-ignored{opacity:.58;filter:saturate(.55);}
+#videoDrop.multi-first-frame-ignored::before{content:"多首帧已启用：此区域素材不会提交";position:absolute;left:12px;top:8px;z-index:2;padding:4px 8px;border-radius:8px;background:rgba(15,23,42,.82);color:#fff;font-size:11px;font-weight:700;}
 @media(max-width:760px){.main-image-task-warning{width:100%;margin-left:0;text-align:left}.prompt-mode-row{flex-wrap:wrap}#page-video .video-prompt-mode-actions{width:100%;margin-left:0;justify-content:flex-end;flex-wrap:wrap}#page-video .prompt-switch:first-of-type{margin-left:0!important;}}
 
 /* V6.9 polished UI overrides */
@@ -1254,6 +1258,10 @@ body.mobile-ui .video-manage-grid{grid-template-columns:1fr;}
 .upload-audio-mark svg{width:19px;height:19px;fill:currentColor;}
 .upload-audio-thumb small{max-width:58px!important;margin:0!important;text-align:center!important;color:var(--text)!important;}
 .upload-audio-thumb em{max-width:60px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center;color:var(--muted)!important;font-size:9px!important;}
+.upload-attachment-thumb{display:flex!important;flex-direction:column!important;align-items:center!important;justify-content:center!important;gap:3px!important;padding:7px 5px!important;background:linear-gradient(145deg,rgba(99,102,241,.13),rgba(14,165,164,.10))!important;border-color:rgba(99,102,241,.3)!important;}
+.upload-attachment-mark{width:34px;height:30px;border-radius:9px;display:flex;align-items:center;justify-content:center;background:rgba(99,102,241,.14);color:#4f46e5;font-size:9px;font-weight:900;letter-spacing:.3px;}
+.theme-dark .upload-attachment-mark{background:rgba(129,140,248,.16);color:#c7d2fe;}
+.upload-attachment-thumb small,.upload-attachment-thumb em{max-width:62px!important;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center!important;}
 .video-ref-thumb button,
 .video-file-thumb button{
   position:absolute!important;
@@ -1719,6 +1727,7 @@ body.chat-context-fullscreen .chat-context-fullscreen-btn{
 .history-bulk-bar{
   display:flex;
   align-items:center;
+  flex-wrap:wrap;
   gap:10px;
   margin:12px 0;
   padding:10px 12px;

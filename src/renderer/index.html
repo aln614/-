@@ -324,7 +324,8 @@
         <input class="search" id="historySearch" placeholder="搜索批次名 / 备注 / 模型 / 日期" />
         <div class="history-bulk-bar hidden" id="historyBulkBar">
           <span id="historyBulkCount">已选择 0 个批次</span>
-          <button class="primary" id="downloadSelectedBatchesBtn" type="button">下载选中批次图片</button>
+          <button class="primary" id="downloadSelectedBatchesBtn" type="button">下载选中批次</button>
+          <button class="danger" id="deleteSelectedBatchesBtn" type="button">删除选中</button>
           <button class="secondary" id="clearHistoryBatchSelectionBtn" type="button">取消选择</button>
         </div>
         <div class="table-wrap"><table><thead><tr><th class="history-select-col"><input type="checkbox" id="historySelectAllBatches" title="全选 / 取消全选" /></th><th>时间</th><th>批次 / 备注</th><th>模型</th><th>尺寸</th><th>任务</th><th>成功</th><th>失败</th><th>操作</th></tr></thead><tbody id="historyRows"></tbody></table></div>
@@ -380,12 +381,12 @@
             <div id="videoReferenceTypeWrap" class="hidden"><label>SkyReels 视频参考方式</label><select id="videoReferenceType"><option value="reference">动作 / 主体参考</option><option value="extend">视频扩展</option></select><div class="field-help">动作参考跟随源视频时长；视频扩展使用当前时长，且不能同时使用参考图。</div></div>
           </div>
           <div class="card">
-            <h2>视频、音频与参考图</h2>
-            <div class="dropzone" id="videoDrop"><strong>主任务视频与参考音频上传</strong><span>可上传多个主任务视频；每个视频会按提示词创建独立任务。也可在此添加 MP3/WAV 参考音频，音频不会额外创建任务；支持拖入或 Ctrl+V 粘贴视频、音频</span><input id="videoFile" type="file" multiple accept="video/mp4,video/quicktime,.mp4,.mov,audio/mpeg,audio/wav,audio/x-wav,.mp3,.wav" /></div>
+            <h2>视频、音频、附件与参考图</h2>
+            <div class="dropzone" id="videoDrop"><strong>主任务文件与参考音频上传</strong><span>支持选择或拖入任意非图片文件；视频会创建任务，音频作为参考，文档附件按当前模型能力使用。图片请上传到下方参考图区。</span><input id="videoFile" type="file" multiple /></div>
             <div class="thumbs" id="videoFilePreview"></div>
             <div class="dropzone small" id="videoRefDrop"><strong>上传参考图</strong><span>可上传多张参考图，不再限制数量；点击缩略图可像图片一样预览；也支持 Ctrl+V 粘贴图片</span><input id="videoRefFiles" type="file" multiple accept="image/*" /></div>
             <div class="thumbs" id="videoRefThumbs"></div>
-            <div class="prompt-mode-row"><label>视频提示词</label><div class="video-prompt-mode-actions"><label class="switch-line prompt-switch"><input id="videoPromptMultilineTasks" type="checkbox" /> 提示词多行多任务</label><label class="switch-line prompt-switch" id="videoMultiReferenceLabel" title="仅支持多模态参考的 APIMart 模型可用"><input id="videoMultiReference" type="checkbox" /> 多模态参考</label></div></div>
+            <div class="prompt-mode-row"><label>视频提示词</label><div class="video-prompt-mode-actions"><label class="switch-line prompt-switch"><input id="videoPromptMultilineTasks" type="checkbox" /> 提示词多行多任务</label><label class="switch-line prompt-switch" id="videoMultiReferenceLabel" title="仅支持多模态参考的 APIMart 模型可用"><input id="videoMultiReference" type="checkbox" /> 多模态参考</label><label class="switch-line prompt-switch" id="videoMultiFirstFrameLabel" title="每张参考图分别创建一个首帧视频任务"><input id="videoMultiFirstFrame" type="checkbox" /> 多首帧</label></div></div>
             <textarea id="videoPrompt" placeholder="开启：一行/一段提示词 = 一个视频任务；关闭：整个输入框作为一个完整提示词。"></textarea>
             <div class="row">
               <div><label>重复任务次数</label><input id="videoRepeatCount" type="number" value="1" min="1" max="50" /></div>
@@ -444,8 +445,10 @@
           <div class="card metric"><span>接口状态</span><strong id="apiMetricStatus">-</strong></div>
           <div class="card metric"><span>当前运行任务</span><strong id="apiMetricRunning">0</strong></div>
           <div class="card metric"><span>累计完成任务</span><strong id="apiMetricDone">0</strong></div>
-          <div class="card metric"><span>总任务累计数量</span><strong id="apiMetricImages">0</strong></div>
+          <div class="card metric"><span>总任务累计数量（图片 + 视频）</span><strong id="apiMetricImages">0</strong></div>
           <div class="card metric"><span>累计失败任务</span><strong id="apiMetricFail">0</strong></div>
+          <div class="card metric"><span>累计图片任务</span><strong id="apiMetricImageTasks">0</strong></div>
+          <div class="card metric"><span>累计视频任务</span><strong id="apiMetricVideoTasks">0</strong></div>
         </div>
         <div class="card api-log-card"><h2>最近日志</h2><div class="logs" id="apiLogs"></div></div>
       </section>
