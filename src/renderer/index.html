@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>TENYING_AI 1.0</title>
-  <link rel="stylesheet" href="/static/style.css?v=1.0.68" />
+  <link rel="stylesheet" href="/static/style.css?v=1.0.82" />
 </head>
 <body>
   <div class="app-shell">
@@ -834,18 +834,18 @@
     </div>
     <div class="preview-stage with-info" id="previewStage"><img id="previewImg" /><div class="preview-empty-note hidden" id="previewEmptyNote"></div></div>
     <aside class="preview-info glass-sidebar" id="previewInfo">
-      <h2>生成信息</h2>
-      <div class="preview-info-row"><b>模型</b><span id="previewModel">-</span></div>
-      <div class="preview-info-row"><b>尺寸</b><span id="previewSize">-</span></div>
-      <div class="preview-info-row"><b>任务ID</b><span id="previewBatch">-</span></div>
-      <div class="preview-info-row"><b>状态</b><span id="previewStatus">-</span></div>
-      <div class="preview-info-row"><b>进度</b><span id="previewProgress">-</span></div>
-      <div class="preview-info-row"><b>任务ID</b><span id="previewTaskId">-</span></div>
-      <div class="preview-info-row"><b>时间</b><span id="previewTime">-</span></div>
+      <h2 id="previewInfoTitle">生成信息</h2>
+      <div class="preview-info-row"><b id="previewModelLabel">模型</b><span id="previewModel">-</span></div>
+      <div class="preview-info-row"><b id="previewSizeLabel">尺寸</b><span id="previewSize">-</span></div>
+      <div class="preview-info-row"><b id="previewBatchLabel">任务ID</b><span id="previewBatch">-</span></div>
+      <div class="preview-info-row"><b id="previewStatusLabel">状态</b><span id="previewStatus">-</span></div>
+      <div class="preview-info-row"><b id="previewProgressLabel">进度</b><span id="previewProgress">-</span></div>
+      <div class="preview-info-row"><b id="previewTaskIdLabel">任务ID</b><span id="previewTaskId">-</span></div>
+      <div class="preview-info-row"><b id="previewTimeLabel">时间</b><span id="previewTime">-</span></div>
       <div class="preview-info-row hidden" id="previewMjJumpRow"><b>跳转图片</b><div class="preview-mj-jump" id="previewMjJump"></div></div>
       <div class="preview-info-row hidden" id="previewMjButtonsRow"><b>二次操作按钮</b><div class="preview-mj-buttons" id="previewMjButtons"></div></div>
-      <div class="preview-prompt-box collapsed" id="previewPromptBox"><b>提示词</b><pre id="previewPrompt">-</pre></div>
-      <div class="actions"><button class="secondary" id="togglePreviewPrompt">展开提示词</button><button class="secondary" id="copyPreviewPromptBtn">复制提示词</button><button class="secondary" id="copyPreviewUrlBtn">复制图片链接</button></div>
+      <div class="preview-prompt-box collapsed" id="previewPromptBox"><b id="previewPromptLabel">提示词</b><pre id="previewPrompt">-</pre></div>
+      <div class="actions" id="previewInfoActions"><button class="secondary" id="togglePreviewPrompt">展开提示词</button><button class="secondary" id="copyPreviewPromptBtn">复制提示词</button><button class="secondary" id="copyPreviewUrlBtn">复制图片链接</button></div>
     </aside>
   </div>
 
@@ -903,16 +903,16 @@
     <button class="modal-close" id="closeVideoPreview">×</button>
     <div class="video-preview-wrap">
       <video id="videoPreviewPlayer" controls autoplay playsinline preload="metadata"></video><div class="video-player-error hidden" id="videoPlayerError">视频无法预览，请尝试下载或打开视频链接。</div>
-      <aside class="preview-info video-preview-info">
-        <h2>视频生成信息</h2>
-        <div class="preview-info-row"><b>状态</b><span id="videoPreviewStatus">-</span></div>
-        <div class="preview-info-row"><b>模型</b><span id="videoPreviewModel">-</span></div>
-        <div class="preview-info-row"><b>分辨率 / 比例</b><span id="videoPreviewSize">-</span></div>
-        <div class="preview-info-row"><b>时长</b><span id="videoPreviewDuration">-</span></div>
-        <div class="preview-info-row"><b>进度</b><span id="videoPreviewProgress">-</span></div>
-        <div class="preview-info-row"><b>任务ID</b><span id="videoPreviewTaskId">-</span></div>
-        <div class="preview-info-row"><b>创建时间</b><span id="videoPreviewTime">-</span></div>
-        <div class="preview-prompt-box" id="videoPreviewPromptBox"><b>提示词</b><pre id="videoPreviewPrompt">-</pre></div>
+      <aside class="preview-info video-preview-info" id="videoPreviewInfo">
+        <h2 id="videoPreviewInfoTitle">视频生成信息</h2>
+        <div class="preview-info-row"><b id="videoPreviewStatusLabel">状态</b><span id="videoPreviewStatus">-</span></div>
+        <div class="preview-info-row"><b id="videoPreviewModelLabel">模型</b><span id="videoPreviewModel">-</span></div>
+        <div class="preview-info-row"><b id="videoPreviewSizeLabel">分辨率 / 比例</b><span id="videoPreviewSize">-</span></div>
+        <div class="preview-info-row"><b id="videoPreviewDurationLabel">时长</b><span id="videoPreviewDuration">-</span></div>
+        <div class="preview-info-row"><b id="videoPreviewProgressLabel">进度</b><span id="videoPreviewProgress">-</span></div>
+        <div class="preview-info-row"><b id="videoPreviewTaskIdLabel">任务ID</b><span id="videoPreviewTaskId">-</span></div>
+        <div class="preview-info-row"><b id="videoPreviewTimeLabel">创建时间</b><span id="videoPreviewTime">-</span></div>
+        <div class="preview-prompt-box" id="videoPreviewPromptBox"><b id="videoPreviewPromptLabel">提示词</b><pre id="videoPreviewPrompt">-</pre></div>
         <div class="actions"><button class="secondary" id="copyVideoPromptBtn">复制提示词</button><button class="secondary" id="copyVideoUrlBtn">复制视频链接</button><button class="primary" id="openVideoUrlBtn">打开视频</button></div>
       </aside>
     </div>
@@ -1005,6 +1005,6 @@
       </div>
     </div>
   </div>
-  <script src="/static/app.js?v=1.0.68"></script>
+  <script src="/static/app.js?v=1.0.82"></script>
 </body>
 </html>

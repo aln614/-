@@ -4033,3 +4033,78 @@ body.agent-resize-active,body.agent-resize-active *{cursor:nwse-resize!important
   .agent-composer-model{grid-column:1/2}
   .agent-composer-foot button{grid-column:2;grid-row:3;align-self:stretch}
 }
+
+/* Asset library readability and file-aware preview panel. */
+#previewModal.asset-file-preview,
+#videoPreviewModal.asset-file-preview{z-index:12050!important}
+.asset-card .asset-info{min-width:0;padding:9px 10px 8px!important}
+.asset-card .asset-name{
+  display:block!important;
+  width:100%;
+  min-width:0;
+  white-space:normal!important;
+  overflow:hidden!important;
+  text-overflow:clip!important;
+  overflow-wrap:anywhere;
+  word-break:break-word;
+  line-height:1.2;
+}
+.asset-card .asset-meta{
+  min-height:27px;
+  margin-top:5px!important;
+  line-height:1.25;
+  white-space:normal;
+  overflow:hidden;
+  overflow-wrap:anywhere;
+  display:-webkit-box;
+  -webkit-box-orient:vertical;
+  -webkit-line-clamp:2;
+}
+.asset-group-row{
+  min-height:42px!important;
+  height:auto!important;
+  gap:5px!important;
+  padding-top:5px!important;
+  padding-bottom:5px!important;
+}
+.asset-group-name{
+  display:block;
+  flex:1 1 auto;
+  min-width:0;
+  white-space:normal!important;
+  overflow:hidden!important;
+  text-overflow:clip!important;
+  overflow-wrap:anywhere;
+  word-break:break-word;
+  line-height:1.2;
+}
+.asset-folder-icon{width:auto!important;min-width:16px;max-width:34px;flex:0 0 auto!important;white-space:nowrap}
+.asset-group-row .count{margin-left:0!important;padding:2px 6px!important}
+.asset-share-mark,.asset-readonly-mark{font-size:9px!important;line-height:1.1;padding:2px 4px!important}
+.preview-info.asset-file-mode .preview-info-row,
+.video-preview-info.asset-file-mode .preview-info-row{
+  grid-template-columns:88px minmax(0,1fr)!important;
+  align-items:start;
+  gap:8px!important;
+}
+.preview-info.asset-file-mode .preview-info-row b,
+.video-preview-info.asset-file-mode .preview-info-row b{font-size:11px;line-height:1.45}
+.preview-info.asset-file-mode .preview-info-row span,
+.video-preview-info.asset-file-mode .preview-info-row span{
+  min-width:0;
+  white-space:pre-wrap;
+  overflow-wrap:anywhere;
+  word-break:break-word;
+  font-size:12px;
+  line-height:1.45;
+}
+.preview-info.asset-file-mode .preview-prompt-box pre,
+.video-preview-info.asset-file-mode .preview-prompt-box pre{
+  overflow-wrap:anywhere;
+  word-break:break-all;
+  white-space:pre-wrap;
+}
+.preview-info.asset-file-mode .actions,
+.video-preview-info.asset-file-mode .actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.preview-info.asset-file-mode .actions button,
+.video-preview-info.asset-file-mode .actions button{min-width:0;white-space:normal;line-height:1.2}
