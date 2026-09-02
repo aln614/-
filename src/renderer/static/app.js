@@ -6615,11 +6615,12 @@ function setPreviewInfo(meta = {}){
   const assetMode = !!meta.assetPreview;
   $('#previewInfo')?.classList.toggle('asset-file-mode', assetMode);
   if(assetMode){
+    const hasVisualPreview = meta.fileType === 'image' || !!meta.hasVisualPreview || !!meta.thumbUrl || !!meta.thumb_url;
     setPreviewLabel('previewInfoTitle', '文件信息');
     setPreviewLabel('previewModelLabel', '文件名');
     setPreviewLabel('previewSizeLabel', '文件类型');
     setPreviewLabel('previewBatchLabel', '文件大小');
-    setPreviewLabel('previewStatusLabel', meta.fileType === 'image' ? '图片尺寸' : '预览信息');
+    setPreviewLabel('previewStatusLabel', hasVisualPreview ? '预览尺寸' : '预览信息');
     setPreviewLabel('previewProgressLabel', '所在分类');
     setPreviewLabel('previewTaskIdLabel', '所有者 / 权限');
     setPreviewLabel('previewTimeLabel', '上传时间');
@@ -6627,7 +6628,7 @@ function setPreviewInfo(meta = {}){
     if($('#previewModel')) $('#previewModel').textContent = meta.filename || meta.name || meta.original_name || '未命名素材';
     if($('#previewSize')) $('#previewSize').textContent = meta.fileTypeLabel || [meta.fileType || meta.type, meta.mimeType || meta.mime_type].filter(Boolean).join(' · ') || '图片';
     if($('#previewBatch')) $('#previewBatch').textContent = meta.fileSizeLabel || assetFormatSize(meta.size_bytes || meta.sizeBytes || meta.fileSize || 0);
-    if($('#previewStatus')) $('#previewStatus').textContent = meta.dimensions || (meta.fileType === 'image' ? '读取中…' : '当前类型无内置画面预览');
+    if($('#previewStatus')) $('#previewStatus').textContent = meta.dimensions || (hasVisualPreview ? '读取中…' : '当前类型无内置画面预览');
     if($('#previewProgress')) $('#previewProgress').textContent = meta.groupPath || meta.groupName || '-';
     if($('#previewTaskId')) $('#previewTaskId').textContent = meta.accessLabel || meta.ownerName || '-';
     if($('#previewTime')) $('#previewTime').textContent = meta.time || formatBeijingTime(meta.created_at || meta.updated_at || '') || '-';
@@ -10161,7 +10162,8 @@ function assetGroupPath(groupId){
   return names.join(' / ');
 }
 function assetTypeLabel(asset={}){
-  const typeName=asset.type==='image'?'图片':asset.type==='video'?'视频':asset.type==='audio'?'音频':'附件';
+  const isPsd=/\.ps[db]$/i.test(String(asset.name||asset.original_name||asset.local_path||''));
+  const typeName=isPsd?'Photoshop 源文件':asset.type==='image'?'图片':asset.type==='video'?'视频':asset.type==='audio'?'音频':'附件';
   return [typeName, asset.mime_type||asset.mimeType||''].filter(Boolean).join(' · ');
 }
 function assetAccessLabel(asset={}){
@@ -10191,6 +10193,7 @@ function assetPreviewMeta(asset={}){
     fullUrl:asset.url||asset.source_url||'',
     remoteUrl:asset.url||asset.source_url||'',
     thumbUrl:asset.thumb_url||'',
+    hasVisualPreview:!!asset.thumb_url,
     url:asset.url||asset.source_url||'',
     stream_url:asset.url||asset.source_url||'',
     download_url:asset.download_url||asset.url||asset.source_url||''
@@ -10465,7 +10468,7 @@ function renderAssetLibrary({skipTree=false}={}){
   if(grid){
     const pointerCardDrag=assetUsesPointerCardDrag();
     grid.innerHTML = (assetState.assets||[]).map(a=>{
-      const thumb = a.type === 'image' ? (a.thumb_url || a.url) : (a.type === 'video' ? (a.thumb_url || '') : '');
+      const thumb = a.thumb_url || (a.type === 'image' ? a.url : '');
       const readonly = !assetCanEdit(a);
       const ownerText = a.owner_name || a.owner_client_id || '';
       const selected = assetState.selected.has(a.id);
@@ -11054,7 +11057,7 @@ function setupAssetLibrary(){
   $('#assetGroupTree')?.addEventListener('scroll',e=>assetRevealTreeScrollbar(e.currentTarget),{passive:true});
   $('#assetGroupTree')?.addEventListener('keydown',e=>{ const input=e.target.closest('[data-group-edit]'); if(!input) return; const row=input.closest('.asset-group-row'); if(e.key==='Enter'){ e.preventDefault(); assetSaveGroupName(row.dataset.id, input.value).catch(err=>toast(err.message||'重命名失败')); } if(e.key==='Escape'){ e.preventDefault(); assetState.editingGroupId=''; renderAssetLibrary(); } });
   $('#assetGroupTree')?.addEventListener('focusout',e=>{ const input=e.target.closest('[data-group-edit]'); if(!input) return; const row=input.closest('.asset-group-row'); setTimeout(()=>{ if(assetState.editingGroupId === row.dataset.id) assetSaveGroupName(row.dataset.id, input.value).catch(err=>toast(err.message||'重命名失败')); }, 0); });
-  $('#assetGrid')?.addEventListener('click',async e=>{ if(Date.now()-assetState.assetDragJustEnded<240) return; const card=e.target.closest('.asset-card'); if(!card) return; if(e.target.closest('[data-asset-name],.asset-name-edit')) return; const id=card.dataset.id; const a=assetState.assets.find(x=>x.id===id); const act=e.target.closest('button[data-act]')?.dataset.act; if(act==='copy'){ await assetCopyAsset(a); return; } if(act==='download'){ window.open(withPublicAccess(a.download_url||a.url),'_blank'); return; } if(act==='delete'){ return assetDeleteIds([id]); } if(assetState.batch){ assetState.selected.has(id)?assetState.selected.delete(id):assetState.selected.add(id); renderAssetLibrary({skipTree:true}); return; } const previewMeta=assetPreviewMeta(a||{}); if(a?.type==='image') showPreview(a.url,previewMeta); else if(a?.type==='video') showVideoPreview(previewMeta); else showPreview('',previewMeta); });
+  $('#assetGrid')?.addEventListener('click',async e=>{ if(Date.now()-assetState.assetDragJustEnded<240) return; const card=e.target.closest('.asset-card'); if(!card) return; if(e.target.closest('[data-asset-name],.asset-name-edit')) return; const id=card.dataset.id; const a=assetState.assets.find(x=>x.id===id); const act=e.target.closest('button[data-act]')?.dataset.act; if(act==='copy'){ await assetCopyAsset(a); return; } if(act==='download'){ window.open(withPublicAccess(a.download_url||a.url),'_blank'); return; } if(act==='delete'){ return assetDeleteIds([id]); } if(assetState.batch){ assetState.selected.has(id)?assetState.selected.delete(id):assetState.selected.add(id); renderAssetLibrary({skipTree:true}); return; } const previewMeta=assetPreviewMeta(a||{}); if(a?.type==='image') showPreview(a.url,previewMeta); else if(a?.type==='video') showVideoPreview(previewMeta); else if(a?.thumb_url) showPreview(a.thumb_url,{...previewMeta,skipFullAutoLoad:true}); else showPreview('',previewMeta); });
   $('#assetGrid')?.addEventListener('contextmenu',e=>{ const card=e.target.closest('.asset-card'); if(!card) return; e.preventDefault(); e.stopPropagation(); showAssetContextMenu(e,card.dataset.id); });
   $('#assetGrid')?.addEventListener('dragover',e=>{
     const payload = assetInternalDragPayload(e.dataTransfer);
@@ -12048,8 +12051,31 @@ function startMjPollingMulti(tasks=[]){
   mjState.pollingTimer = setInterval(poll, 5000);
 }
 
+const uiScrollbarHideTimers = new WeakMap();
+function revealUiScrollbar(target){
+  const scroller = target === document
+    ? (document.scrollingElement || document.documentElement)
+    : target;
+  if(!(scroller instanceof Element)) return;
+  scroller.classList.add('ui-scrollbar-active');
+  const previousTimer = uiScrollbarHideTimers.get(scroller);
+  if(previousTimer) clearTimeout(previousTimer);
+  const timer = setTimeout(()=>{
+    scroller.classList.remove('ui-scrollbar-active');
+    uiScrollbarHideTimers.delete(scroller);
+  }, 950);
+  uiScrollbarHideTimers.set(scroller, timer);
+}
+function setupAutoHideScrollbars(){
+  const root = document.documentElement;
+  if(root.dataset.autoHideScrollbars === 'ready') return;
+  root.dataset.autoHideScrollbars = 'ready';
+  document.addEventListener('scroll', event=>revealUiScrollbar(event.target), {capture:true, passive:true});
+}
+
 async function startup(){
   try{
+    setupAutoHideScrollbars();
     loadPreviewBgSettings();
     applyPreviewBgSettings();
     await loadConfig();

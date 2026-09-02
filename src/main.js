@@ -5976,9 +5976,39 @@ function assetDescendantGroupIds(db, groupId) {
 }
 function assetTypeByName(name='', mime='') {
   const ext = path.extname(name).toLowerCase();
+  if (['.psd','.psb'].includes(ext)) return 'file';
   if (String(mime).startsWith('image/') || ['.png','.jpg','.jpeg','.webp','.gif'].includes(ext)) return 'image';
   if (String(mime).startsWith('video/') || ['.mp4','.mov','.webm','.m4v'].includes(ext)) return 'video';
   return 'file';
+}
+function isPsdAssetFile(assetOrName='') {
+  if (typeof assetOrName === 'string') return /\.ps[db]$/i.test(assetOrName);
+  return [assetOrName?.name, assetOrName?.original_name, assetOrName?.local_path].some(value=>/\.ps[db]$/i.test(String(value || '')));
+}
+function ensureAssetDocumentPreviewThumbs(db, cfg=readConfig(), rows=null) {
+  const assets = Array.isArray(rows) ? rows : (Array.isArray(db.assets) ? db.assets : []);
+  const base = defaultAssetLibraryDir(cfg);
+  let changed = false;
+  for (const asset of assets) {
+    if (!isPsdAssetFile(asset)) continue;
+    if (asset.type !== 'file') { asset.type = 'file'; changed = true; }
+    if (!/photoshop/i.test(String(asset.mime_type || ''))) {
+      asset.mime_type = 'application/vnd.adobe.photoshop';
+      changed = true;
+    }
+    if (asset.thumb_path && fs.existsSync(asset.thumb_path)) continue;
+    if (!asset.local_path || !fs.existsSync(asset.local_path)) continue;
+    const owner = String(asset.owner_client_id || 'host').replace(/[^a-zA-Z0-9_-]/g, '_') || 'host';
+    const thumbDir = ensureInside(base, path.join(base, 'thumbs', owner));
+    ensureDir(thumbDir);
+    const thumbPath = ensureInside(base, path.join(thumbDir, `${asset.id}.png`));
+    if (createThumb(asset.local_path, thumbPath, 420)) {
+      asset.thumb_path = thumbPath;
+      asset.updated_at = nowISO();
+      changed = true;
+    }
+  }
+  return changed;
 }
 function assetPublicRow(a, local=false, ownerId='', sharedGroupSet=new Set()) {
   const shared = a.shared === true || sharedGroupSet.has(a.group_id);
@@ -6026,6 +6056,7 @@ function assetLibraryInit(local, cfg, deviceOwner) {
   const ownerId = assetClientId(local, deviceOwner);
   const db = readAssetDb(cfg);
   ensureDefaultAssetGroups(db, ownerId);
+  ensureAssetDocumentPreviewThumbs(db, cfg);
   writeAssetDb(db, cfg);
   return {
     ok:true,
@@ -6170,7 +6201,7 @@ function assetUpload(body, local, cfg, deviceOwner) {
     const localPath = ensureInside(base, path.join(dir, filename));
     fs.writeFileSync(localPath, Buffer.from(m[2], 'base64'));
     let thumbPath = '';
-    if (type === 'image') {
+    if (type === 'image' || isPsdAssetFile(original)) {
       const td = ensureInside(base, path.join(base, 'thumbs', ownerId));
       ensureDir(td);
       thumbPath = path.join(td, `${id}.png`);
@@ -6193,7 +6224,9 @@ function assetUpload(body, local, cfg, deviceOwner) {
 }
 function assetList(groupId, local, cfg, deviceOwner, search='') {
   const ownerId = assetClientId(local, deviceOwner), db = readAssetDb(cfg);
-  ensureDefaultAssetGroups(db, ownerId); writeAssetDb(db, cfg);
+  ensureDefaultAssetGroups(db, ownerId);
+  ensureAssetDocumentPreviewThumbs(db, cfg);
+  writeAssetDb(db, cfg);
   const q = String(search || '').trim().toLowerCase();
   const sharedGroupSet = assetSharedGroupIds(db);
   const scopeIds = assetDescendantGroupIds(db, groupId);

@@ -4,6 +4,7 @@ const os = require('os');
 const { app, BrowserWindow, nativeImage } = require('electron');
 const https = require('https');
 const http = require('http');
+const { extractEmbeddedPsdThumbnail } = require('./psdPreview');
 
 function safeName(text, fallback = 'batch') {
   const s = String(text || '').trim().replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, ' ');
@@ -23,9 +24,15 @@ function makeDirs(baseOutputDir, batchName) {
 
 function createThumb(srcPath, thumbPath, size = 300) {
   try {
-    const img = nativeImage.createFromPath(srcPath);
+    const isPsd = /\.ps[db]$/i.test(path.extname(srcPath));
+    const embedded = isPsd ? extractEmbeddedPsdThumbnail(srcPath) : null;
+    const img = embedded?.length ? nativeImage.createFromBuffer(embedded) : nativeImage.createFromPath(srcPath);
     if (img.isEmpty()) return null;
-    const thumb = img.resize({ width: size, height: size, quality: 'good' });
+    const dimensions = img.getSize();
+    const resize = isPsd && dimensions.width && dimensions.height
+      ? (dimensions.width >= dimensions.height ? { width:size, quality:'good' } : { height:size, quality:'good' })
+      : { width:size, height:size, quality:'good' };
+    const thumb = img.resize(resize);
     fs.writeFileSync(thumbPath, thumb.toPNG());
     return thumbPath;
   } catch (err) {

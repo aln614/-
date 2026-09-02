@@ -4279,3 +4279,68 @@ body.theme-dark .asset-overlay-scroll-thumb{background:linear-gradient(180deg,rg
   border:0!important;
   background:transparent!important;
 }
+
+/* Final global scrollbar treatment: a slim thumb appears only while scrolling. */
+*{
+  scrollbar-width:thin!important;
+  scrollbar-color:transparent transparent!important;
+}
+*::-webkit-scrollbar{
+  width:5px!important;
+  height:5px!important;
+  background:transparent!important;
+}
+*::-webkit-scrollbar-track,
+*::-webkit-scrollbar-track-piece,
+*::-webkit-scrollbar-corner{
+  margin:0!important;
+  border:0!important;
+  border-radius:0!important;
+  background:transparent!important;
+  box-shadow:none!important;
+}
+*::-webkit-scrollbar-button,
+*::-webkit-scrollbar-button:single-button,
+*::-webkit-scrollbar-button:vertical,
+*::-webkit-scrollbar-button:horizontal{
+  display:none!important;
+  width:0!important;
+  height:0!important;
+  min-width:0!important;
+  min-height:0!important;
+  border:0!important;
+  background:transparent!important;
+}
+*::-webkit-scrollbar-thumb{
+  min-width:30px!important;
+  min-height:30px!important;
+  border:0!important;
+  border-radius:999px!important;
+  background:transparent!important;
+  background-clip:padding-box!important;
+  box-shadow:none!important;
+}
+*.ui-scrollbar-active{
+  scrollbar-color:color-mix(in srgb,var(--skin-primary,#64748b) 58%,rgba(100,116,139,.52)) transparent!important;
+}
+*.ui-scrollbar-active::-webkit-scrollbar-thumb,
+*::-webkit-scrollbar-thumb:hover{
+  border-radius:999px!important;
+  background:color-mix(in srgb,var(--skin-primary,#64748b) 58%,rgba(100,116,139,.52))!important;
+  box-shadow:none!important;
+}
+body.theme-dark *.ui-scrollbar-active{
+  scrollbar-color:color-mix(in srgb,var(--skin-secondary,#cbd5e1) 58%,rgba(226,232,240,.42)) transparent!important;
+}
+body.theme-dark *.ui-scrollbar-active::-webkit-scrollbar-thumb,
+body.theme-dark *::-webkit-scrollbar-thumb:hover{
+  background:color-mix(in srgb,var(--skin-secondary,#cbd5e1) 58%,rgba(226,232,240,.42))!important;
+}
+
+/* The asset window already uses its own matching overlay thumbs. */
+.asset-library-window .asset-group-tree::-webkit-scrollbar,
+.asset-library-window .asset-grid::-webkit-scrollbar{
+  display:none!important;
+  width:0!important;
+  height:0!important;
+}
