@@ -31,5 +31,13 @@ assert(/function assetToggleGroupChildren\(/.test(app), 'Asset parent groups mus
 assert(/addEventListener\('dblclick',[\s\S]*?assetToggleGroupChildren\(row\.dataset\.id\)/.test(app), 'Double-clicking an asset parent group must toggle its children');
 assert(/addEventListener\('wheel',[\s\S]*?tree\.scrollTop=next/.test(app), 'Asset category wheel scrolling must stay inside the tree');
 assert(/\.asset-group-tree\{[^}]*overflow-y:auto!important[^}]*overscroll-behavior:contain/.test(css), 'Asset category tree must own vertical scrolling');
+assert(/function assetApplyLoadedFilter\(/.test(app), 'Asset group switching must filter the loaded asset index locally');
+assert(/function loadAssetAssets\([^)]*skipTree=true/.test(app), 'Asset group switching must preserve the existing category tree');
+assert(/renderAssetLibrary\(\{skipTree\}\)/.test(app), 'Asset rendering must support a grid-only fast path');
+assert(/assetTextMeasureContext[\s\S]*?measureText\(String\(text\|\|''\)\)/.test(app), 'Asset text fitting must avoid repeated DOM layout measurements');
+assert(/data-asset-media-src/.test(app) && /function assetHydrateCardMedia\(/.test(app), 'Asset thumbnails must hydrate only near the visible grid area');
+assert(/new IntersectionObserver[\s\S]*?root:grid[\s\S]*?rootMargin:'240px 0px'/.test(app), 'Asset media lazy loading must follow the asset grid viewport');
+assert(/assetRevealTreeScrollbar\(tree\)/.test(app) && /scrollbar-active/.test(app), 'Asset scrollbar visibility must follow active scrolling');
+assert(/\.asset-group-tree\.scrollbar-active/.test(css) && /scrollbar-color:transparent transparent/.test(css), 'Asset scrollbar must hide after scrolling without shifting layout');
 
-console.log('[verify-asset-library-drag] OK: full thumbnails, drag workflows, prompt categories, and scrollable asset groups are wired.');
+console.log('[verify-asset-library-drag] OK: full thumbnails, drag workflows, prompt categories, fast switching, and auto-hidden group scrolling are wired.');

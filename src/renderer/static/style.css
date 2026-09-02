@@ -4126,9 +4126,12 @@ body.agent-resize-active,body.agent-resize-active *{cursor:nwse-resize!important
   touch-action:pan-y;
   scrollbar-gutter:stable;
   scrollbar-width:thin;
-  scrollbar-color:rgba(20,184,166,.58) rgba(148,163,184,.12);
+  scrollbar-color:transparent transparent;
 }
 .asset-group-tree::-webkit-scrollbar{width:6px}
-.asset-group-tree::-webkit-scrollbar-track{background:rgba(148,163,184,.10);border-radius:999px}
-.asset-group-tree::-webkit-scrollbar-thumb{background:rgba(20,184,166,.58);border-radius:999px}
-.asset-group-tree::-webkit-scrollbar-thumb:hover{background:rgba(13,148,136,.8)}
+.asset-group-tree::-webkit-scrollbar-track{background:transparent;border-radius:999px;transition:background-color .18s ease}
+.asset-group-tree::-webkit-scrollbar-thumb{background:transparent;border-radius:999px;transition:background-color .18s ease}
+.asset-group-tree.scrollbar-active{scrollbar-color:rgba(20,184,166,.58) rgba(148,163,184,.10)}
+.asset-group-tree.scrollbar-active::-webkit-scrollbar-track{background:rgba(148,163,184,.10)}
+.asset-group-tree.scrollbar-active::-webkit-scrollbar-thumb{background:rgba(20,184,166,.58)}
+.asset-group-tree.scrollbar-active::-webkit-scrollbar-thumb:hover{background:rgba(13,148,136,.8)}
