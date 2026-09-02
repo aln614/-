@@ -5,6 +5,7 @@ const root = path.resolve(__dirname, '..');
 const main = fs.readFileSync(path.join(root, 'src', 'main.js'), 'utf8');
 const app = fs.readFileSync(path.join(root, 'src', 'renderer', 'static', 'app.js'), 'utf8');
 const css = fs.readFileSync(path.join(root, 'src', 'renderer', 'static', 'style.css'), 'utf8');
+const index = fs.readFileSync(path.join(root, 'src', 'renderer', 'index.html'), 'utf8');
 const preload = fs.readFileSync(path.join(root, 'src', 'preload.js'), 'utf8');
 
 function assert(condition, message) {
@@ -31,6 +32,9 @@ assert(!/startDrag\(\{ file:\s*asset\.local_path/.test(main), 'Native dragging m
 assert(/e\.preventDefault\(\);[\s\S]*?assetStartNativeDrag\(asset, card\)/.test(app), 'Electron asset drags must cancel the competing HTML drag loop');
 assert(/if\(e\.target\.closest\?\.\('\.asset-card'\)\) return;/.test(app), 'Asset cards must bypass the generic generated-image drag handler');
 assert(/window\.addEventListener\('blur', hideDragOriginalBadge/.test(app), 'Native drag feedback must be cleared if the window loses focus');
+assert(/id="assetSearchAllBtn"/.test(index), 'Asset library must expose the all-groups search toggle');
+assert(/searchAll:false/.test(app) && /searchEveryGroup=assetState\.searchAll && !!query/.test(app), 'All-groups search must only expand scope when a query exists');
+assert(/assetState\.searchAll=!assetState\.searchAll/.test(app), 'All-groups search button must toggle its search scope');
 assert(/assetPrepareNativeDrag\(asset\)/.test(app), 'Asset cards must warm the independent drag copy before dragstart');
 assert(/startImageDrag:\s*\(payload\)\s*=>\s*ipcRenderer\.invoke\('start-image-drag'/.test(preload), 'Generated images must use the controlled native drag bridge');
 assert(/ipcMain\.handle\('start-image-drag'/.test(main), 'Main process must await the generated-image drag copy');

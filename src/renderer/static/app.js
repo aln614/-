@@ -9800,7 +9800,7 @@ function makeFloatingBox(boxId, headId, resizeId){
 
 // V14.10.33 Asset Library
 const ASSET_SIDEBAR_PIN_KEY = 'LAIG_ASSET_SIDEBAR_PINNED';
-const assetState = { ready:false, groups:[], assets:[], allAssets:[], currentGroup:'', selected:new Set(), batch:false, isHost:false, settings:{}, clientId:'', sidebarPinned:localStorage.getItem(ASSET_SIDEBAR_PIN_KEY)==='1', editingGroupId:'', collapsedGroups:new Set(), draggingAssetId:'', reorderTarget:null };
+const assetState = { ready:false, groups:[], assets:[], allAssets:[], currentGroup:'', selected:new Set(), batch:false, isHost:false, settings:{}, clientId:'', sidebarPinned:localStorage.getItem(ASSET_SIDEBAR_PIN_KEY)==='1', searchAll:false, editingGroupId:'', collapsedGroups:new Set(), draggingAssetId:'', reorderTarget:null };
 const assetNativeDragPrepare = new Map();
 let assetNativeDragHoverTimer = 0;
 let assetNativeDragHoverId = '';
@@ -10006,8 +10006,9 @@ function assetApplyLoadedFilter(){
   }
   const scopeIds=assetDescendantGroupIds(assetState.currentGroup);
   const query=($('#assetLibrarySearch')?.value||'').trim().toLowerCase();
+  const searchEveryGroup=assetState.searchAll && !!query;
   assetState.assets=assetSortRowsForView((assetState.allAssets||[]).filter(asset=>{
-    if(!scopeIds.has(String(asset.group_id||''))) return false;
+    if(!searchEveryGroup && !scopeIds.has(String(asset.group_id||''))) return false;
     return !query || String(asset.name||'').toLowerCase().includes(query);
   }));
   const visibleIds=new Set(assetState.assets.map(asset=>asset.id));
@@ -10091,8 +10092,17 @@ function renderAssetLibrary({skipTree=false}={}){
   }
   if(tree) tree.querySelectorAll('.asset-group-row').forEach(row=>row.classList.toggle('active',row.dataset.id===assetState.currentGroup));
   const g = assetGroupById(assetState.currentGroup);
-  if($('#assetCurrentGroupTitle')) $('#assetCurrentGroupTitle').textContent = g.name || '暂无资产库';
-  if($('#assetCurrentGroupMeta')) $('#assetCurrentGroupMeta').textContent = assetState.currentGroup ? `${assetState.assets.length} 个素材` : '暂无资产库，点击新建分组';
+  const searchQuery=($('#assetLibrarySearch')?.value||'').trim();
+  const searchingAll=assetState.searchAll && !!searchQuery;
+  if($('#assetCurrentGroupTitle')) $('#assetCurrentGroupTitle').textContent = searchingAll ? '全资产库搜索' : (g.name || '暂无资产库');
+  if($('#assetCurrentGroupMeta')) $('#assetCurrentGroupMeta').textContent = searchingAll ? `找到 ${assetState.assets.length} 个素材` : (assetState.currentGroup ? `${assetState.assets.length} 个素材` : '暂无资产库，点击新建分组');
+  const searchAllBtn=$('#assetSearchAllBtn');
+  if(searchAllBtn){
+    searchAllBtn.classList.toggle('active',assetState.searchAll);
+    searchAllBtn.setAttribute('aria-pressed',assetState.searchAll?'true':'false');
+    searchAllBtn.title=assetState.searchAll?'已搜索全部资产，点击恢复当前分类':'搜索全部资产';
+  }
+  if($('#assetLibrarySearch')) $('#assetLibrarySearch').placeholder=assetState.searchAll?'搜索全部资产':'搜索当前分类';
   if($('#assetClientBadge')) $('#assetClientBadge').textContent = assetState.isHost ? '主机' : '访问端';
   const canManageCurrentGroup = assetCanEdit(g);
   $('#assetShareCurrentGroupBtn')?.classList.toggle('active', !!g.shared);
@@ -10409,7 +10419,19 @@ function setupAssetLibrary(){
   $('#closeAssetLibraryWindow')?.addEventListener('click', closeAssetLibrary);
   $('#minimizeAssetLibraryWindow')?.addEventListener('click', minimizeAssetLibrary);
   $('#assetLibraryOrb')?.addEventListener('click', openAssetLibrary);
-  $('#assetLibrarySearch')?.addEventListener('input', ()=>loadAssetAssets().catch(e=>toast(e.message||'搜索失败')));
+  let assetSearchTimer=0;
+  $('#assetLibrarySearch')?.addEventListener('input', ()=>{
+    if(assetSearchTimer) clearTimeout(assetSearchTimer);
+    assetSearchTimer=setTimeout(()=>{
+      assetSearchTimer=0;
+      loadAssetAssets().catch(e=>toast(e.message||'搜索失败'));
+    },100);
+  });
+  $('#assetSearchAllBtn')?.addEventListener('click',()=>{
+    assetState.searchAll=!assetState.searchAll;
+    loadAssetAssets().catch(e=>toast(e.message||'搜索失败'));
+    $('#assetLibrarySearch')?.focus();
+  });
   $('#assetBatchToggleBtn')?.addEventListener('click',()=>{assetState.batch=!assetState.batch; assetState.selected.clear(); renderAssetLibrary({skipTree:true});});
   $('#assetSidebarToggleBtn')?.addEventListener('click',e=>{ e.stopPropagation(); $('#assetLibraryWindow')?.classList.toggle('asset-sidebar-peek'); });
   $('#assetSidebarPinBtn')?.addEventListener('click',e=>{ e.stopPropagation(); assetState.sidebarPinned = !assetState.sidebarPinned; localStorage.setItem(ASSET_SIDEBAR_PIN_KEY, assetState.sidebarPinned?'1':'0'); renderAssetLibrary(); });
