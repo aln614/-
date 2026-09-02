@@ -1,6 +1,6 @@
 {
   "name": "local-api-image-generator-webui",
-  "version": "1.0.84",
+  "version": "1.0.85",
   "description": "TENYING AI APIMart image and video generator with batch management",
   "main": "src/main.js",
   "scripts": {

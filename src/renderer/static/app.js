@@ -774,6 +774,15 @@ async function copyImageFromUrl(url){
 
 function isLanClient(){ return !isLocalClient && !isPublicClient; }
 function originalImageUrlFromMeta(meta = {}){ return meta.fullUrl || meta.url || meta.originalUrl || ''; }
+let nativeGeneratedImageDrag = null;
+let nativeGeneratedImageDragSequence = 0;
+function imageDragCanUseNative(url=''){
+  if(typeof window.electronAPI?.startImageDrag !== 'function') return false;
+  try{
+    const parsed=new URL(url,location.href);
+    return parsed.protocol === 'file:' || parsed.pathname === '/file' || parsed.pathname === '/download';
+  }catch{ return false; }
+}
 async function imageUrlToDataItem(url, fallbackName='generated-image.png'){
   const src = withPublicAccess(url);
   const res = await fetch(src, {headers:assetSourceHeaders()});
@@ -792,7 +801,22 @@ function setImageDragData(e, meta = {}){
   if(e) e.__originalImageDragHandled = true;
   const fullUrl = originalImageUrlFromMeta(meta);
   if(!fullUrl) return;
-  const payload = JSON.stringify({fullUrl, remoteUrl:meta.remoteUrl || '', prompt:meta.prompt || '', name:meta.filename || 'generated-image.png'});
+  const dragPayload = {fullUrl, remoteUrl:meta.remoteUrl || '', prompt:meta.prompt || '', name:meta.filename || 'generated-image.png'};
+  const payload = JSON.stringify(dragPayload);
+  if(meta.skipNativeDrag !== true && imageDragCanUseNative(fullUrl)){
+    const sequence=++nativeGeneratedImageDragSequence;
+    nativeGeneratedImageDrag=dragPayload;
+    try{ e.preventDefault(); e.stopPropagation(); }catch{}
+    showDragOriginalBadge(e);
+    Promise.resolve(window.electronAPI.startImageDrag(dragPayload)).then(result=>{
+      if(!result?.ok) throw new Error(result?.error || '图片外拖失败');
+    }).catch(error=>toast(`图片外拖失败：${error.message || error}`)).finally(()=>{
+      hideDragOriginalBadge();
+      setTimeout(()=>{ if(nativeGeneratedImageDragSequence===sequence) nativeGeneratedImageDrag=null; },350);
+    });
+    toast('拖动中：将复制原图副本');
+    return;
+  }
   try{ e.dataTransfer.setData('application/x-local-generated-image', payload); }catch{}
   try{ e.dataTransfer.setData('text/uri-list', withPublicAccess(meta.remoteUrl || fullUrl)); }catch{}
   try{ e.dataTransfer.setData('text/plain', withPublicAccess(meta.remoteUrl || fullUrl)); }catch{}
@@ -802,10 +826,6 @@ function setImageDragData(e, meta = {}){
     e.dataTransfer.setData('DownloadURL', `image/png:${filename}:${new URL(url, location.href).href}`);
   }catch{}
   try{ e.dataTransfer.effectAllowed = 'copy'; }catch{}
-  // 桌面 EXE 环境：外部拖到文件夹/PS 等，直接由 Electron 把原图文件作为系统拖拽文件抛出去。
-  if(meta.skipNativeDrag !== true){
-    try{ window.electronAPI?.startImageDrag?.({fullUrl, remoteUrl:meta.remoteUrl || '', name:meta.filename || 'generated-image.png'}); }catch{}
-  }
   toast('拖动中：将使用原图');
 }
 function getDraggedGeneratedImage(dt){
@@ -813,7 +833,7 @@ function getDraggedGeneratedImage(dt){
     const raw = dt.getData('application/x-local-generated-image');
     if(raw) return JSON.parse(raw);
   }catch{}
-  return null;
+  return nativeGeneratedImageDrag;
 }
 function showDragOriginalBadge(e){
   let b = $('#dragOriginalBadge');
@@ -838,14 +858,20 @@ function findGeneratedThumbMetaFromElement(el){
 }
 // V8.0：所有生成缩略图统一支持拖动；右侧最近图片、图片管理、预览图都走同一套原图拖拽。
 document.addEventListener('dragstart', e=>{
+  // Asset cards own their native drag lifecycle. Letting this capture handler run as well
+  // starts a second image drag from the thumbnail and can leave Windows in a stuck drag state.
+  if(e.target.closest?.('.asset-card')) return;
   const meta = findGeneratedThumbMetaFromElement(e.target);
   if(!meta || !originalImageUrlFromMeta(meta)) return;
   setImageDragData(e, meta);
-  showDragOriginalBadge(e);
+  if(!e.defaultPrevented) showDragOriginalBadge(e);
 }, true);
 document.addEventListener('dragover', e=>{ if($('#dragOriginalBadge')) showDragOriginalBadge(e); }, true);
 document.addEventListener('dragend', hideDragOriginalBadge, true);
 document.addEventListener('drop', hideDragOriginalBadge, true);
+document.addEventListener('pointerup', hideDragOriginalBadge, true);
+document.addEventListener('pointercancel', hideDragOriginalBadge, true);
+window.addEventListener('blur', hideDragOriginalBadge, true);
 async function handleGeneratedImageDrop(e, target){
   const payload = getDraggedGeneratedImage(e.dataTransfer);
   if(!payload || !payload.fullUrl) return false;
@@ -9775,6 +9801,41 @@ function makeFloatingBox(boxId, headId, resizeId){
 // V14.10.33 Asset Library
 const ASSET_SIDEBAR_PIN_KEY = 'LAIG_ASSET_SIDEBAR_PINNED';
 const assetState = { ready:false, groups:[], assets:[], allAssets:[], currentGroup:'', selected:new Set(), batch:false, isHost:false, settings:{}, clientId:'', sidebarPinned:localStorage.getItem(ASSET_SIDEBAR_PIN_KEY)==='1', editingGroupId:'', collapsedGroups:new Set(), draggingAssetId:'', reorderTarget:null };
+const assetNativeDragPrepare = new Map();
+let assetNativeDragHoverTimer = 0;
+let assetNativeDragHoverId = '';
+function cancelAssetNativeDragHover(){
+  if(assetNativeDragHoverTimer) clearTimeout(assetNativeDragHoverTimer);
+  assetNativeDragHoverTimer=0;
+  assetNativeDragHoverId='';
+}
+function assetPrepareNativeDrag(asset){
+  if(!asset?.id || typeof window.electronAPI?.prepareAssetDrag !== 'function') return null;
+  if(assetNativeDragPrepare.has(asset.id)) return assetNativeDragPrepare.get(asset.id);
+  const promise=Promise.resolve(window.electronAPI.prepareAssetDrag({id:asset.id})).then(result=>{
+    if(!result?.ok) throw new Error(result?.error || '无法准备资产副本');
+    return result;
+  }).catch(error=>{
+    assetNativeDragPrepare.delete(asset.id);
+    throw error;
+  });
+  assetNativeDragPrepare.set(asset.id,promise);
+  return promise;
+}
+function assetStartNativeDrag(asset, card){
+  if(!asset?.id || typeof window.electronAPI?.startAssetDrag !== 'function') return false;
+  card?.classList.add('dragging');
+  Promise.resolve(window.electronAPI.startAssetDrag({id:asset.id})).then(result=>{
+    if(!result?.ok) throw new Error(result?.error || '外拖失败');
+  }).catch(error=>toast(`资产外拖失败：${error.message || error}`)).finally(()=>{
+    assetState.draggingAssetId='';
+    clearAssetReorderTargets();
+    hideDragOriginalBadge();
+    card?.classList.remove('dragging');
+    $$('.asset-group-row.asset-drop-target').forEach(x=>x.classList.remove('asset-drop-target'));
+  });
+  return true;
+}
 function assetGroupById(id){ return (assetState.groups||[]).find(g=>g.id===id) || {}; }
 function assetGroupHasChildren(id){ return (assetState.groups||[]).some(group=>String(group.parent_id||'')===String(id||'')); }
 function assetToggleGroupChildren(id){
@@ -10359,6 +10420,30 @@ function setupAssetLibrary(){
   $('#assetShareCurrentGroupBtn')?.addEventListener('click',()=>assetToggleCurrentGroupShared().catch(e=>toast(e.message||'共享失败')));
   $('#assetFileInput')?.addEventListener('change',async e=>{ await assetUploadFiles(e.target.files||[]); e.target.value=''; });
   $('#assetUploadTopBtn')?.addEventListener('click',()=>$('#assetFileInput')?.click());
+  $('#assetGrid')?.addEventListener('pointerover',e=>{
+    const card=e.target.closest('.asset-card[draggable="true"]');
+    if(!card || card.contains(e.relatedTarget)) return;
+    const asset=assetState.assets.find(item=>item.id===card.dataset.id);
+    if(!asset || assetNativeDragHoverId===asset.id) return;
+    cancelAssetNativeDragHover();
+    assetNativeDragHoverId=asset.id;
+    assetNativeDragHoverTimer=setTimeout(()=>{
+      assetNativeDragHoverTimer=0;
+      assetPrepareNativeDrag(asset)?.catch(()=>{});
+    },180);
+  });
+  $('#assetGrid')?.addEventListener('pointerout',e=>{
+    const card=e.target.closest('.asset-card[draggable="true"]');
+    if(card && !card.contains(e.relatedTarget)) cancelAssetNativeDragHover();
+  });
+  $('#assetGrid')?.addEventListener('pointerdown',e=>{
+    if(e.button !== 0) return;
+    const card=e.target.closest('.asset-card[draggable="true"]');
+    if(!card || e.target.closest('button,input')) return;
+    const asset=assetState.assets.find(item=>item.id===card.dataset.id);
+    cancelAssetNativeDragHover();
+    if(asset) assetPrepareNativeDrag(asset)?.catch(()=>{});
+  });
   const drop=$('#assetDropZone');
   drop?.addEventListener('click',()=>$('#assetFileInput')?.click());
   const sidebar=$('.asset-library-sidebar');
@@ -10476,9 +10561,14 @@ function setupAssetLibrary(){
     const asset=assetState.assets.find(x=>x.id===card.dataset.id);
     if(!asset) return;
     assetState.draggingAssetId = asset.id;
+    if(typeof window.electronAPI?.startAssetDrag === 'function'){
+      e.preventDefault();
+      e.stopPropagation();
+      assetStartNativeDrag(asset, card);
+      return;
+    }
     const sourceUrl = withPublicAccess(asset.source_url || asset.url || asset.download_url || '');
-    // Keep web/LAN fallback data on the original source URL. Electron receives the asset id below
-    // and starts a native drag with asset.local_path, so external apps get the real file rather than its thumbnail.
+    // Browser/LAN clients expose the original source URL; the Electron branch above uses a local copy.
     if(asset.type === 'image') {
       setImageDragData(e,{fullUrl:sourceUrl, filename:asset.name || 'asset.png', skipNativeDrag:true});
       try{ e.dataTransfer.setData('DownloadURL', `${asset.mime_type || 'image/*'}:${asset.name || 'asset.png'}:${new URL(sourceUrl, location.href).href}`); }catch{}
@@ -10488,7 +10578,6 @@ function setupAssetLibrary(){
       try{ e.dataTransfer.setData('text/plain', new URL(sourceUrl, location.href).href); }catch{}
       try{ e.dataTransfer.setData('DownloadURL', `${asset.mime_type || 'application/octet-stream'}:${asset.name || 'asset'}:${new URL(sourceUrl, location.href).href}`); }catch{}
     }
-    try{ window.electronAPI?.startAssetDrag?.({id:asset.id}); }catch{}
     if(assetCanEdit(asset)){
       const ids=assetState.selected.has(card.dataset.id)?assetSelectedIds():[card.dataset.id];
       e.dataTransfer.setData('application/x-laig-assets',JSON.stringify(ids));
@@ -10498,9 +10587,9 @@ function setupAssetLibrary(){
     card.classList.add('dragging');
   });
   $('#assetGrid')?.addEventListener('dragend',e=>{ assetState.draggingAssetId=''; clearAssetReorderTargets(); e.target.closest('.asset-card')?.classList.remove('dragging'); $$('.asset-group-row.asset-drop-target').forEach(x=>x.classList.remove('asset-drop-target')); });
-  $('#assetGroupTree')?.addEventListener('dragover',e=>{ const row=e.target.closest('.asset-group-row'); if(!row || !e.dataTransfer.types.includes('application/x-laig-assets')) return; e.preventDefault(); e.dataTransfer.dropEffect='move'; $$('.asset-group-row.asset-drop-target').forEach(x=>x.classList.remove('asset-drop-target')); row.classList.add('asset-drop-target'); });
+  $('#assetGroupTree')?.addEventListener('dragover',e=>{ const row=e.target.closest('.asset-group-row'); if(!row || !assetHasInternalDrag(e.dataTransfer)) return; e.preventDefault(); e.dataTransfer.dropEffect='move'; $$('.asset-group-row.asset-drop-target').forEach(x=>x.classList.remove('asset-drop-target')); row.classList.add('asset-drop-target'); });
   $('#assetGroupTree')?.addEventListener('dragleave',e=>{ const row=e.target.closest('.asset-group-row'); if(row && !row.contains(e.relatedTarget)) row.classList.remove('asset-drop-target'); });
-  $('#assetGroupTree')?.addEventListener('drop',e=>{ const row=e.target.closest('.asset-group-row'); if(!row) return; e.preventDefault(); row.classList.remove('asset-drop-target'); let ids=[]; try{ ids=JSON.parse(e.dataTransfer.getData('application/x-laig-assets')||'[]'); }catch{} assetMoveIds(ids,row.dataset.id).catch(err=>toast(err.message||'移动资产失败')); });
+  $('#assetGroupTree')?.addEventListener('drop',e=>{ const row=e.target.closest('.asset-group-row'); if(!row) return; e.preventDefault(); row.classList.remove('asset-drop-target'); let ids=[]; try{ ids=JSON.parse(e.dataTransfer.getData('application/x-laig-assets')||'[]'); }catch{} if(!ids.length && assetState.draggingAssetId) ids=assetState.selected.has(assetState.draggingAssetId)?assetSelectedIds():[assetState.draggingAssetId]; assetMoveIds(ids,row.dataset.id).catch(err=>toast(err.message||'移动资产失败')); });
   $('#assetGrid')?.addEventListener('dblclick',e=>{ const card=e.target.closest('.asset-card'); if(!card || !e.target.closest('[data-asset-name]')) return; e.preventDefault(); e.stopPropagation(); assetBeginRename(card); });
   $('#assetSelectAllBtn')?.addEventListener('click',()=>{assetState.assets.forEach(a=>assetState.selected.add(a.id)); renderAssetLibrary({skipTree:true});});
   $('#assetInvertBtn')?.addEventListener('click',()=>{assetState.assets.forEach(a=>assetState.selected.has(a.id)?assetState.selected.delete(a.id):assetState.selected.add(a.id)); renderAssetLibrary({skipTree:true});});

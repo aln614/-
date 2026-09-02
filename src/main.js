@@ -94,6 +94,10 @@ let hotCacheActiveWorkers = 0;
 let hotCacheLastTrimAt = 0;
 const hotCacheQueue = [];
 const hotCacheInflight = new Map();
+const NATIVE_DRAG_CACHE_ROOT = path.join(LOCAL_HOT_CACHE_ROOT, 'drag_out');
+const nativeDragPrepared = new Map();
+const nativeDragInflight = new Map();
+const nativeDragActiveSenders = new Set();
 
 function clampPreviewImageMaxDim(value) {
   const n = Number(value || PREVIEW_IMAGE_DEFAULT_MAX_DIM);
@@ -331,6 +335,111 @@ function scheduleLocalHotMedia(filePath) {
     trimLocalHotCacheSoon();
     return ret;
   }).catch(()=>{});
+}
+
+function nativeDragDisplayName(displayName = '', sourcePath = '') {
+  const sourceExt = path.extname(String(sourcePath || '')).toLowerCase();
+  const fallback = `TENYING_AI_Asset${sourceExt || '.bin'}`;
+  let name = safeName(String(displayName || path.basename(sourcePath) || fallback), fallback);
+  const nameExt = path.extname(name).toLowerCase();
+  if (sourceExt && !nameExt) name += sourceExt;
+  else if (sourceExt && nameExt !== sourceExt) name = `${path.basename(name, path.extname(name))}${sourceExt}`;
+  return name;
+}
+
+async function nativeDragPreparedFile(cacheKey = '', sourcePath = '', displayName = '') {
+  const source = String(sourcePath || '').trim();
+  if (!source || /^https?:/i.test(source) || /^data:/i.test(source)) throw new Error('拖拽源文件不存在');
+  const stat = await fs.promises.stat(source);
+  if (!stat.isFile() || stat.size <= 0) throw new Error('拖拽源文件无效');
+
+  const name = nativeDragDisplayName(displayName, source);
+  const version = crypto.createHash('sha1').update([
+    String(cacheKey || source), source, stat.size, Math.round(stat.mtimeMs || 0), name, 'drag-copy-v2'
+  ].join('|')).digest('hex');
+  const preparedKey = `${cacheKey || source}|${version}`;
+  const cached = nativeDragPrepared.get(preparedKey);
+  if (cached) {
+    try {
+      const cachedStat = await fs.promises.stat(cached.filePath);
+      if (cachedStat.isFile() && cachedStat.size === stat.size) {
+        fs.promises.utimes(cached.filePath, new Date(), new Date()).catch(()=>{});
+        return cached;
+      }
+    } catch {}
+    nativeDragPrepared.delete(preparedKey);
+  }
+  if (nativeDragInflight.has(preparedKey)) return nativeDragInflight.get(preparedKey);
+
+  const promise = (async () => {
+    const dir = path.join(NATIVE_DRAG_CACHE_ROOT, version);
+    ensureDir(dir);
+    const filePath = path.join(dir, name);
+    try {
+      const existing = await fs.promises.stat(filePath);
+      if (existing.isFile() && existing.size === stat.size) {
+        const prepared = { filePath, name, size:stat.size, sourcePath:source };
+        nativeDragPrepared.set(preparedKey, prepared);
+        return prepared;
+      }
+      await fs.promises.unlink(filePath).catch(()=>{});
+    } catch {}
+
+    let copySource = source;
+    try {
+      const hotPath = await ensureLocalHotMedia(source, stat, contentType(source));
+      if (hotPath) copySource = hotPath;
+    } catch {}
+
+    try {
+      if (copySource === source) throw new Error('independent copy required');
+      await fs.promises.link(copySource, filePath);
+    } catch {
+      await copyFileToLocalHotCache(copySource, filePath);
+    }
+    const copiedStat = await fs.promises.stat(filePath);
+    if (!copiedStat.isFile() || copiedStat.size !== stat.size) {
+      await fs.promises.unlink(filePath).catch(()=>{});
+      throw new Error('拖拽副本校验失败');
+    }
+    const prepared = { filePath, name, size:stat.size, sourcePath:source };
+    nativeDragPrepared.set(preparedKey, prepared);
+    trimLocalHotCacheSoon();
+    return prepared;
+  })().finally(() => nativeDragInflight.delete(preparedKey));
+  nativeDragInflight.set(preparedKey, promise);
+  return promise;
+}
+
+async function prepareAssetNativeDrag(payload = {}) {
+  const assetId = String(payload.id || '').trim();
+  if (!assetId) throw new Error('缺少资产 ID');
+  const db = readAssetDb(readConfig());
+  const asset = (db.assets || []).find(row => String(row?.id || '') === assetId);
+  if (!asset?.local_path) throw new Error('资产源文件不存在');
+  return nativeDragPreparedFile(
+    `asset:${assetId}`,
+    asset.local_path,
+    asset.original_name || asset.name || path.basename(asset.local_path)
+  );
+}
+
+function startPreparedNativeDrag(event, prepared) {
+  const sender = event?.sender;
+  if (!sender || sender.isDestroyed()) throw new Error('拖拽窗口已关闭');
+  const senderId = sender.id;
+  if (nativeDragActiveSenders.has(senderId)) throw new Error('已有拖拽正在进行');
+  if (!prepared?.filePath || !fs.existsSync(prepared.filePath)) throw new Error('拖拽副本尚未准备好');
+  nativeDragActiveSenders.add(senderId);
+  try {
+    const iconPath = path.join(__dirname, '..', 'assets', 'rocket.ico');
+    let icon = nativeImage.createFromPath(iconPath);
+    if (!icon.isEmpty()) icon = icon.resize({ width:32, height:32, quality:'good' });
+    sender.startDrag({ file:prepared.filePath, icon });
+    return { ok:true, name:prepared.name, size:prepared.size };
+  } finally {
+    nativeDragActiveSenders.delete(senderId);
+  }
 }
 function warmLocalHotCacheForImageRows(rows = [], opts = {}) {
   const picked = [];
@@ -9169,30 +9278,44 @@ function setupImageContextMenu(win) {
 }
 
 
-ipcMain.on('start-image-drag', (event, payload = {}) => {
+ipcMain.handle('start-image-drag', async (event, payload = {}) => {
   try {
     const info = resolveImageInfoFromSrc(payload.fullUrl || payload.url || '');
     const filePath = info.filePath;
-    if (!filePath || filePath.startsWith('data:image/') || !fs.existsSync(filePath)) return;
-    event.sender.startDrag({ file: filePath, icon: filePath });
-  } catch {}
+    if (!filePath || filePath.startsWith('data:image/') || !fs.existsSync(filePath)) {
+      return {ok:false, error:'原图尚未保存到本地'};
+    }
+    const prepared = await nativeDragPreparedFile(
+      `image:${filePath}`,
+      filePath,
+      payload.name || path.basename(filePath) || 'generated-image.png'
+    );
+    return startPreparedNativeDrag(event, prepared);
+  } catch (error) {
+    addLog(`图片外拖失败：${error.message || error}`, {ownerId:'local', level:'warn'});
+    return {ok:false, error:error.message || String(error)};
+  }
 });
 
 // Asset-library drag-out must use the stored source file, never the preview thumbnail.
-// The renderer passes only an asset id; resolving it here keeps the actual disk path private.
-ipcMain.on('start-asset-drag', (event, payload = {}) => {
+// A local, correctly named copy is dragged so no target application can move the library source.
+ipcMain.handle('prepare-asset-drag', async (_event, payload = {}) => {
   try {
-    const assetId = String(payload.id || '').trim();
-    if (!assetId) return;
-    const db = readAssetDb(readConfig());
-    const asset = (db.assets || []).find(row => String(row?.id || '') === assetId);
-    if (!asset?.local_path || !fs.existsSync(asset.local_path)) return;
-
-    const appIcon = path.join(__dirname, '..', 'assets', 'rocket.ico');
-    const iconPath = [asset.thumb_path, appIcon, asset.local_path].find(candidate => candidate && fs.existsSync(candidate));
-    const icon = nativeImage.createFromPath(iconPath || appIcon);
-    event.sender.startDrag({ file: asset.local_path, icon });
-  } catch {}
+    const prepared = await prepareAssetNativeDrag(payload);
+    return {ok:true, name:prepared.name, size:prepared.size};
+  } catch (error) {
+    addLog(`资产拖拽预备失败：${error.message || error}`, {ownerId:'local', level:'warn'});
+    return {ok:false, error:error.message || String(error)};
+  }
+});
+ipcMain.handle('start-asset-drag', async (event, payload = {}) => {
+  try {
+    const prepared = await prepareAssetNativeDrag(payload);
+    return startPreparedNativeDrag(event, prepared);
+  } catch (error) {
+    addLog(`资产外拖失败：${error.message || error}`, {ownerId:'local', level:'warn'});
+    return {ok:false, error:error.message || String(error)};
+  }
 });
 
 function createWindow() {
