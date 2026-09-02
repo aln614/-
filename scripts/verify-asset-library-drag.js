@@ -27,5 +27,9 @@ assert(/event\.sender\.startDrag\(\{ file: asset\.local_path, icon \}\)/.test(ma
 assert(/startAssetDrag\?\.\(\{id:asset\.id\}\)/.test(app), 'Asset cards must invoke native source-file dragging');
 assert(/PROMPT_LIBRARY_SIDEBAR_PIN_KEY/.test(app), 'Prompt-library category sidebar must persist its pin state');
 assert(/promptSidebarToggleBtn/.test(app) && /prompt-sidebar-collapsed/.test(css), 'Prompt-library category sidebar must support compact collapse');
+assert(/function assetToggleGroupChildren\(/.test(app), 'Asset parent groups must support expand/collapse from row interactions');
+assert(/addEventListener\('dblclick',[\s\S]*?assetToggleGroupChildren\(row\.dataset\.id\)/.test(app), 'Double-clicking an asset parent group must toggle its children');
+assert(/addEventListener\('wheel',[\s\S]*?tree\.scrollTop=next/.test(app), 'Asset category wheel scrolling must stay inside the tree');
+assert(/\.asset-group-tree\{[^}]*overflow-y:auto!important[^}]*overscroll-behavior:contain/.test(css), 'Asset category tree must own vertical scrolling');
 
-console.log('[verify-asset-library-drag] OK: full thumbnails, internal reordering, external source drag, and prompt categories are wired.');
+console.log('[verify-asset-library-drag] OK: full thumbnails, drag workflows, prompt categories, and scrollable asset groups are wired.');

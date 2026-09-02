@@ -4108,3 +4108,27 @@ body.agent-resize-active,body.agent-resize-active *{cursor:nwse-resize!important
 .video-preview-info.asset-file-mode .actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
 .preview-info.asset-file-mode .actions button,
 .video-preview-info.asset-file-mode .actions button{min-width:0;white-space:normal;line-height:1.2}
+
+/* Keep asset category controls fixed while only the tree scrolls. */
+.asset-library-sidebar{min-height:0!important;height:100%}
+.asset-sidebar-content{
+  min-height:0!important;
+  height:100%!important;
+  max-height:100%;
+  overflow:hidden!important;
+}
+.asset-group-tree{
+  min-height:0!important;
+  max-height:100%;
+  overflow-x:hidden!important;
+  overflow-y:auto!important;
+  overscroll-behavior:contain;
+  touch-action:pan-y;
+  scrollbar-gutter:stable;
+  scrollbar-width:thin;
+  scrollbar-color:rgba(20,184,166,.58) rgba(148,163,184,.12);
+}
+.asset-group-tree::-webkit-scrollbar{width:6px}
+.asset-group-tree::-webkit-scrollbar-track{background:rgba(148,163,184,.10);border-radius:999px}
+.asset-group-tree::-webkit-scrollbar-thumb{background:rgba(20,184,166,.58);border-radius:999px}
+.asset-group-tree::-webkit-scrollbar-thumb:hover{background:rgba(13,148,136,.8)}

@@ -9776,6 +9776,13 @@ function makeFloatingBox(boxId, headId, resizeId){
 const ASSET_SIDEBAR_PIN_KEY = 'LAIG_ASSET_SIDEBAR_PINNED';
 const assetState = { ready:false, groups:[], assets:[], allAssets:[], currentGroup:'', selected:new Set(), batch:false, isHost:false, settings:{}, clientId:'', sidebarPinned:localStorage.getItem(ASSET_SIDEBAR_PIN_KEY)==='1', editingGroupId:'', collapsedGroups:new Set(), draggingAssetId:'', reorderTarget:null };
 function assetGroupById(id){ return (assetState.groups||[]).find(g=>g.id===id) || {}; }
+function assetGroupHasChildren(id){ return (assetState.groups||[]).some(group=>String(group.parent_id||'')===String(id||'')); }
+function assetToggleGroupChildren(id){
+  if(!id || !assetGroupHasChildren(id)) return false;
+  assetState.collapsedGroups.has(id) ? assetState.collapsedGroups.delete(id) : assetState.collapsedGroups.add(id);
+  renderAssetLibrary();
+  return true;
+}
 function assetCanEdit(row={}){ return assetState.isHost || row.permission === 'host' || row.permission === 'owner' || row.owner_client_id === assetState.clientId; }
 function assetCanUploadToCurrentGroup(){ const g = assetGroupById(assetState.currentGroup); return !!assetState.currentGroup && assetCanEdit(g); }
 function assetDescendantGroupIds(groupId){
@@ -10271,9 +10278,8 @@ function setupAssetLibrary(){
     if(toggle){
       e.preventDefault();
       e.stopPropagation();
-      const id = toggle.dataset.groupToggle;
-      assetState.collapsedGroups.has(id) ? assetState.collapsedGroups.delete(id) : assetState.collapsedGroups.add(id);
-      renderAssetLibrary();
+      if(e.detail > 1) return;
+      assetToggleGroupChildren(toggle.dataset.groupToggle);
       return;
     }
     if(e.target.closest('[data-group-edit]')) return;
@@ -10284,7 +10290,26 @@ function setupAssetLibrary(){
     assetState.selected.clear();
     await loadAssetAssets();
   });
-  $('#assetGroupTree')?.addEventListener('dblclick',e=>{ const row=e.target.closest('.asset-group-row'); if(!row) return; e.preventDefault(); assetStartGroupRename(row.dataset.id); });
+  $('#assetGroupTree')?.addEventListener('dblclick',e=>{
+    if(e.target.closest('[data-group-edit],[data-group-toggle]')) return;
+    const row=e.target.closest('.asset-group-row');
+    if(!row) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if(assetToggleGroupChildren(row.dataset.id)) return;
+    assetStartGroupRename(row.dataset.id);
+  });
+  $('#assetGroupTree')?.addEventListener('wheel',e=>{
+    const tree=e.currentTarget;
+    const maxScroll=Math.max(0,tree.scrollHeight-tree.clientHeight);
+    if(!maxScroll || !e.deltaY) return;
+    const scale=e.deltaMode===1 ? 32 : (e.deltaMode===2 ? tree.clientHeight : 1);
+    const next=Math.max(0,Math.min(maxScroll,tree.scrollTop+e.deltaY*scale));
+    if(next===tree.scrollTop) return;
+    tree.scrollTop=next;
+    e.preventDefault();
+    e.stopPropagation();
+  },{passive:false});
   $('#assetGroupTree')?.addEventListener('keydown',e=>{ const input=e.target.closest('[data-group-edit]'); if(!input) return; const row=input.closest('.asset-group-row'); if(e.key==='Enter'){ e.preventDefault(); assetSaveGroupName(row.dataset.id, input.value).catch(err=>toast(err.message||'重命名失败')); } if(e.key==='Escape'){ e.preventDefault(); assetState.editingGroupId=''; renderAssetLibrary(); } });
   $('#assetGroupTree')?.addEventListener('focusout',e=>{ const input=e.target.closest('[data-group-edit]'); if(!input) return; const row=input.closest('.asset-group-row'); setTimeout(()=>{ if(assetState.editingGroupId === row.dataset.id) assetSaveGroupName(row.dataset.id, input.value).catch(err=>toast(err.message||'重命名失败')); }, 0); });
   $('#assetGrid')?.addEventListener('click',async e=>{ const card=e.target.closest('.asset-card'); if(!card) return; if(e.target.closest('[data-asset-name],.asset-name-edit')) return; const id=card.dataset.id; const a=assetState.assets.find(x=>x.id===id); const act=e.target.closest('button[data-act]')?.dataset.act; if(act==='copy'){ await assetCopyAsset(a); return; } if(act==='download'){ window.open(withPublicAccess(a.download_url||a.url),'_blank'); return; } if(act==='delete'){ return assetDeleteIds([id]); } if(assetState.batch){ assetState.selected.has(id)?assetState.selected.delete(id):assetState.selected.add(id); renderAssetLibrary(); return; } const previewMeta=assetPreviewMeta(a||{}); if(a?.type==='image') showPreview(a.url,previewMeta); else if(a?.type==='video') showVideoPreview(previewMeta); else showPreview('',previewMeta); });
