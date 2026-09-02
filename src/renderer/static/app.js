@@ -2650,7 +2650,7 @@ const AGENT_PROGRAM_API_ALLOWLIST = new Set([
   '/api/batches','/api/stop_batch','/api/delete_batch','/api/repeat_batch','/api/update_batch_note',
   '/api/video_submit','/api/video_batch_submit','/api/video_delete_selected','/api/video_export_selected',
   '/api/mj_submit','/api/prompt_library/group','/api/prompt_library/template',
-  '/api/assets/groups/create','/api/assets/groups/rename','/api/assets/groups/delete','/api/assets/upload',
+  '/api/assets/groups/create','/api/assets/groups/rename','/api/assets/groups/delete','/api/assets/groups/move','/api/assets/upload',
   '/api/assets/delete','/api/assets/rename','/api/assets/update','/api/assets/move','/api/assets/reorder','/api/assets/share',
   '/api/assets/unshare','/api/assets/copy_source','/api/assets/export_zip','/api/config',
   '/api/clear_all_cache'
@@ -9800,7 +9800,7 @@ function makeFloatingBox(boxId, headId, resizeId){
 
 // V14.10.33 Asset Library
 const ASSET_SIDEBAR_PIN_KEY = 'LAIG_ASSET_SIDEBAR_PINNED';
-const assetState = { ready:false, groups:[], assets:[], allAssets:[], currentGroup:'', selected:new Set(), batch:false, isHost:false, settings:{}, clientId:'', sidebarPinned:localStorage.getItem(ASSET_SIDEBAR_PIN_KEY)==='1', searchAll:false, editingGroupId:'', collapsedGroups:new Set(), draggingAssetId:'', reorderTarget:null };
+const assetState = { ready:false, groups:[], assets:[], allAssets:[], currentGroup:'', selected:new Set(), batch:false, isHost:false, settings:{}, clientId:'', sidebarPinned:localStorage.getItem(ASSET_SIDEBAR_PIN_KEY)==='1', searchAll:false, editingGroupId:'', collapsedGroups:new Set(), draggingAssetId:'', draggingGroupId:'', groupDropIntent:null, groupDragJustEnded:0, reorderTarget:null };
 const assetNativeDragPrepare = new Map();
 let assetNativeDragHoverTimer = 0;
 let assetNativeDragHoverId = '';
@@ -9837,6 +9837,63 @@ function assetStartNativeDrag(asset, card){
   return true;
 }
 function assetGroupById(id){ return (assetState.groups||[]).find(g=>g.id===id) || {}; }
+function assetGroupDragId(dataTransfer){
+  if(assetState.draggingGroupId) return assetState.draggingGroupId;
+  try{ return dataTransfer?.getData('application/x-laig-asset-group') || ''; }catch{ return ''; }
+}
+function clearAssetGroupDropTargets(){
+  assetState.groupDropIntent=null;
+  $$('.asset-group-row.group-drop-before,.asset-group-row.group-drop-after,.asset-group-row.group-drop-inside').forEach(row=>row.classList.remove('group-drop-before','group-drop-after','group-drop-inside'));
+  $('#assetGroupTree')?.classList.remove('group-drop-root');
+}
+function assetGroupDropAllowed(sourceId, parentId=''){
+  const source=assetGroupById(sourceId);
+  if(!source.id || !assetCanEdit(source)) return false;
+  if(!parentId) return true;
+  if(assetDescendantGroupIds(sourceId).has(parentId)) return false;
+  const parent=assetGroupById(parentId);
+  return !!parent.id && assetCanEdit(parent);
+}
+function assetGroupDropIntentForEvent(event,row,sourceId){
+  if(!sourceId) return null;
+  if(!row) return assetGroupDropAllowed(sourceId,'') ? {sourceId,targetId:'',parentId:'',beforeId:'',mode:'root'} : null;
+  const targetId=String(row.dataset.id||'');
+  if(!targetId || targetId===sourceId) return null;
+  const target=assetGroupById(targetId);
+  if(!target.id) return null;
+  const rect=row.getBoundingClientRect();
+  const ratio=rect.height ? (event.clientY-rect.top)/rect.height : .5;
+  let mode='inside';
+  let parentId=targetId;
+  let beforeId='';
+  if(ratio<.3){
+    mode='before';
+    parentId=String(target.parent_id||'');
+    beforeId=targetId;
+  }else if(ratio>.7){
+    mode='after';
+    parentId=String(target.parent_id||'');
+    const siblings=(assetState.groups||[]).filter(group=>group.id!==sourceId && String(group.parent_id||'')===parentId).sort((a,b)=>Number(a.sort_order||0)-Number(b.sort_order||0));
+    const targetIndex=siblings.findIndex(group=>group.id===targetId);
+    beforeId=targetIndex>=0 ? (siblings[targetIndex+1]?.id||'') : '';
+  }
+  if(!assetGroupDropAllowed(sourceId,parentId)) return null;
+  return {sourceId,targetId,parentId,beforeId,mode};
+}
+function markAssetGroupDropTarget(row,intent){
+  clearAssetGroupDropTargets();
+  if(!intent) return;
+  assetState.groupDropIntent=intent;
+  if(intent.mode==='root') $('#assetGroupTree')?.classList.add('group-drop-root');
+  else row?.classList.add(`group-drop-${intent.mode}`);
+}
+async function assetMoveGroupTree(groupId,parentId='',beforeId=''){
+  await api('/api/assets/groups/move',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({group_id:groupId,parent_id:parentId||null,before_id:beforeId||null})});
+  assetState.currentGroup=groupId;
+  if(parentId) assetState.collapsedGroups.delete(parentId);
+  await loadAssetLibrary();
+  toast('分类目录位置已调整');
+}
 function assetGroupHasChildren(id){ return (assetState.groups||[]).some(group=>String(group.parent_id||'')===String(id||'')); }
 function assetToggleGroupChildren(id){
   if(!id || !assetGroupHasChildren(id)) return false;
@@ -10067,11 +10124,12 @@ function renderAssetLibrary({skipTree=false}={}){
           const prefix = level > 0 ? '-'.repeat(level * 2) : '';
           const hasChildren = (byParent.get(String(g.id||''))||[]).length>0;
           const collapsed = hasChildren && assetState.collapsedGroups.has(g.id);
+          const draggable = !readonly && assetCanEdit(g);
           const namePart = assetState.editingGroupId === g.id && !readonly
             ? `<input class="asset-group-name-edit" data-group-edit value="${escapeHtml(g.name||'未命名')}" />`
             : `<span class="asset-group-name" title="${escapeHtml(g.name||'未命名')}">${escapeHtml(g.name||'未命名')}</span>`;
           const toggle = hasChildren ? `<button class="asset-group-toggle ${collapsed?'collapsed':''}" data-group-toggle="${escapeHtml(g.id)}" title="${collapsed?'展开子级':'折叠子级'}" aria-label="${collapsed?'展开子级':'折叠子级'}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 10l4 4 4-4" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>` : '';
-          rows.push(`<div class="asset-group-row ${assetState.currentGroup===g.id?'active':''} ${readonly?'readonly':''} ${hasChildren?'has-children':''}" data-id="${escapeHtml(g.id)}" style="padding-left:${10+level*16}px"><span class="asset-folder-icon">${prefix}</span>${namePart}${g.shared?'<em class="asset-share-mark">共享</em>':''}${readonly?`<em class="asset-readonly-mark">只读</em>`:''}<span class="count">${groupCounts.get(g.id)||0}</span>${toggle}${owner && readonly ? `<span class="asset-owner-tip" title="来自 ${escapeHtml(owner)}">${escapeHtml(owner)}</span>` : ''}</div>`);
+          rows.push(`<div class="asset-group-row ${assetState.currentGroup===g.id?'active':''} ${readonly?'readonly':''} ${draggable?'group-draggable':''} ${hasChildren?'has-children':''}" data-id="${escapeHtml(g.id)}" data-group-level="${level}" draggable="${draggable?'true':'false'}" style="padding-left:${10+level*16}px"><span class="asset-folder-icon">${prefix}</span>${namePart}${g.shared?'<em class="asset-share-mark">共享</em>':''}${readonly?`<em class="asset-readonly-mark">只读</em>`:''}<span class="count">${groupCounts.get(g.id)||0}</span>${toggle}${owner && readonly ? `<span class="asset-owner-tip" title="来自 ${escapeHtml(owner)}">${escapeHtml(owner)}</span>` : ''}</div>`);
           if(!collapsed) walk(g.id, level+1);
         });
       };
@@ -10432,6 +10490,54 @@ function setupAssetLibrary(){
     loadAssetAssets().catch(e=>toast(e.message||'搜索失败'));
     $('#assetLibrarySearch')?.focus();
   });
+  const assetGroupTree=$('#assetGroupTree');
+  assetGroupTree?.addEventListener('dragstart',e=>{
+    const row=e.target.closest('.asset-group-row[draggable="true"]');
+    if(!row || e.target.closest('[data-group-toggle],[data-group-edit]')) return e.preventDefault();
+    const group=assetGroupById(row.dataset.id);
+    if(!group.id || !assetCanEdit(group)) return e.preventDefault();
+    assetState.draggingGroupId=group.id;
+    assetState.groupDropIntent=null;
+    e.dataTransfer.setData('application/x-laig-asset-group',group.id);
+    e.dataTransfer.effectAllowed='move';
+    row.classList.add('group-dragging');
+  });
+  assetGroupTree?.addEventListener('dragover',e=>{
+    const sourceId=assetGroupDragId(e.dataTransfer);
+    if(!sourceId) return;
+    const row=e.target.closest('.asset-group-row');
+    const intent=assetGroupDropIntentForEvent(e,row,sourceId);
+    if(!intent){ clearAssetGroupDropTargets(); return; }
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect='move';
+    markAssetGroupDropTarget(row,intent);
+    const rect=assetGroupTree.getBoundingClientRect();
+    if(e.clientY<rect.top+32) assetGroupTree.scrollTop-=12;
+    else if(e.clientY>rect.bottom-32) assetGroupTree.scrollTop+=12;
+  });
+  assetGroupTree?.addEventListener('dragleave',e=>{
+    if(!assetGroupTree.contains(e.relatedTarget)) clearAssetGroupDropTargets();
+  });
+  assetGroupTree?.addEventListener('drop',e=>{
+    const sourceId=assetGroupDragId(e.dataTransfer);
+    if(!sourceId) return;
+    const row=e.target.closest('.asset-group-row');
+    const intent=assetGroupDropIntentForEvent(e,row,sourceId);
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    clearAssetGroupDropTargets();
+    assetState.draggingGroupId='';
+    assetState.groupDragJustEnded=Date.now();
+    if(!intent) return;
+    assetMoveGroupTree(sourceId,intent.parentId,intent.beforeId).catch(err=>toast(err.message||'分类目录调整失败'));
+  });
+  assetGroupTree?.addEventListener('dragend',e=>{
+    assetState.draggingGroupId='';
+    assetState.groupDragJustEnded=Date.now();
+    clearAssetGroupDropTargets();
+    e.target.closest('.asset-group-row')?.classList.remove('group-dragging');
+  });
   $('#assetBatchToggleBtn')?.addEventListener('click',()=>{assetState.batch=!assetState.batch; assetState.selected.clear(); renderAssetLibrary({skipTree:true});});
   $('#assetSidebarToggleBtn')?.addEventListener('click',e=>{ e.stopPropagation(); $('#assetLibraryWindow')?.classList.toggle('asset-sidebar-peek'); });
   $('#assetSidebarPinBtn')?.addEventListener('click',e=>{ e.stopPropagation(); assetState.sidebarPinned = !assetState.sidebarPinned; localStorage.setItem(ASSET_SIDEBAR_PIN_KEY, assetState.sidebarPinned?'1':'0'); renderAssetLibrary(); });
@@ -10492,6 +10598,7 @@ function setupAssetLibrary(){
     });
   }
   $('#assetGroupTree')?.addEventListener('click',async e=>{
+    if(assetState.draggingGroupId || Date.now()-assetState.groupDragJustEnded<220) return;
     const toggle = e.target.closest('[data-group-toggle]');
     if(toggle){
       e.preventDefault();

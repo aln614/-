@@ -42,6 +42,11 @@ assert(/imageDragCanUseNative\(fullUrl\)[\s\S]*?e\.preventDefault\(\)/.test(app)
 assert(/PROMPT_LIBRARY_SIDEBAR_PIN_KEY/.test(app), 'Prompt-library category sidebar must persist its pin state');
 assert(/promptSidebarToggleBtn/.test(app) && /prompt-sidebar-collapsed/.test(css), 'Prompt-library category sidebar must support compact collapse');
 assert(/function assetToggleGroupChildren\(/.test(app), 'Asset parent groups must support expand/collapse from row interactions');
+assert(/function assetMoveGroup\(/.test(main) && /\/api\/assets\/groups\/move/.test(main), 'Asset group move/reorder backend is missing');
+assert(/descendants\.has\(parentId\)/.test(main), 'Asset groups must not be moved into their own descendants');
+assert(/application\/x-laig-asset-group/.test(app), 'Asset category rows must expose an internal group drag type');
+assert(/function assetGroupDropIntentForEvent\(/.test(app) && /group-drop-(before|after|inside)/.test(app), 'Asset category drag placement must support reorder and nesting');
+assert(/assetMoveGroupTree\(sourceId,intent\.parentId,intent\.beforeId\)/.test(app), 'Asset category drops must persist through the move endpoint');
 assert(/addEventListener\('dblclick',[\s\S]*?assetToggleGroupChildren\(row\.dataset\.id\)/.test(app), 'Double-clicking an asset parent group must toggle its children');
 assert(/addEventListener\('wheel',[\s\S]*?tree\.scrollTop=next/.test(app), 'Asset category wheel scrolling must stay inside the tree');
 assert(/\.asset-group-tree\{[^}]*overflow-y:auto!important[^}]*overscroll-behavior:contain/.test(css), 'Asset category tree must own vertical scrolling');
@@ -53,5 +58,7 @@ assert(/data-asset-media-src/.test(app) && /function assetHydrateCardMedia\(/.te
 assert(/new IntersectionObserver[\s\S]*?root:grid[\s\S]*?rootMargin:'240px 0px'/.test(app), 'Asset media lazy loading must follow the asset grid viewport');
 assert(/assetRevealTreeScrollbar\(tree\)/.test(app) && /scrollbar-active/.test(app), 'Asset scrollbar visibility must follow active scrolling');
 assert(/\.asset-group-tree\.scrollbar-active/.test(css) && /scrollbar-color:transparent transparent/.test(css), 'Asset scrollbar must hide after scrolling without shifting layout');
+assert(/\*::\-webkit-scrollbar-button:single-button\{[^}]*display:none!important/.test(css), 'Scrollbar arrow buttons must stay hidden');
+assert(/\.asset-group-tree\.scrollbar-active::\-webkit-scrollbar-track\{background:transparent!important\}/.test(css), 'Active asset scrolling must keep the track invisible');
 
 console.log('[verify-asset-library-drag] OK: full thumbnails, drag workflows, prompt categories, fast switching, and auto-hidden group scrolling are wired.');

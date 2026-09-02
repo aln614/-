@@ -4136,3 +4136,28 @@ body.agent-resize-active,body.agent-resize-active *{cursor:nwse-resize!important
 .asset-group-tree.scrollbar-active::-webkit-scrollbar-track{background:rgba(148,163,184,.10)}
 .asset-group-tree.scrollbar-active::-webkit-scrollbar-thumb{background:rgba(20,184,166,.58)}
 .asset-group-tree.scrollbar-active::-webkit-scrollbar-thumb:hover{background:rgba(13,148,136,.8)}
+
+/* Asset category drag placement: edge drops reorder, center drops into a parent. */
+.asset-group-row.group-draggable{cursor:grab;position:relative}
+.asset-group-row.group-draggable:active{cursor:grabbing}
+.asset-group-row.group-dragging{opacity:.42}
+.asset-group-row.group-drop-before::before,
+.asset-group-row.group-drop-after::after{
+  content:"";position:absolute;left:8px;right:8px;height:3px;border-radius:999px;
+  background:linear-gradient(90deg,#14b8a6,#38bdf8);box-shadow:0 0 0 2px rgba(45,212,191,.13);
+}
+.asset-group-row.group-drop-before::before{top:-4px}
+.asset-group-row.group-drop-after::after{bottom:-4px}
+.asset-group-row.group-drop-inside{background:rgba(45,212,191,.16)!important;outline:2px solid rgba(20,184,166,.58);outline-offset:-2px}
+.asset-group-tree.group-drop-root{box-shadow:inset 0 -3px 0 #14b8a6}
+
+/* Show only a rounded thumb on every scrollbar; tracks and arrow buttons stay invisible. */
+*{scrollbar-color:color-mix(in srgb,var(--skin-primary,#64748b) 34%,rgba(100,116,139,.28)) transparent!important}
+*::-webkit-scrollbar-track,
+*::-webkit-scrollbar-corner{background:transparent!important;border:0!important;box-shadow:none!important}
+*::-webkit-scrollbar-button,
+*::-webkit-scrollbar-button:single-button{display:none!important;width:0!important;height:0!important;background:transparent!important}
+*::-webkit-scrollbar-thumb{border:0!important;border-radius:999px!important;box-shadow:none!important}
+.asset-group-tree.scrollbar-active{scrollbar-color:rgba(20,184,166,.62) transparent!important}
+.asset-group-tree.scrollbar-active::-webkit-scrollbar-track{background:transparent!important}
+.asset-group-tree.scrollbar-active::-webkit-scrollbar-thumb{background:rgba(20,184,166,.62)!important;border-radius:999px!important}

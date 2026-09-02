@@ -6061,6 +6061,45 @@ function assetRenameGroup(body, local, cfg, deviceOwner) {
   g.name = String(body.name || '').trim() || g.name; g.updated_at = nowISO();
   writeAssetDb(db, cfg); return {ok:true, group:g};
 }
+function assetMoveGroup(body, local, cfg, deviceOwner) {
+  const ownerId = assetClientId(local, deviceOwner);
+  const db = readAssetDb(cfg);
+  ensureDefaultAssetGroups(db, ownerId);
+  const groupId = String(body.group_id || body.id || '').trim();
+  const parentId = String(body.parent_id || '').trim();
+  const beforeId = String(body.before_id || '').trim();
+  const source = db.groups.find(group => group.id === groupId);
+  if (!source) throw new Error('分组不存在');
+  if (!canManageAssetRow(source, local, ownerId)) throw new Error('没有权限移动该分组');
+
+  const descendants = assetDescendantGroupIds(db, source.id);
+  if (parentId && descendants.has(parentId)) throw new Error('不能将分组移入自身或子分组');
+  const parent = parentId ? db.groups.find(group => group.id === parentId) : null;
+  if (parentId && !parent) throw new Error('目标分组不存在');
+  if (parent && !canManageAssetRow(parent, local, ownerId)) throw new Error('没有权限移入该分组');
+
+  const siblings = sortAssetRows(db.groups.filter(group => group.id !== source.id && String(group.parent_id || '') === parentId));
+  let insertAt = siblings.length;
+  if (beforeId) {
+    insertAt = siblings.findIndex(group => group.id === beforeId);
+    if (insertAt < 0) throw new Error('目标排序位置无效');
+  }
+  const previous = insertAt > 0 ? siblings[insertAt - 1] : null;
+  const next = insertAt < siblings.length ? siblings[insertAt] : null;
+  const previousOrder = Number(previous?.sort_order);
+  const nextOrder = Number(next?.sort_order);
+  let sortOrder = Date.now();
+  if (Number.isFinite(previousOrder) && Number.isFinite(nextOrder)) sortOrder = (previousOrder + nextOrder) / 2;
+  else if (Number.isFinite(nextOrder)) sortOrder = nextOrder - 1;
+  else if (Number.isFinite(previousOrder)) sortOrder = previousOrder + 1;
+
+  source.parent_id = parentId;
+  source.sort_order = sortOrder;
+  source.updated_at = nowISO();
+  normalizeAssetGroupSchema(db);
+  writeAssetDb(db, cfg);
+  return {ok:true, group:assetPublicGroup(source, local, ownerId, assetSharedGroupIds(db))};
+}
 function assetDeleteGroup(body, local, cfg, deviceOwner) {
   const ownerId = assetClientId(local, deviceOwner), db = readAssetDb(cfg), base = defaultAssetLibraryDir(cfg);
   const g = db.groups.find(x=>x.id === (body.id || body.group_id));
@@ -8719,6 +8758,7 @@ async function apiHandler(req, res, parsed) {
     if (method === 'POST' && p === '/api/assets/settings') { const body=await readBody(req); return send(res, assetSettings(body, local, cfg)); }
     if (method === 'POST' && p === '/api/assets/groups/create') { const body=await readBody(req); return send(res, assetCreateGroup(body, local, cfg, deviceOwner)); }
     if (method === 'POST' && p === '/api/assets/groups/rename') { const body=await readBody(req); return send(res, assetRenameGroup(body, local, cfg, deviceOwner)); }
+    if (method === 'POST' && p === '/api/assets/groups/move') { const body=await readBody(req); return send(res, assetMoveGroup(body, local, cfg, deviceOwner)); }
     if (method === 'POST' && p === '/api/assets/groups/delete') { const body=await readBody(req); return send(res, assetDeleteGroup(body, local, cfg, deviceOwner)); }
     if (method === 'POST' && p === '/api/assets/upload') { const body=await readBody(req); return send(res, assetUpload(body, local, cfg, deviceOwner)); }
     if (method === 'POST' && p === '/api/assets/delete') { const body=await readBody(req); return send(res, assetDelete(body, local, cfg, deviceOwner)); }
