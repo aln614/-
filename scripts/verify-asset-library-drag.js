@@ -46,6 +46,13 @@ assert(/function assetMoveGroup\(/.test(main) && /\/api\/assets\/groups\/move/.t
 assert(/descendants\.has\(parentId\)/.test(main), 'Asset groups must not be moved into their own descendants');
 assert(/application\/x-laig-asset-group/.test(app), 'Asset category rows must expose an internal group drag type');
 assert(/function assetGroupDropIntentForEvent\(/.test(app) && /group-drop-(before|after|inside)/.test(app), 'Asset category drag placement must support reorder and nesting');
+assert(/function assetBeginGroupLivePreview\(/.test(app) && /function assetPlaceGroupLivePreview\(/.test(app), 'Asset category dragging must create and reposition a live placeholder');
+assert(/assetGroupPreviewContainsPoint\(e\)/.test(app), 'Asset category live preview must remain a stable drop target under the pointer');
+assert(/function assetGroupDropRowForEvent\(/.test(app), 'Asset category drag gaps must resolve to the nearest visible row');
+assert(/function assetResetGroupLivePreview\(/.test(app) && /clearAssetGroupDropTargets\(\); assetResetGroupLivePreview\(\)/.test(app), 'Invalid category drop positions must restore the live preview to its origin');
+assert(/assetAnimateGroupPreviewShift\(tree,beforeRects\)/.test(app), 'Asset category siblings must animate out of the projected drop position');
+assert(/\.asset-group-live-preview\{[^}]*display:grid[^}]*pointer-events:none/.test(css), 'Asset category live preview styling is missing');
+assert(/\.asset-group-row\.group-drag-origin-child\{display:none!important\}/.test(css), 'The original category subtree must leave its old layout position during preview');
 assert(/assetMoveGroupTree\(sourceId,intent\.parentId,intent\.beforeId\)/.test(app), 'Asset category drops must persist through the move endpoint');
 assert(/addEventListener\('dblclick',[\s\S]*?assetToggleGroupChildren\(row\.dataset\.id\)/.test(app), 'Double-clicking an asset parent group must toggle its children');
 assert(/addEventListener\('wheel',[\s\S]*?tree\.scrollTop=next/.test(app), 'Asset category wheel scrolling must stay inside the tree');

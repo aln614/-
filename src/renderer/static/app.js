@@ -9800,7 +9800,7 @@ function makeFloatingBox(boxId, headId, resizeId){
 
 // V14.10.33 Asset Library
 const ASSET_SIDEBAR_PIN_KEY = 'LAIG_ASSET_SIDEBAR_PINNED';
-const assetState = { ready:false, groups:[], assets:[], allAssets:[], currentGroup:'', selected:new Set(), batch:false, isHost:false, settings:{}, clientId:'', sidebarPinned:localStorage.getItem(ASSET_SIDEBAR_PIN_KEY)==='1', searchAll:false, editingGroupId:'', collapsedGroups:new Set(), draggingAssetId:'', draggingGroupId:'', groupDropIntent:null, groupDragJustEnded:0, reorderTarget:null };
+const assetState = { ready:false, groups:[], assets:[], allAssets:[], currentGroup:'', selected:new Set(), batch:false, isHost:false, settings:{}, clientId:'', sidebarPinned:localStorage.getItem(ASSET_SIDEBAR_PIN_KEY)==='1', searchAll:false, editingGroupId:'', collapsedGroups:new Set(), draggingAssetId:'', draggingGroupId:'', groupDropIntent:null, groupDragPreview:null, groupDropSaving:false, groupDragJustEnded:0, reorderTarget:null };
 const assetNativeDragPrepare = new Map();
 let assetNativeDragHoverTimer = 0;
 let assetNativeDragHoverId = '';
@@ -9846,6 +9846,154 @@ function clearAssetGroupDropTargets(){
   $$('.asset-group-row.group-drop-before,.asset-group-row.group-drop-after,.asset-group-row.group-drop-inside').forEach(row=>row.classList.remove('group-drop-before','group-drop-after','group-drop-inside'));
   $('#assetGroupTree')?.classList.remove('group-drop-root');
 }
+function assetGroupRowLevel(row){
+  const level=Number.parseInt(row?.dataset?.groupLevel||'0',10);
+  return Number.isFinite(level) && level>=0 ? level : 0;
+}
+function assetVisibleGroupSubtreeRows(row){
+  if(!row) return [];
+  const rows=[row];
+  const baseLevel=assetGroupRowLevel(row);
+  let next=row.nextElementSibling;
+  while(next){
+    if(next.classList.contains('asset-tree-section')) break;
+    if(!next.classList.contains('asset-group-row')) break;
+    if(assetGroupRowLevel(next)<=baseLevel) break;
+    rows.push(next);
+    next=next.nextElementSibling;
+  }
+  return rows;
+}
+function assetGroupPreviewContainsPoint(event){
+  const placeholder=assetState.groupDragPreview?.placeholder;
+  if(!placeholder?.isConnected) return false;
+  const rect=placeholder.getBoundingClientRect();
+  return event.clientX>=rect.left && event.clientX<=rect.right && event.clientY>=rect.top && event.clientY<=rect.bottom;
+}
+function assetGroupDropRowForEvent(event){
+  const direct=event.target.closest?.('.asset-group-row');
+  if(direct && !direct.classList.contains('asset-group-preview-row') && !direct.classList.contains('group-drag-origin') && !direct.classList.contains('group-drag-origin-child')) return direct;
+  const tree=$('#assetGroupTree');
+  if(!tree) return null;
+  const rows=Array.from(tree.children).filter(row=>row.classList.contains('asset-group-row') && !row.classList.contains('group-drag-origin') && !row.classList.contains('group-drag-origin-child'));
+  let previous=null;
+  for(const row of rows){
+    const rect=row.getBoundingClientRect();
+    if(event.clientY>=rect.top && event.clientY<=rect.bottom) return row;
+    if(event.clientY<rect.top){
+      if(!previous) return row;
+      const previousRect=previous.getBoundingClientRect();
+      return event.clientY-previousRect.bottom <= rect.top-event.clientY ? previous : row;
+    }
+    previous=row;
+  }
+  if(previous && event.clientY<=previous.getBoundingClientRect().bottom+12) return previous;
+  return null;
+}
+function clearAssetGroupLivePreview(){
+  const preview=assetState.groupDragPreview;
+  if(!preview) return;
+  preview.placeholder?.remove();
+  (preview.sourceRows||[]).forEach(row=>row.classList.remove('group-drag-origin','group-drag-origin-child','group-dragging'));
+  assetState.groupDragPreview=null;
+}
+function assetBeginGroupLivePreview(row){
+  clearAssetGroupLivePreview();
+  const tree=$('#assetGroupTree');
+  const sourceRows=assetVisibleGroupSubtreeRows(row);
+  if(!tree || !sourceRows.length) return;
+  const placeholder=document.createElement('div');
+  placeholder.className='asset-group-live-preview';
+  placeholder.setAttribute('aria-hidden','true');
+  const originalLevels=sourceRows.map(sourceRow=>assetGroupRowLevel(sourceRow));
+  sourceRows.forEach((sourceRow,index)=>{
+    const clone=sourceRow.cloneNode(true);
+    clone.removeAttribute('draggable');
+    clone.removeAttribute('data-id');
+    clone.classList.remove('active','group-draggable','group-dragging','group-drop-before','group-drop-after','group-drop-inside','asset-drop-target');
+    clone.classList.add('asset-group-preview-row');
+    clone.querySelectorAll('button,input').forEach(control=>control.setAttribute('tabindex','-1'));
+    clone.dataset.previewIndex=String(index);
+    placeholder.appendChild(clone);
+  });
+  let sectionHeader=row.previousElementSibling;
+  while(sectionHeader && !sectionHeader.classList.contains('asset-tree-section')) sectionHeader=sectionHeader.previousElementSibling;
+  let sectionEnd=sectionHeader?.nextElementSibling||null;
+  while(sectionEnd && !sectionEnd.classList.contains('asset-tree-section')) sectionEnd=sectionEnd.nextElementSibling;
+  tree.insertBefore(placeholder,row);
+  const preview={placeholder,sourceRows,originalLevels,sourceBaseLevel:originalLevels[0]||0,sectionEnd,intentKey:'origin'};
+  assetState.groupDragPreview=preview;
+  requestAnimationFrame(()=>{
+    if(assetState.groupDragPreview!==preview) return;
+    sourceRows.forEach((sourceRow,index)=>sourceRow.classList.add(index===0?'group-drag-origin':'group-drag-origin-child'));
+  });
+}
+function assetResetGroupLivePreview(){
+  const tree=$('#assetGroupTree');
+  const preview=assetState.groupDragPreview;
+  const sourceRow=preview?.sourceRows?.[0];
+  if(!tree || !preview?.placeholder || !sourceRow?.isConnected || preview.intentKey==='origin') return;
+  const beforeRects=new Map(Array.from(tree.children).filter(node=>node.classList.contains('asset-group-row')).map(node=>[node,node.getBoundingClientRect()]));
+  preview.placeholder.querySelectorAll('.asset-group-preview-row').forEach((clone,index)=>{
+    const level=preview.originalLevels[index]||0;
+    clone.dataset.groupLevel=String(level);
+    clone.style.paddingLeft=`${10+level*16}px`;
+    const prefix=clone.querySelector('.asset-folder-icon');
+    if(prefix) prefix.textContent=level>0?'-'.repeat(level*2):'';
+  });
+  tree.insertBefore(preview.placeholder,sourceRow);
+  preview.placeholder.removeAttribute('data-drop-mode');
+  preview.intentKey='origin';
+  assetAnimateGroupPreviewShift(tree,beforeRects);
+}
+function assetGroupPreviewInsertionRef(row,intent,preview){
+  if(intent.mode==='root') return preview.sectionEnd?.isConnected ? preview.sectionEnd : null;
+  if(intent.mode==='before') return row;
+  const sourceRows=new Set(preview.sourceRows||[]);
+  const targetLevel=assetGroupRowLevel(row);
+  let next=row?.nextElementSibling||null;
+  while(next){
+    const following=next.nextElementSibling;
+    if(next===preview.placeholder || sourceRows.has(next)){ next=following; continue; }
+    if(next.classList.contains('asset-tree-section')) break;
+    if(!next.classList.contains('asset-group-row') || assetGroupRowLevel(next)<=targetLevel) break;
+    next=following;
+  }
+  return next;
+}
+function assetAnimateGroupPreviewShift(tree,beforeRects){
+  if(!tree || window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches) return;
+  Array.from(tree.children).forEach(row=>{
+    const before=beforeRects.get(row);
+    if(!before || !row.classList.contains('asset-group-row') || row.classList.contains('group-drag-origin') || row.classList.contains('group-drag-origin-child')) return;
+    const delta=before.top-row.getBoundingClientRect().top;
+    if(Math.abs(delta)<1 || typeof row.animate!=='function') return;
+    row.getAnimations?.().forEach(animation=>animation.cancel());
+    row.animate([{transform:`translateY(${delta}px)`},{transform:'translateY(0)'}],{duration:150,easing:'cubic-bezier(.2,.8,.2,1)'});
+  });
+}
+function assetPlaceGroupLivePreview(row,intent){
+  const tree=$('#assetGroupTree');
+  const preview=assetState.groupDragPreview;
+  if(!tree || !preview?.placeholder || !intent) return;
+  const intentKey=[intent.mode,intent.targetId,intent.parentId,intent.beforeId].join('|');
+  if(preview.intentKey===intentKey) return;
+  const beforeRects=new Map(Array.from(tree.children).filter(node=>node.classList.contains('asset-group-row')).map(node=>[node,node.getBoundingClientRect()]));
+  const projectedBaseLevel=intent.mode==='root' ? 0 : assetGroupRowLevel(row)+(intent.mode==='inside'?1:0);
+  const levelDelta=projectedBaseLevel-preview.sourceBaseLevel;
+  preview.placeholder.querySelectorAll('.asset-group-preview-row').forEach((clone,index)=>{
+    const level=Math.max(0,(preview.originalLevels[index]||0)+levelDelta);
+    clone.dataset.groupLevel=String(level);
+    clone.style.paddingLeft=`${10+level*16}px`;
+    const prefix=clone.querySelector('.asset-folder-icon');
+    if(prefix) prefix.textContent=level>0?'-'.repeat(level*2):'';
+  });
+  const reference=assetGroupPreviewInsertionRef(row,intent,preview);
+  tree.insertBefore(preview.placeholder,reference);
+  preview.placeholder.dataset.dropMode=intent.mode;
+  preview.intentKey=intentKey;
+  assetAnimateGroupPreviewShift(tree,beforeRects);
+}
 function assetGroupDropAllowed(sourceId, parentId=''){
   const source=assetGroupById(sourceId);
   if(!source.id || !assetCanEdit(source)) return false;
@@ -9877,6 +10025,7 @@ function assetGroupDropIntentForEvent(event,row,sourceId){
     const targetIndex=siblings.findIndex(group=>group.id===targetId);
     beforeId=targetIndex>=0 ? (siblings[targetIndex+1]?.id||'') : '';
   }
+  if((mode==='before' || mode==='after') && !assetCanEdit(target)) return null;
   if(!assetGroupDropAllowed(sourceId,parentId)) return null;
   return {sourceId,targetId,parentId,beforeId,mode};
 }
@@ -9886,13 +10035,19 @@ function markAssetGroupDropTarget(row,intent){
   assetState.groupDropIntent=intent;
   if(intent.mode==='root') $('#assetGroupTree')?.classList.add('group-drop-root');
   else row?.classList.add(`group-drop-${intent.mode}`);
+  assetPlaceGroupLivePreview(row,intent);
 }
 async function assetMoveGroupTree(groupId,parentId='',beforeId=''){
-  await api('/api/assets/groups/move',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({group_id:groupId,parent_id:parentId||null,before_id:beforeId||null})});
-  assetState.currentGroup=groupId;
-  if(parentId) assetState.collapsedGroups.delete(parentId);
-  await loadAssetLibrary();
-  toast('分类目录位置已调整');
+  try{
+    await api('/api/assets/groups/move',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({group_id:groupId,parent_id:parentId||null,before_id:beforeId||null})});
+    assetState.currentGroup=groupId;
+    if(parentId) assetState.collapsedGroups.delete(parentId);
+    await loadAssetLibrary();
+    toast('分类目录位置已调整');
+  }finally{
+    assetState.groupDropSaving=false;
+    clearAssetGroupLivePreview();
+  }
 }
 function assetGroupHasChildren(id){ return (assetState.groups||[]).some(group=>String(group.parent_id||'')===String(id||'')); }
 function assetToggleGroupChildren(id){
@@ -10101,6 +10256,7 @@ function minimizeAssetLibrary(){ $('#assetLibraryLayer')?.classList.remove('acti
 function renderAssetLibrary({skipTree=false}={}){
   const tree = $('#assetGroupTree');
   if(tree && !skipTree){
+    clearAssetGroupLivePreview();
     const groupCounts = assetRecursiveCountMap();
     const groups = assetState.groups || [];
     const rows = [];
@@ -10501,13 +10657,23 @@ function setupAssetLibrary(){
     e.dataTransfer.setData('application/x-laig-asset-group',group.id);
     e.dataTransfer.effectAllowed='move';
     row.classList.add('group-dragging');
+    assetBeginGroupLivePreview(row);
   });
   assetGroupTree?.addEventListener('dragover',e=>{
     const sourceId=assetGroupDragId(e.dataTransfer);
     if(!sourceId) return;
-    const row=e.target.closest('.asset-group-row');
+    if(assetGroupPreviewContainsPoint(e)){
+      e.preventDefault();
+      e.stopPropagation();
+      e.dataTransfer.dropEffect='move';
+      const previewRect=assetGroupTree.getBoundingClientRect();
+      if(e.clientY<previewRect.top+32) assetGroupTree.scrollTop-=12;
+      else if(e.clientY>previewRect.bottom-32) assetGroupTree.scrollTop+=12;
+      return;
+    }
+    const row=assetGroupDropRowForEvent(e);
     const intent=assetGroupDropIntentForEvent(e,row,sourceId);
-    if(!intent){ clearAssetGroupDropTargets(); return; }
+    if(!intent){ clearAssetGroupDropTargets(); assetResetGroupLivePreview(); return; }
     e.preventDefault();
     e.stopPropagation();
     e.dataTransfer.dropEffect='move';
@@ -10517,25 +10683,28 @@ function setupAssetLibrary(){
     else if(e.clientY>rect.bottom-32) assetGroupTree.scrollTop+=12;
   });
   assetGroupTree?.addEventListener('dragleave',e=>{
-    if(!assetGroupTree.contains(e.relatedTarget)) clearAssetGroupDropTargets();
+    if(!assetGroupTree.contains(e.relatedTarget)){ clearAssetGroupDropTargets(); assetResetGroupLivePreview(); }
   });
   assetGroupTree?.addEventListener('drop',e=>{
     const sourceId=assetGroupDragId(e.dataTransfer);
     if(!sourceId) return;
-    const row=e.target.closest('.asset-group-row');
-    const intent=assetGroupDropIntentForEvent(e,row,sourceId);
+    const overPreview=assetGroupPreviewContainsPoint(e);
+    const row=overPreview ? null : assetGroupDropRowForEvent(e);
+    const intent=overPreview ? assetState.groupDropIntent : assetGroupDropIntentForEvent(e,row,sourceId);
     e.preventDefault();
     e.stopImmediatePropagation();
     clearAssetGroupDropTargets();
     assetState.draggingGroupId='';
     assetState.groupDragJustEnded=Date.now();
-    if(!intent) return;
+    if(!intent){ clearAssetGroupLivePreview(); return; }
+    assetState.groupDropSaving=true;
     assetMoveGroupTree(sourceId,intent.parentId,intent.beforeId).catch(err=>toast(err.message||'分类目录调整失败'));
   });
   assetGroupTree?.addEventListener('dragend',e=>{
     assetState.draggingGroupId='';
     assetState.groupDragJustEnded=Date.now();
     clearAssetGroupDropTargets();
+    if(!assetState.groupDropSaving) clearAssetGroupLivePreview();
     e.target.closest('.asset-group-row')?.classList.remove('group-dragging');
   });
   $('#assetBatchToggleBtn')?.addEventListener('click',()=>{assetState.batch=!assetState.batch; assetState.selected.clear(); renderAssetLibrary({skipTree:true});});
