@@ -29,7 +29,11 @@ assert(/nativeDragPreparedFile[\s\S]*?copyFileToLocalHotCache/.test(main), 'Nati
 assert(/icon\.resize\(\{ width:32, height:32/.test(main), 'Native drag feedback must use a bounded icon');
 assert(/sender\.startDrag\(\{ file:prepared\.filePath, icon \}\)/.test(main), 'Native dragging must expose only the prepared copy');
 assert(!/startDrag\(\{ file:\s*asset\.local_path/.test(main), 'Native dragging must never expose the library source path directly');
-assert(/e\.preventDefault\(\);[\s\S]*?assetStartNativeDrag\(asset, card\)/.test(app), 'Electron asset drags must cancel the competing HTML drag loop');
+assert(/function assetUsesPointerCardDrag\(\)/.test(app), 'Electron asset drags must use the pointer sorting path');
+assert(/function assetStartCardPointerDrag\(/.test(app) && /document\.addEventListener\('pointermove',assetMoveCardPointerDrag/.test(app), 'Asset cards must support pointer-driven sorting');
+assert(/function assetPlaceCardPointerPreview\(/.test(app) && /asset-card-sort-preview/.test(app), 'Asset cards must render a live reorder placeholder');
+assert(/!assetPointInsideRect\(event,libraryRect,8\)[\s\S]*?assetStartNativeDrag\(asset,drag\.card\)/.test(app), 'Electron must hand off to native file dragging only after leaving the library');
+assert(/data-asset-draggable="true"[\s\S]*?draggable="\$\{pointerCardDrag\?'false':'true'\}"/.test(app), 'Electron cards must disable the competing HTML drag implementation');
 assert(/if\(e\.target\.closest\?\.\('\.asset-card'\)\) return;/.test(app), 'Asset cards must bypass the generic generated-image drag handler');
 assert(/window\.addEventListener\('blur', hideDragOriginalBadge/.test(app), 'Native drag feedback must be cleared if the window loses focus');
 assert(/id="assetSearchAllBtn"/.test(index), 'Asset library must expose the all-groups search toggle');
@@ -44,16 +48,17 @@ assert(/promptSidebarToggleBtn/.test(app) && /prompt-sidebar-collapsed/.test(css
 assert(/function assetToggleGroupChildren\(/.test(app), 'Asset parent groups must support expand/collapse from row interactions');
 assert(/function assetMoveGroup\(/.test(main) && /\/api\/assets\/groups\/move/.test(main), 'Asset group move/reorder backend is missing');
 assert(/descendants\.has\(parentId\)/.test(main), 'Asset groups must not be moved into their own descendants');
-assert(/application\/x-laig-asset-group/.test(app), 'Asset category rows must expose an internal group drag type');
+assert(/data-group-draggable="\$\{draggable\?'true':'false'\}" draggable="false"/.test(app), 'Asset categories must use pointer dragging instead of fragile native HTML dragging');
+assert(/function assetStartGroupPointerDrag\(/.test(app) && /document\.addEventListener\('pointermove',assetMoveGroupPointerDrag/.test(app), 'Asset categories must support pointer-driven dragging');
 assert(/function assetGroupDropIntentForEvent\(/.test(app) && /group-drop-(before|after|inside)/.test(app), 'Asset category drag placement must support reorder and nesting');
 assert(/function assetBeginGroupLivePreview\(/.test(app) && /function assetPlaceGroupLivePreview\(/.test(app), 'Asset category dragging must create and reposition a live placeholder');
-assert(/assetGroupPreviewContainsPoint\(e\)/.test(app), 'Asset category live preview must remain a stable drop target under the pointer');
+assert(/assetGroupPreviewContainsPoint\(event\)/.test(app), 'Asset category live preview must remain a stable drop target under the pointer');
 assert(/function assetGroupDropRowForEvent\(/.test(app), 'Asset category drag gaps must resolve to the nearest visible row');
 assert(/function assetResetGroupLivePreview\(/.test(app) && /clearAssetGroupDropTargets\(\); assetResetGroupLivePreview\(\)/.test(app), 'Invalid category drop positions must restore the live preview to its origin');
 assert(/assetAnimateGroupPreviewShift\(tree,beforeRects\)/.test(app), 'Asset category siblings must animate out of the projected drop position');
 assert(/\.asset-group-live-preview\{[^}]*display:grid[^}]*pointer-events:none/.test(css), 'Asset category live preview styling is missing');
 assert(/\.asset-group-row\.group-drag-origin-child\{display:none!important\}/.test(css), 'The original category subtree must leave its old layout position during preview');
-assert(/assetMoveGroupTree\(sourceId,intent\.parentId,intent\.beforeId\)/.test(app), 'Asset category drops must persist through the move endpoint');
+assert(/assetMoveGroupTree\(drag\.groupId,intent\.parentId,intent\.beforeId\)/.test(app), 'Asset category drops must persist through the move endpoint');
 assert(/addEventListener\('dblclick',[\s\S]*?assetToggleGroupChildren\(row\.dataset\.id\)/.test(app), 'Double-clicking an asset parent group must toggle its children');
 assert(/addEventListener\('wheel',[\s\S]*?tree\.scrollTop=next/.test(app), 'Asset category wheel scrolling must stay inside the tree');
 assert(/\.asset-group-tree\{[^}]*overflow-y:auto!important[^}]*overscroll-behavior:contain/.test(css), 'Asset category tree must own vertical scrolling');
@@ -63,9 +68,10 @@ assert(/renderAssetLibrary\(\{skipTree\}\)/.test(app), 'Asset rendering must sup
 assert(/assetTextMeasureContext[\s\S]*?measureText\(String\(text\|\|''\)\)/.test(app), 'Asset text fitting must avoid repeated DOM layout measurements');
 assert(/data-asset-media-src/.test(app) && /function assetHydrateCardMedia\(/.test(app), 'Asset thumbnails must hydrate only near the visible grid area');
 assert(/new IntersectionObserver[\s\S]*?root:grid[\s\S]*?rootMargin:'240px 0px'/.test(app), 'Asset media lazy loading must follow the asset grid viewport');
-assert(/assetRevealTreeScrollbar\(tree\)/.test(app) && /scrollbar-active/.test(app), 'Asset scrollbar visibility must follow active scrolling');
-assert(/\.asset-group-tree\.scrollbar-active/.test(css) && /scrollbar-color:transparent transparent/.test(css), 'Asset scrollbar must hide after scrolling without shifting layout');
-assert(/\*::\-webkit-scrollbar-button:single-button\{[^}]*display:none!important/.test(css), 'Scrollbar arrow buttons must stay hidden');
-assert(/\.asset-group-tree\.scrollbar-active::\-webkit-scrollbar-track\{background:transparent!important\}/.test(css), 'Active asset scrolling must keep the track invisible');
+assert(/function assetBindOverlayScrollbar\(/.test(app) && /assetRefreshOverlayScrollbars\(false\)/.test(app), 'Asset panes must bind their custom overlay scroll thumbs');
+assert(/assetUpdateOverlayScrollbar\(scroller,true\)/.test(app) && /state\.hideTimer=setTimeout/.test(app), 'Asset scroll thumbs must appear while scrolling and auto-hide');
+assert(/\.asset-library-window \.asset-group-tree::\-webkit-scrollbar,[\s\S]*?\.asset-library-window \.asset-grid::\-webkit-scrollbar\{[\s\S]*?display:none!important[\s\S]*?width:0!important/.test(css), 'Asset panes must completely hide native scrollbar rails and arrows');
+assert(/\.asset-overlay-scroll-thumb\{[\s\S]*?border-radius:999px[\s\S]*?opacity:0[\s\S]*?pointer-events:none/.test(css), 'Asset panes must use one rounded auto-hidden overlay thumb');
+assert(/\*::\-webkit-scrollbar-button:vertical:start:decrement[\s\S]*?display:none!important[\s\S]*?height:0!important/.test(css), 'Scrollbar arrow buttons must stay hidden');
 
 console.log('[verify-asset-library-drag] OK: full thumbnails, drag workflows, prompt categories, fast switching, and auto-hidden group scrolling are wired.');

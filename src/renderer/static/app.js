@@ -9800,10 +9800,14 @@ function makeFloatingBox(boxId, headId, resizeId){
 
 // V14.10.33 Asset Library
 const ASSET_SIDEBAR_PIN_KEY = 'LAIG_ASSET_SIDEBAR_PINNED';
-const assetState = { ready:false, groups:[], assets:[], allAssets:[], currentGroup:'', selected:new Set(), batch:false, isHost:false, settings:{}, clientId:'', sidebarPinned:localStorage.getItem(ASSET_SIDEBAR_PIN_KEY)==='1', searchAll:false, editingGroupId:'', collapsedGroups:new Set(), draggingAssetId:'', draggingGroupId:'', groupDropIntent:null, groupDragPreview:null, groupDropSaving:false, groupDragJustEnded:0, reorderTarget:null };
+const assetState = { ready:false, groups:[], assets:[], allAssets:[], currentGroup:'', selected:new Set(), batch:false, isHost:false, settings:{}, clientId:'', sidebarPinned:localStorage.getItem(ASSET_SIDEBAR_PIN_KEY)==='1', searchAll:false, editingGroupId:'', collapsedGroups:new Set(), draggingAssetId:'', draggingGroupId:'', groupDropIntent:null, groupDragPreview:null, groupDropSaving:false, groupDragJustEnded:0, assetDragJustEnded:0, reorderTarget:null };
 const assetNativeDragPrepare = new Map();
 let assetNativeDragHoverTimer = 0;
 let assetNativeDragHoverId = '';
+let assetGroupPointerDrag = null;
+let assetCardPointerDrag = null;
+let assetNativeDragHandoffId = '';
+const assetOverlayScrollbars = new WeakMap();
 function cancelAssetNativeDragHover(){
   if(assetNativeDragHoverTimer) clearTimeout(assetNativeDragHoverTimer);
   assetNativeDragHoverTimer=0;
@@ -9833,14 +9837,11 @@ function assetStartNativeDrag(asset, card){
     hideDragOriginalBadge();
     card?.classList.remove('dragging');
     $$('.asset-group-row.asset-drop-target').forEach(x=>x.classList.remove('asset-drop-target'));
+    if(assetNativeDragHandoffId===asset.id) assetNativeDragHandoffId='';
   });
   return true;
 }
 function assetGroupById(id){ return (assetState.groups||[]).find(g=>g.id===id) || {}; }
-function assetGroupDragId(dataTransfer){
-  if(assetState.draggingGroupId) return assetState.draggingGroupId;
-  try{ return dataTransfer?.getData('application/x-laig-asset-group') || ''; }catch{ return ''; }
-}
 function clearAssetGroupDropTargets(){
   assetState.groupDropIntent=null;
   $$('.asset-group-row.group-drop-before,.asset-group-row.group-drop-after,.asset-group-row.group-drop-inside').forEach(row=>row.classList.remove('group-drop-before','group-drop-after','group-drop-inside'));
@@ -9871,7 +9872,7 @@ function assetGroupPreviewContainsPoint(event){
   return event.clientX>=rect.left && event.clientX<=rect.right && event.clientY>=rect.top && event.clientY<=rect.bottom;
 }
 function assetGroupDropRowForEvent(event){
-  const direct=event.target.closest?.('.asset-group-row');
+  const direct=event.target?.closest?.('.asset-group-row');
   if(direct && !direct.classList.contains('asset-group-preview-row') && !direct.classList.contains('group-drag-origin') && !direct.classList.contains('group-drag-origin-child')) return direct;
   const tree=$('#assetGroupTree');
   if(!tree) return null;
@@ -9993,6 +9994,62 @@ function assetPlaceGroupLivePreview(row,intent){
   preview.placeholder.dataset.dropMode=intent.mode;
   preview.intentKey=intentKey;
   assetAnimateGroupPreviewShift(tree,beforeRects);
+}
+function assetPointInsideRect(event,rect,padding=0){
+  return !!rect && event.clientX>=rect.left-padding && event.clientX<=rect.right+padding && event.clientY>=rect.top-padding && event.clientY<=rect.bottom+padding;
+}
+function assetStartGroupPointerDrag(event,row){
+  if(event.button!==0 || event.target.closest('[data-group-toggle],[data-group-edit],button,input')) return;
+  const group=assetGroupById(row?.dataset.id);
+  if(!group.id || !assetCanEdit(group)) return;
+  assetGroupPointerDrag={pointerId:event.pointerId,startX:event.clientX,startY:event.clientY,row,groupId:group.id,active:false};
+}
+function assetMoveGroupPointerDrag(event){
+  const drag=assetGroupPointerDrag;
+  if(!drag || (drag.pointerId!==undefined && event.pointerId!==undefined && drag.pointerId!==event.pointerId)) return;
+  if(!drag.active){
+    if(Math.hypot(event.clientX-drag.startX,event.clientY-drag.startY)<6) return;
+    if(!drag.row?.isConnected){ assetGroupPointerDrag=null; return; }
+    drag.active=true;
+    assetState.draggingGroupId=drag.groupId;
+    assetState.groupDropIntent=null;
+    drag.row.classList.add('group-dragging');
+    assetBeginGroupLivePreview(drag.row);
+    document.body.classList.add('asset-group-pointer-dragging');
+  }
+  if(event.cancelable) event.preventDefault();
+  const tree=$('#assetGroupTree');
+  const treeRect=tree?.getBoundingClientRect();
+  if(!tree || !assetPointInsideRect(event,treeRect,4)){
+    clearAssetGroupDropTargets();
+    assetResetGroupLivePreview();
+    return;
+  }
+  if(assetGroupPreviewContainsPoint(event) && assetState.groupDropIntent) return;
+  const hoverTarget=document.elementFromPoint(event.clientX,event.clientY);
+  const hoverEvent={target:hoverTarget,clientX:event.clientX,clientY:event.clientY};
+  const row=assetGroupDropRowForEvent(hoverEvent);
+  const intent=assetGroupDropIntentForEvent(hoverEvent,row,drag.groupId);
+  if(!intent){ clearAssetGroupDropTargets(); assetResetGroupLivePreview(); return; }
+  markAssetGroupDropTarget(row,intent);
+  if(event.clientY<treeRect.top+32) tree.scrollTop-=12;
+  else if(event.clientY>treeRect.bottom-32) tree.scrollTop+=12;
+  assetUpdateOverlayScrollbar(tree,true);
+}
+function assetFinishGroupPointerDrag(event,cancel=false){
+  const drag=assetGroupPointerDrag;
+  if(!drag || (drag.pointerId!==undefined && event?.pointerId!==undefined && drag.pointerId!==event.pointerId)) return;
+  assetGroupPointerDrag=null;
+  document.body.classList.remove('asset-group-pointer-dragging');
+  if(!drag.active) return;
+  if(event?.cancelable) event.preventDefault();
+  const intent=cancel?null:assetState.groupDropIntent;
+  clearAssetGroupDropTargets();
+  assetState.draggingGroupId='';
+  assetState.groupDragJustEnded=Date.now();
+  if(!intent){ clearAssetGroupLivePreview(); return; }
+  assetState.groupDropSaving=true;
+  assetMoveGroupTree(drag.groupId,intent.parentId,intent.beforeId).catch(error=>toast(error.message||'分类目录调整失败'));
 }
 function assetGroupDropAllowed(sourceId, parentId=''){
   const source=assetGroupById(sourceId);
@@ -10240,16 +10297,86 @@ async function loadAssetAssets({skipTree=true}={}){
   assetApplyLoadedFilter();
   renderAssetLibrary({skipTree});
 }
-let assetTreeScrollbarHideTimer=0;
-function assetRevealTreeScrollbar(tree){
-  if(!tree) return;
-  tree.classList.add('scrollbar-active');
-  if(assetTreeScrollbarHideTimer) clearTimeout(assetTreeScrollbarHideTimer);
-  assetTreeScrollbarHideTimer=setTimeout(()=>{
-    tree.classList.remove('scrollbar-active');
-    assetTreeScrollbarHideTimer=0;
-  },850);
+function assetUpdateOverlayScrollbar(scroller,show=false){
+  const state=assetOverlayScrollbars.get(scroller);
+  if(!state || !scroller?.isConnected) return;
+  const maxScroll=Math.max(0,scroller.scrollHeight-scroller.clientHeight);
+  const scrollerRect=scroller.getBoundingClientRect();
+  const parentRect=state.parent.getBoundingClientRect();
+  if(maxScroll<2 || scrollerRect.height<20 || scrollerRect.width<20){
+    state.thumb.hidden=true;
+    state.thumb.classList.remove('active');
+    return;
+  }
+  const viewportHeight=Math.max(1,scroller.clientHeight);
+  const thumbHeight=Math.max(28,Math.min(viewportHeight,viewportHeight*viewportHeight/scroller.scrollHeight));
+  const travel=Math.max(0,viewportHeight-thumbHeight);
+  const thumbTop=scrollerRect.top-parentRect.top+(maxScroll ? (scroller.scrollTop/maxScroll)*travel : 0);
+  state.thumb.hidden=false;
+  state.thumb.style.height=`${thumbHeight}px`;
+  state.thumb.style.top=`${thumbTop}px`;
+  state.thumb.style.left=`${Math.max(0,scrollerRect.right-parentRect.left-7)}px`;
+  state.metrics={maxScroll,travel};
+  if(!show) return;
+  state.thumb.classList.add('active');
+  if(state.hideTimer) clearTimeout(state.hideTimer);
+  if(!state.dragging){
+    state.hideTimer=setTimeout(()=>{
+      state.hideTimer=0;
+      if(!state.dragging) state.thumb.classList.remove('active');
+    },850);
+  }
 }
+function assetBindOverlayScrollbar(scroller){
+  if(!scroller || assetOverlayScrollbars.has(scroller)) return;
+  const parent=scroller.parentElement;
+  if(!parent) return;
+  const thumb=document.createElement('span');
+  thumb.className='asset-overlay-scroll-thumb';
+  thumb.setAttribute('aria-hidden','true');
+  parent.appendChild(thumb);
+  const state={parent,thumb,hideTimer:0,dragging:null,metrics:null,resizeObserver:null};
+  assetOverlayScrollbars.set(scroller,state);
+  scroller.addEventListener('scroll',()=>assetUpdateOverlayScrollbar(scroller,true),{passive:true});
+  thumb.addEventListener('pointerdown',event=>{
+    if(event.button!==0 || thumb.hidden) return;
+    event.preventDefault();
+    event.stopPropagation();
+    state.dragging={pointerId:event.pointerId,startY:event.clientY,startScrollTop:scroller.scrollTop};
+    thumb.classList.add('active','dragging');
+    try{ thumb.setPointerCapture(event.pointerId); }catch{}
+  });
+  thumb.addEventListener('pointermove',event=>{
+    const drag=state.dragging;
+    if(!drag || drag.pointerId!==event.pointerId) return;
+    event.preventDefault();
+    const metrics=state.metrics;
+    if(metrics?.travel>0) scroller.scrollTop=drag.startScrollTop+(event.clientY-drag.startY)*(metrics.maxScroll/metrics.travel);
+  });
+  const finish=event=>{
+    const drag=state.dragging;
+    if(!drag || drag.pointerId!==event.pointerId) return;
+    state.dragging=null;
+    thumb.classList.remove('dragging');
+    try{ thumb.releasePointerCapture(event.pointerId); }catch{}
+    assetUpdateOverlayScrollbar(scroller,true);
+  };
+  thumb.addEventListener('pointerup',finish);
+  thumb.addEventListener('pointercancel',finish);
+  if(typeof ResizeObserver==='function'){
+    state.resizeObserver=new ResizeObserver(()=>assetUpdateOverlayScrollbar(scroller,false));
+    state.resizeObserver.observe(scroller);
+    state.resizeObserver.observe(parent);
+  }
+  assetUpdateOverlayScrollbar(scroller,false);
+}
+function assetRefreshOverlayScrollbars(show=false){
+  [$('#assetGroupTree'),$('#assetGrid')].forEach(scroller=>{
+    assetBindOverlayScrollbar(scroller);
+    assetUpdateOverlayScrollbar(scroller,show);
+  });
+}
+function assetRevealTreeScrollbar(tree){ assetUpdateOverlayScrollbar(tree,true); }
 function openAssetLibrary(){ $('#assetLibraryLayer')?.classList.add('active'); $('#assetLibraryOrb')?.classList.remove('show'); bringFloatingLayer('#assetLibraryLayer', '#assetLibraryWindow'); loadAssetLibrary(); }
 function closeAssetLibrary(){ $('#assetLibraryLayer')?.classList.remove('active'); $('#assetLibraryOrb')?.classList.remove('show'); }
 function minimizeAssetLibrary(){ $('#assetLibraryLayer')?.classList.remove('active'); $('#assetLibraryOrb')?.classList.add('show'); }
@@ -10285,7 +10412,7 @@ function renderAssetLibrary({skipTree=false}={}){
             ? `<input class="asset-group-name-edit" data-group-edit value="${escapeHtml(g.name||'未命名')}" />`
             : `<span class="asset-group-name" title="${escapeHtml(g.name||'未命名')}">${escapeHtml(g.name||'未命名')}</span>`;
           const toggle = hasChildren ? `<button class="asset-group-toggle ${collapsed?'collapsed':''}" data-group-toggle="${escapeHtml(g.id)}" title="${collapsed?'展开子级':'折叠子级'}" aria-label="${collapsed?'展开子级':'折叠子级'}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 10l4 4 4-4" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>` : '';
-          rows.push(`<div class="asset-group-row ${assetState.currentGroup===g.id?'active':''} ${readonly?'readonly':''} ${draggable?'group-draggable':''} ${hasChildren?'has-children':''}" data-id="${escapeHtml(g.id)}" data-group-level="${level}" draggable="${draggable?'true':'false'}" style="padding-left:${10+level*16}px"><span class="asset-folder-icon">${prefix}</span>${namePart}${g.shared?'<em class="asset-share-mark">共享</em>':''}${readonly?`<em class="asset-readonly-mark">只读</em>`:''}<span class="count">${groupCounts.get(g.id)||0}</span>${toggle}${owner && readonly ? `<span class="asset-owner-tip" title="来自 ${escapeHtml(owner)}">${escapeHtml(owner)}</span>` : ''}</div>`);
+          rows.push(`<div class="asset-group-row ${assetState.currentGroup===g.id?'active':''} ${readonly?'readonly':''} ${draggable?'group-draggable':''} ${hasChildren?'has-children':''}" data-id="${escapeHtml(g.id)}" data-group-level="${level}" data-group-draggable="${draggable?'true':'false'}" draggable="false" style="padding-left:${10+level*16}px"><span class="asset-folder-icon">${prefix}</span>${namePart}${g.shared?'<em class="asset-share-mark">共享</em>':''}${readonly?`<em class="asset-readonly-mark">只读</em>`:''}<span class="count">${groupCounts.get(g.id)||0}</span>${toggle}${owner && readonly ? `<span class="asset-owner-tip" title="来自 ${escapeHtml(owner)}">${escapeHtml(owner)}</span>` : ''}</div>`);
           if(!collapsed) walk(g.id, level+1);
         });
       };
@@ -10336,6 +10463,7 @@ function renderAssetLibrary({skipTree=false}={}){
   if($('#assetBulkCount')) $('#assetBulkCount').textContent = `已选择 ${assetState.selected.size} 个素材`;
   const grid = $('#assetGrid');
   if(grid){
+    const pointerCardDrag=assetUsesPointerCardDrag();
     grid.innerHTML = (assetState.assets||[]).map(a=>{
       const thumb = a.type === 'image' ? (a.thumb_url || a.url) : (a.type === 'video' ? (a.thumb_url || '') : '');
       const readonly = !assetCanEdit(a);
@@ -10343,15 +10471,16 @@ function renderAssetLibrary({skipTree=false}={}){
       const selected = assetState.selected.has(a.id);
       const badge = readonly ? `<span class="asset-shared-badge readonly">共享 · 来自 ${escapeHtml(ownerText)} · 只读</span>` : (a.shared ? '<span class="asset-shared-badge">已共享</span>' : '');
       const mediaUrl=escapeHtml(withPublicAccess(thumb || a.url || ''));
-      const media = thumb ? `<img class="asset-image-thumb" data-asset-media-src="${mediaUrl}" loading="lazy" decoding="async" alt="" />` : (a.type==='video' ? `<video class="asset-video-thumb" data-asset-video-thumb data-asset-media-src="${mediaUrl}" muted playsinline preload="none"></video><span class="asset-file-icon asset-video-fallback">${assetIcon(a.type)}</span>` : `<span class="asset-file-icon">${assetIcon(a.type)}</span>`);
+      const media = thumb ? `<img class="asset-image-thumb" data-asset-media-src="${mediaUrl}" loading="lazy" decoding="async" draggable="false" alt="" />` : (a.type==='video' ? `<video class="asset-video-thumb" data-asset-video-thumb data-asset-media-src="${mediaUrl}" muted playsinline preload="none" draggable="false"></video><span class="asset-file-icon asset-video-fallback">${assetIcon(a.type)}</span>` : `<span class="asset-file-icon">${assetIcon(a.type)}</span>`);
       const groupName = assetGroupById(a.group_id).name || '';
       const assetName=a.name||'未命名素材';
       const nameHint=readonly?`${assetName}\n共享素材只读`:`${assetName}\n双击名称可重命名`;
-      return `<article class="asset-card ${a.type==='video'?'video':''} ${selected?'selected':''} ${readonly?'readonly':''}" data-id="${escapeHtml(a.id)}" data-group-id="${escapeHtml(a.group_id || '')}" draggable="true">${selected?'<div class="asset-card-check">✓</div>':''}${badge}<div class="asset-thumb">${media}</div><div class="asset-info"><div class="asset-name" data-asset-name title="${escapeHtml(nameHint)}">${escapeHtml(assetName)}</div><div class="asset-meta" title="${escapeHtml([a.type||'file',groupName,assetFormatSize(a.size),formatBeijingTime(a.created_at)||''].filter(Boolean).join(' · '))}">${escapeHtml(a.type||'file')} · ${groupName?escapeHtml(groupName)+' · ':''}${assetFormatSize(a.size)} · ${escapeHtml(formatBeijingTime(a.created_at)||'')}</div></div><div class="asset-card-actions"><button class="asset-card-icon-btn" data-act="copy" title="复制资产源文件" aria-label="复制资产源文件">${assetActionSvg('copy')}</button><button class="asset-card-icon-btn" data-act="download" title="下载" aria-label="下载">${assetActionSvg('download')}</button>${assetCanEdit(a)?`<button class="asset-card-icon-btn danger" data-act="delete" title="删除" aria-label="删除">${assetActionSvg('delete')}</button>`:''}</div></article>`;
+      return `<article class="asset-card ${a.type==='video'?'video':''} ${selected?'selected':''} ${readonly?'readonly':''}" data-id="${escapeHtml(a.id)}" data-group-id="${escapeHtml(a.group_id || '')}" data-asset-draggable="true" draggable="${pointerCardDrag?'false':'true'}">${selected?'<div class="asset-card-check">✓</div>':''}${badge}<div class="asset-thumb">${media}</div><div class="asset-info"><div class="asset-name" data-asset-name title="${escapeHtml(nameHint)}">${escapeHtml(assetName)}</div><div class="asset-meta" title="${escapeHtml([a.type||'file',groupName,assetFormatSize(a.size),formatBeijingTime(a.created_at)||''].filter(Boolean).join(' · '))}">${escapeHtml(a.type||'file')} · ${groupName?escapeHtml(groupName)+' · ':''}${assetFormatSize(a.size)} · ${escapeHtml(formatBeijingTime(a.created_at)||'')}</div></div><div class="asset-card-actions"><button class="asset-card-icon-btn" data-act="copy" title="复制资产源文件" aria-label="复制资产源文件">${assetActionSvg('copy')}</button><button class="asset-card-icon-btn" data-act="download" title="下载" aria-label="下载">${assetActionSvg('download')}</button>${assetCanEdit(a)?`<button class="asset-card-icon-btn danger" data-act="delete" title="删除" aria-label="删除">${assetActionSvg('delete')}</button>`:''}</div></article>`;
     }).join('') || '<div class="asset-empty">暂无素材，点击右上角“上传素材”或拖拽文件到这里。</div>';
     assetHydrateCardMedia();
   }
   scheduleAssetTextFit(!skipTree);
+  requestAnimationFrame(()=>assetRefreshOverlayScrollbars(false));
 }
 async function assetCreateGroup(parentId=''){
   const isProject = !parentId;
@@ -10476,6 +10605,166 @@ async function assetReorderAsset(id, beforeId=''){
   siblings.forEach((asset,index)=>{ asset.sort_order=(index+1)*1000; });
   await loadAssetAssets();
   toast('素材顺序已调整');
+}
+function assetUsesPointerCardDrag(){ return typeof window.electronAPI?.startAssetDrag === 'function'; }
+function assetCardDragItems(grid,drag){
+  return Array.from(grid?.children||[]).filter(node=>node.classList?.contains('asset-card') && node!==drag.card && node!==drag.preview && node.dataset.id);
+}
+function assetClearCardGroupTarget(){
+  $$('.asset-group-row.asset-drop-target').forEach(row=>row.classList.remove('asset-drop-target'));
+}
+function assetResetCardPointerPreview(drag,mode=''){
+  if(!drag?.preview?.isConnected || !drag.card?.isConnected) return;
+  drag.card.parentElement?.insertBefore(drag.preview,drag.card);
+  drag.beforeId=drag.originalBeforeId;
+  drag.targetGroupId='';
+  drag.mode=mode;
+}
+function assetBeginCardPointerPreview(drag){
+  if(!drag?.card?.isConnected || !drag.editable) return false;
+  const preview=drag.card.cloneNode(true);
+  preview.removeAttribute('data-id');
+  preview.removeAttribute('draggable');
+  preview.classList.remove('dragging','asset-card-pointer-origin','asset-reorder-before','asset-reorder-after');
+  preview.classList.add('asset-card-sort-preview');
+  preview.querySelectorAll('button,input').forEach(control=>control.setAttribute('tabindex','-1'));
+  drag.card.parentElement.insertBefore(preview,drag.card);
+  drag.card.classList.add('asset-card-pointer-origin');
+  drag.preview=preview;
+  drag.mode='';
+  document.body.classList.add('asset-card-pointer-dragging');
+  return true;
+}
+function assetPlaceCardPointerPreview(event,drag){
+  const grid=$('#assetGrid');
+  if(!grid || !drag?.preview) return;
+  const candidates=assetCardDragItems(grid,drag).filter(card=>card.dataset.groupId===drag.groupId);
+  let target=document.elementFromPoint(event.clientX,event.clientY)?.closest?.('.asset-card[data-id]') || null;
+  if(target && (!candidates.includes(target) || target.dataset.groupId!==drag.groupId)) target=null;
+  if(!target && candidates.length){
+    const last=candidates[candidates.length-1];
+    if(event.clientY<=last.getBoundingClientRect().bottom+10){
+      let nearestDistance=Infinity;
+      candidates.forEach(card=>{
+        const rect=card.getBoundingClientRect();
+        const distance=Math.hypot(event.clientX-(rect.left+rect.width/2),event.clientY-(rect.top+rect.height/2));
+        if(distance<nearestDistance){ nearestDistance=distance; target=card; }
+      });
+    }
+  }
+  const ordered=assetCardDragItems(grid,drag).filter(card=>card.dataset.groupId===drag.groupId);
+  let insertIndex=ordered.length;
+  if(target){
+    const rect=target.getBoundingClientRect();
+    const before=event.clientX<rect.left+rect.width/2;
+    const targetIndex=ordered.indexOf(target);
+    insertIndex=Math.max(0,targetIndex+(before?0:1));
+  }
+  const reference=ordered[insertIndex]||null;
+  grid.insertBefore(drag.preview,reference);
+  drag.beforeId=reference?.dataset.id||'';
+  drag.targetGroupId='';
+  drag.mode='grid';
+}
+function assetAutoScrollAtPointer(scroller,event){
+  if(!scroller) return;
+  const rect=scroller.getBoundingClientRect();
+  let delta=0;
+  if(event.clientY<rect.top+42) delta=-18;
+  else if(event.clientY>rect.bottom-42) delta=18;
+  if(delta){
+    scroller.scrollTop+=delta;
+    assetUpdateOverlayScrollbar(scroller,true);
+  }
+}
+function assetStartCardPointerDrag(event,card,asset){
+  if(!assetUsesPointerCardDrag() || event.button!==0 || event.target.closest('button,input')) return;
+  const editable=assetCanEdit(asset);
+  const selectedIds=assetState.selected.has(asset.id) ? assetSelectedIds() : [asset.id];
+  const ids=selectedIds.filter(id=>assetCanEdit(assetState.assets.find(item=>item.id===id)||{}));
+  const sourceIndex=assetState.assets.findIndex(item=>item.id===asset.id);
+  const originalBeforeId=assetState.assets.slice(sourceIndex+1).find(item=>item.group_id===asset.group_id)?.id||'';
+  assetCardPointerDrag={
+    pointerId:event.pointerId,startX:event.clientX,startY:event.clientY,card,assetId:asset.id,
+    groupId:String(asset.group_id||''),ids:ids.length?ids:[asset.id],editable,originalBeforeId,beforeId:originalBeforeId,
+    targetGroupId:'',mode:'',active:false,preview:null
+  };
+}
+function assetMoveCardPointerDrag(event){
+  const drag=assetCardPointerDrag;
+  if(!drag || (drag.pointerId!==undefined && event.pointerId!==undefined && drag.pointerId!==event.pointerId)) return;
+  if(!drag.active){
+    if(Math.hypot(event.clientX-drag.startX,event.clientY-drag.startY)<6) return;
+    if(!drag.card?.isConnected){ assetCardPointerDrag=null; return; }
+    drag.active=true;
+    assetState.draggingAssetId=drag.assetId;
+    assetBeginCardPointerPreview(drag);
+  }
+  if(event.cancelable) event.preventDefault();
+  const library=$('#assetLibraryWindow');
+  const libraryRect=library?.getBoundingClientRect();
+  if(library && !assetPointInsideRect(event,libraryRect,8)){
+    const asset=assetState.assets.find(item=>item.id===drag.assetId);
+    assetCardPointerDrag=null;
+    drag.preview?.remove();
+    drag.card?.classList.remove('asset-card-pointer-origin');
+    document.body.classList.remove('asset-card-pointer-dragging');
+    assetClearCardGroupTarget();
+    assetState.assetDragJustEnded=Date.now();
+    assetNativeDragHandoffId=drag.assetId;
+    if(!assetStartNativeDrag(asset,drag.card)){
+      assetState.draggingAssetId='';
+      assetNativeDragHandoffId='';
+      clearAssetReorderTargets();
+      hideDragOriginalBadge();
+      drag.card?.classList.remove('dragging');
+    }
+    return;
+  }
+  if(!drag.preview) return;
+  const grid=$('#assetGrid');
+  const tree=$('#assetGroupTree');
+  if(assetPointInsideRect(event,tree?.getBoundingClientRect(),2)){
+    assetResetCardPointerPreview(drag,'');
+    const row=document.elementFromPoint(event.clientX,event.clientY)?.closest?.('.asset-group-row[data-id]');
+    const target=assetGroupById(row?.dataset.id);
+    assetClearCardGroupTarget();
+    if(row && target.id && target.id!==drag.groupId && assetCanEdit(target)){
+      row.classList.add('asset-drop-target');
+      drag.targetGroupId=target.id;
+      drag.mode='group';
+    }
+    assetAutoScrollAtPointer(tree,event);
+    return;
+  }
+  assetClearCardGroupTarget();
+  if(assetPointInsideRect(event,grid?.getBoundingClientRect(),2)){
+    assetPlaceCardPointerPreview(event,drag);
+    assetAutoScrollAtPointer(grid,event);
+    return;
+  }
+  assetResetCardPointerPreview(drag,'');
+}
+function assetFinishCardPointerDrag(event,cancel=false){
+  const drag=assetCardPointerDrag;
+  if(!drag || (drag.pointerId!==undefined && event?.pointerId!==undefined && drag.pointerId!==event.pointerId)) return;
+  assetCardPointerDrag=null;
+  if(!drag.active) return;
+  if(event?.cancelable) event.preventDefault();
+  const mode=cancel?'':drag.mode;
+  const targetGroupId=drag.targetGroupId;
+  const beforeId=drag.beforeId;
+  drag.preview?.remove();
+  drag.card?.classList.remove('asset-card-pointer-origin','dragging');
+  document.body.classList.remove('asset-card-pointer-dragging');
+  assetClearCardGroupTarget();
+  assetState.draggingAssetId='';
+  assetState.assetDragJustEnded=Date.now();
+  if(mode==='group' && targetGroupId){
+    assetMoveIds(drag.ids,targetGroupId).catch(error=>toast(error.message||'移动资产失败'));
+  }else if(mode==='grid' && drag.editable){
+    assetReorderAsset(drag.assetId,beforeId).catch(error=>toast(error.message||'调整素材顺序失败'));
+  }
 }
 function ensureAssetContextMenu(){
   let menu = $('#assetContextMenu');
@@ -10647,65 +10936,15 @@ function setupAssetLibrary(){
     $('#assetLibrarySearch')?.focus();
   });
   const assetGroupTree=$('#assetGroupTree');
-  assetGroupTree?.addEventListener('dragstart',e=>{
-    const row=e.target.closest('.asset-group-row[draggable="true"]');
-    if(!row || e.target.closest('[data-group-toggle],[data-group-edit]')) return e.preventDefault();
-    const group=assetGroupById(row.dataset.id);
-    if(!group.id || !assetCanEdit(group)) return e.preventDefault();
-    assetState.draggingGroupId=group.id;
-    assetState.groupDropIntent=null;
-    e.dataTransfer.setData('application/x-laig-asset-group',group.id);
-    e.dataTransfer.effectAllowed='move';
-    row.classList.add('group-dragging');
-    assetBeginGroupLivePreview(row);
+  assetGroupTree?.addEventListener('pointerdown',event=>{
+    const row=event.target.closest('.asset-group-row[data-group-draggable="true"]');
+    if(row) assetStartGroupPointerDrag(event,row);
   });
-  assetGroupTree?.addEventListener('dragover',e=>{
-    const sourceId=assetGroupDragId(e.dataTransfer);
-    if(!sourceId) return;
-    if(assetGroupPreviewContainsPoint(e)){
-      e.preventDefault();
-      e.stopPropagation();
-      e.dataTransfer.dropEffect='move';
-      const previewRect=assetGroupTree.getBoundingClientRect();
-      if(e.clientY<previewRect.top+32) assetGroupTree.scrollTop-=12;
-      else if(e.clientY>previewRect.bottom-32) assetGroupTree.scrollTop+=12;
-      return;
-    }
-    const row=assetGroupDropRowForEvent(e);
-    const intent=assetGroupDropIntentForEvent(e,row,sourceId);
-    if(!intent){ clearAssetGroupDropTargets(); assetResetGroupLivePreview(); return; }
-    e.preventDefault();
-    e.stopPropagation();
-    e.dataTransfer.dropEffect='move';
-    markAssetGroupDropTarget(row,intent);
-    const rect=assetGroupTree.getBoundingClientRect();
-    if(e.clientY<rect.top+32) assetGroupTree.scrollTop-=12;
-    else if(e.clientY>rect.bottom-32) assetGroupTree.scrollTop+=12;
-  });
-  assetGroupTree?.addEventListener('dragleave',e=>{
-    if(!assetGroupTree.contains(e.relatedTarget)){ clearAssetGroupDropTargets(); assetResetGroupLivePreview(); }
-  });
-  assetGroupTree?.addEventListener('drop',e=>{
-    const sourceId=assetGroupDragId(e.dataTransfer);
-    if(!sourceId) return;
-    const overPreview=assetGroupPreviewContainsPoint(e);
-    const row=overPreview ? null : assetGroupDropRowForEvent(e);
-    const intent=overPreview ? assetState.groupDropIntent : assetGroupDropIntentForEvent(e,row,sourceId);
-    e.preventDefault();
-    e.stopImmediatePropagation();
-    clearAssetGroupDropTargets();
-    assetState.draggingGroupId='';
-    assetState.groupDragJustEnded=Date.now();
-    if(!intent){ clearAssetGroupLivePreview(); return; }
-    assetState.groupDropSaving=true;
-    assetMoveGroupTree(sourceId,intent.parentId,intent.beforeId).catch(err=>toast(err.message||'分类目录调整失败'));
-  });
-  assetGroupTree?.addEventListener('dragend',e=>{
-    assetState.draggingGroupId='';
-    assetState.groupDragJustEnded=Date.now();
-    clearAssetGroupDropTargets();
-    if(!assetState.groupDropSaving) clearAssetGroupLivePreview();
-    e.target.closest('.asset-group-row')?.classList.remove('group-dragging');
+  document.addEventListener('pointermove',assetMoveGroupPointerDrag,{passive:false});
+  document.addEventListener('pointerup',event=>assetFinishGroupPointerDrag(event,false));
+  document.addEventListener('pointercancel',event=>assetFinishGroupPointerDrag(event,true));
+  assetGroupTree?.addEventListener('dragstart',event=>{
+    if(event.target.closest('.asset-group-row')) event.preventDefault();
   });
   $('#assetBatchToggleBtn')?.addEventListener('click',()=>{assetState.batch=!assetState.batch; assetState.selected.clear(); renderAssetLibrary({skipTree:true});});
   $('#assetSidebarToggleBtn')?.addEventListener('click',e=>{ e.stopPropagation(); $('#assetLibraryWindow')?.classList.toggle('asset-sidebar-peek'); });
@@ -10718,7 +10957,7 @@ function setupAssetLibrary(){
   $('#assetFileInput')?.addEventListener('change',async e=>{ await assetUploadFiles(e.target.files||[]); e.target.value=''; });
   $('#assetUploadTopBtn')?.addEventListener('click',()=>$('#assetFileInput')?.click());
   $('#assetGrid')?.addEventListener('pointerover',e=>{
-    const card=e.target.closest('.asset-card[draggable="true"]');
+    const card=e.target.closest('.asset-card[data-asset-draggable="true"]');
     if(!card || card.contains(e.relatedTarget)) return;
     const asset=assetState.assets.find(item=>item.id===card.dataset.id);
     if(!asset || assetNativeDragHoverId===asset.id) return;
@@ -10730,17 +10969,23 @@ function setupAssetLibrary(){
     },180);
   });
   $('#assetGrid')?.addEventListener('pointerout',e=>{
-    const card=e.target.closest('.asset-card[draggable="true"]');
+    const card=e.target.closest('.asset-card[data-asset-draggable="true"]');
     if(card && !card.contains(e.relatedTarget)) cancelAssetNativeDragHover();
   });
   $('#assetGrid')?.addEventListener('pointerdown',e=>{
     if(e.button !== 0) return;
-    const card=e.target.closest('.asset-card[draggable="true"]');
+    const card=e.target.closest('.asset-card[data-asset-draggable="true"]');
     if(!card || e.target.closest('button,input')) return;
     const asset=assetState.assets.find(item=>item.id===card.dataset.id);
     cancelAssetNativeDragHover();
-    if(asset) assetPrepareNativeDrag(asset)?.catch(()=>{});
+    if(asset){
+      assetPrepareNativeDrag(asset)?.catch(()=>{});
+      assetStartCardPointerDrag(e,card,asset);
+    }
   });
+  document.addEventListener('pointermove',assetMoveCardPointerDrag,{passive:false});
+  document.addEventListener('pointerup',event=>assetFinishCardPointerDrag(event,false));
+  document.addEventListener('pointercancel',event=>assetFinishCardPointerDrag(event,true));
   const drop=$('#assetDropZone');
   drop?.addEventListener('click',()=>$('#assetFileInput')?.click());
   const sidebar=$('.asset-library-sidebar');
@@ -10809,7 +11054,7 @@ function setupAssetLibrary(){
   $('#assetGroupTree')?.addEventListener('scroll',e=>assetRevealTreeScrollbar(e.currentTarget),{passive:true});
   $('#assetGroupTree')?.addEventListener('keydown',e=>{ const input=e.target.closest('[data-group-edit]'); if(!input) return; const row=input.closest('.asset-group-row'); if(e.key==='Enter'){ e.preventDefault(); assetSaveGroupName(row.dataset.id, input.value).catch(err=>toast(err.message||'重命名失败')); } if(e.key==='Escape'){ e.preventDefault(); assetState.editingGroupId=''; renderAssetLibrary(); } });
   $('#assetGroupTree')?.addEventListener('focusout',e=>{ const input=e.target.closest('[data-group-edit]'); if(!input) return; const row=input.closest('.asset-group-row'); setTimeout(()=>{ if(assetState.editingGroupId === row.dataset.id) assetSaveGroupName(row.dataset.id, input.value).catch(err=>toast(err.message||'重命名失败')); }, 0); });
-  $('#assetGrid')?.addEventListener('click',async e=>{ const card=e.target.closest('.asset-card'); if(!card) return; if(e.target.closest('[data-asset-name],.asset-name-edit')) return; const id=card.dataset.id; const a=assetState.assets.find(x=>x.id===id); const act=e.target.closest('button[data-act]')?.dataset.act; if(act==='copy'){ await assetCopyAsset(a); return; } if(act==='download'){ window.open(withPublicAccess(a.download_url||a.url),'_blank'); return; } if(act==='delete'){ return assetDeleteIds([id]); } if(assetState.batch){ assetState.selected.has(id)?assetState.selected.delete(id):assetState.selected.add(id); renderAssetLibrary({skipTree:true}); return; } const previewMeta=assetPreviewMeta(a||{}); if(a?.type==='image') showPreview(a.url,previewMeta); else if(a?.type==='video') showVideoPreview(previewMeta); else showPreview('',previewMeta); });
+  $('#assetGrid')?.addEventListener('click',async e=>{ if(Date.now()-assetState.assetDragJustEnded<240) return; const card=e.target.closest('.asset-card'); if(!card) return; if(e.target.closest('[data-asset-name],.asset-name-edit')) return; const id=card.dataset.id; const a=assetState.assets.find(x=>x.id===id); const act=e.target.closest('button[data-act]')?.dataset.act; if(act==='copy'){ await assetCopyAsset(a); return; } if(act==='download'){ window.open(withPublicAccess(a.download_url||a.url),'_blank'); return; } if(act==='delete'){ return assetDeleteIds([id]); } if(assetState.batch){ assetState.selected.has(id)?assetState.selected.delete(id):assetState.selected.add(id); renderAssetLibrary({skipTree:true}); return; } const previewMeta=assetPreviewMeta(a||{}); if(a?.type==='image') showPreview(a.url,previewMeta); else if(a?.type==='video') showVideoPreview(previewMeta); else showPreview('',previewMeta); });
   $('#assetGrid')?.addEventListener('contextmenu',e=>{ const card=e.target.closest('.asset-card'); if(!card) return; e.preventDefault(); e.stopPropagation(); showAssetContextMenu(e,card.dataset.id); });
   $('#assetGrid')?.addEventListener('dragover',e=>{
     const payload = assetInternalDragPayload(e.dataTransfer);
@@ -10900,6 +11145,8 @@ function setupAssetLibrary(){
   $('#assetDirMigrateBtn')?.addEventListener('click',()=>assetSaveDir(true).catch(e=>toast(e.message||'迁移失败')));
   makeFloatingBox('assetLibraryWindow','assetLibraryHead','assetLibraryResize');
   makeFloatingBox('assetLibraryOrb','assetLibraryOrb',null);
+  assetRefreshOverlayScrollbars(false);
+  $('#assetLibraryWindow')?.addEventListener('transitionend',()=>assetRefreshOverlayScrollbars(false));
   observeAssetTextFit();
   $('#assetLibraryWindow')?.addEventListener('click',e=>{ if(!assetState.sidebarPinned && !e.target.closest('.asset-library-sidebar')) $('#assetLibraryWindow')?.classList.remove('asset-sidebar-peek'); }, true);
 }
