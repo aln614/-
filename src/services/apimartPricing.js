@@ -19,6 +19,17 @@ const APP_IMAGE_PRICE_MODEL_MAP = Object.freeze({
   'grok-imagine-1.5-edit-apimart': 'grok-imagine-1.5-edit-ext'
 });
 
+const APP_VIDEO_PRICE_MODEL_MAP = Object.freeze({
+  'omni-flash-ext': 'Omni-Flash-Ext',
+  'doubao-seedance-1-0-pro-fast': 'seedance-1-0-pro-fast',
+  'doubao-seedance-1-0-pro-quality': 'seedance-1-0-pro-quality',
+  'doubao-seedance-1-5-pro': 'seedance-1-5-pro',
+  'doubao-seedance-2.0': 'seedance-2.0',
+  'doubao-seedance-2.0-fast': 'seedance-2.0-fast',
+  'doubao-seedance-2.0-mini': 'seedance-2.0-mini',
+  'doubao-seedance-2.5': 'seedance-2.5'
+});
+
 const FIXED_IMAGE_PRICES = Object.freeze({
   'gpt-image-2-ext': [['default', 0.085], ['1K', 0.085], ['2K', 0.14], ['4K', 0.21]],
   'z-image-turbo': [['default', 0.1], ['prompt_extend', 0.2]],
@@ -48,6 +59,58 @@ const FIXED_IMAGE_PRICES = Object.freeze({
   'wan2.7-image-pro': [['default', 0.544]],
   'flux-2-max': [['default', 0.8], ['1MP', 0.56], ['2MP', 0.8], ['3MP', 1.04], ['4MP', 1.28]],
   'flux-kontext': [['default', 0.64]]
+});
+
+// APIMart public pricing snapshot. Live values are refreshed from the pricing
+// page; this table keeps estimates available while the network is offline.
+const FIXED_VIDEO_PRICES = Object.freeze({
+  'MiniMax-H3': { unit:'秒', rows:[['default',0.9144],['2K',0.9144],['768P',0.5712]] },
+  'MiniMax-Hailuo-02': { unit:'秒', rows:[['1080P',0.8],['512P',0.104],['768P',0.4]] },
+  'MiniMax-Hailuo-2.3': { unit:'秒', rows:[['default',0.488],['1080P',0.72]] },
+  'MiniMax-Hailuo-2.3-Fast': { unit:'秒', rows:[['default',0.248],['1080P',0.424]] },
+  'sora-2': { unit:'秒', rows:[['default',0.8],['official-720P',0.8]] },
+  'sora-2-pro': { unit:'秒', rows:[['default',6],['official-720P',2.4],['official-1024P',4],['official-1080P',5.6]] },
+  'veo3.1-fast': { unit:'次', rows:[['default',1.4],['4K',6.4],['EXTEND-4K',6.4],['extend',1.4]] },
+  'veo3.1-quality': { unit:'次', rows:[['default',10],['4K',15],['EXTEND-4K',15],['extend',10]] },
+  'veo3.1-lite': { unit:'次', rows:[['default',0.7],['4K',5.7],['EXTEND-4K',5.7],['extend',0.7]] },
+  'veo3.1-fast-official': { unit:'秒', rows:[['default',0.8],['720P',0.64],['720P-audio',0.8],['1080P',0.8],['1080P-audio',0.96],['4K',2],['4K-audio',2.4],['audio',0.96]] },
+  'veo3.1-quality-official': { unit:'秒', rows:[['default',1.6],['720P',1.6],['1080P',1.6],['4K',3.2],['4K-audio',4.8],['audio',3.2]] },
+  'flux-3-video': { unit:'秒', rows:[['default',1.36],['DRAFT',0.48],['HD',1.36],['FHD',2.32],['V2V-DRAFT',0.96],['V2V-HD',3.28],['V2V-FHD',4.24]] },
+  'Omni-Flash-Ext': { unit:'次', rows:[['default',3.5],['360P-4S',1.5],['360P-6S',1.75],['360P-8S',2],['360P-10S',2.25],['360P-VIDREF',0.4],['720P-4S',2.5],['720P-6S',3],['720P-8S',3.5],['720P-10S',4],['720P-VIDREF',0.8],['1080P-4S',2.5],['1080P-6S',3],['1080P-8S',3.5],['1080P-10S',4],['1080P-VIDREF',0.8],['4K-4S',7.5],['4K-6S',8],['4K-8S',8.5],['4K-10S',9],['4K-VIDREF',2.4]] },
+  'gemini-omni-flash-preview': { unit:'秒', rows:[['720P',0.88]] },
+  'grok-imagine-1.5-video-apimart': { unit:'秒', rows:[['480P',0.102],['720P',0.1912]] },
+  'grok-imagine-video': { unit:'秒', rows:[['default',0.4],['480P',0.4],['720P',0.56]] },
+  'grok-imagine-video-1.5': { unit:'秒', rows:[['default',0.64],['480P',0.64],['720P',1.12],['1080P',2]] },
+  'happyhorse-1.0': { unit:'秒', rows:[['default',2.3],['720P',1.3],['1080P',2.3],['edit-720P',1.3],['edit-1080P',2.3]] },
+  'happyhorse-1.1': { unit:'秒', rows:[['default',1.72],['720P',1.3],['1080P',1.72]] },
+  'kling-3.0-turbo': { unit:'秒', rows:[['720P',1.144],['1080P',1.432]] },
+  'kling-v2-6': { unit:'秒', rows:[['default',0.368],['pro',0.625],['pro-sound',1.25],['pro-sound-voice',1.5]] },
+  'kling-v2-6-motion-control': { unit:'秒', rows:[['default',0.5712],['pro',0.9144]] },
+  'kling-v3': { unit:'秒', rows:[['default',0.672],['pro',0.896],['sound',1.008],['pro-sound',1.344],['4k',4.2856],['4k-sound',4.2856]] },
+  'kling-v3-motion-control': { unit:'秒', rows:[['default',1.0288],['pro',1.3712]] },
+  'kling-v3-omni': { unit:'秒', rows:[['default',0.672],['pro',0.896],['sound',0.896],['pro-sound',1.12],['video',1.008],['pro-video',1.344],['4k',4.2856],['4k-sound',4.2856]] },
+  'kling-video-o1': { unit:'秒', rows:[['default',0.672],['pro',0.896],['video',1.008],['pro-video',1.344]] },
+  'pixverse-v6': { unit:'秒', rows:[['default',0.24],['360P',0.16],['360P-audio',0.24],['540P',0.24],['540P-audio',0.32],['720P',0.32],['720P-audio',0.4],['1080P',0.64],['1080P-audio',0.8]] },
+  'seedance-1-0-pro-fast': { unit:'秒', rows:[['480P',0.088],['720P',0.2],['1080P',0.416]] },
+  'seedance-1-0-pro-quality': { unit:'秒', rows:[['480P',0.204],['720P',0.44],['1080P',1.04]] },
+  'seedance-1-5-pro': { unit:'秒', rows:[['480P',0.204],['720P',0.44],['1080P',1.08]] },
+  'seedance-2.0': { unit:'秒', rows:[['480P',0.66],['480P-input',0.4],['720P',1.42],['720P-input',0.8584],['1080P',3.544],['1080P-input',2.1568],['4K',7.22],['4K-input',4.4432]] },
+  'seedance-2.0-fast': { unit:'秒', rows:[['480P',0.3984],['480P-input',0.2368],['720P',0.856],['720P-input',0.5128]] },
+  'seedance-2.0-mini': { unit:'秒', rows:[['480P',0.1056],['480P-input',0.064],['720P',0.2288],['720P-input',0.1384]] },
+  'seedance-2.5': { unit:'秒', rows:[['default',2.16],['480P',0.9608],['480P-input',0.576],['720P',2.16],['720P-input',1.296],['1080P',3.8488],['1080P-input',2.2992]] },
+  'skyreels-v4-fast': { unit:'秒', rows:[['480P',0.64],['480P-refvideo',1.2],['720P',0.88],['720P-refvideo',1.6],['1080P',2.2],['1080P-refvideo',4]] },
+  'skyreels-v4-std': { unit:'秒', rows:[['480P',0.88],['480P-refvideo',1.44],['720P',1.12],['720P-refvideo',2],['1080P',2.8],['1080P-refvideo',5]] },
+  'viduq3': { unit:'秒', rows:[['default',0.8],['540P',0.4],['720P',0.8],['1080P',1]] },
+  'viduq3-mix': { unit:'秒', rows:[['default',1],['720P',1],['1080P',1.2]] },
+  'viduq3-pro': { unit:'秒', rows:[['540P',0.56],['720P',1.2],['1080P',1.28]] },
+  'viduq3-turbo': { unit:'秒', rows:[['540P',0.32],['720P',0.48],['1080P',0.56]] },
+  'wan2.5-preview': { unit:'秒', rows:[['480P',0.336],['720P',0.664],['1080P',1.096]] },
+  'wan2.6': { unit:'秒', rows:[['default',0.5],['1080P',0.84]] },
+  'wan2.6-i2v-flash': { unit:'秒', rows:[['720P',0.168],['720P-audio',0.336],['1080P',0.28],['1080P-audio',0.552]] },
+  'wan2.7': { unit:'秒', rows:[['default',0.664],['1080P',1.096]] },
+  'wan2.7-r2v': { unit:'秒', rows:[['default',0.664],['1080P',1.096]] },
+  'wan2.7-videoedit': { unit:'秒', rows:[['default',0.664],['1080P',1.096]] },
+  'wan3.0-video': { unit:'秒', rows:[['default',1.37144],['480P',0.34288],['720P',0.68568],['1080P',1.37144]] }
 });
 
 const TOKEN_METERED_IMAGE_MODELS = Object.freeze([
@@ -95,6 +158,10 @@ function makeFixedModel(id, rows, aliases = []) {
 function fallbackModels() {
   const models = {};
   Object.entries(FIXED_IMAGE_PRICES).forEach(([id, rows]) => { models[id] = makeFixedModel(id, rows); });
+  Object.entries(FIXED_VIDEO_PRICES).forEach(([id, value]) => {
+    models[id] = makeFixedModel(id, (value.rows || []).map(([spec, credits]) => [spec, credits, value.unit || '秒']));
+    models[id].category = 'video';
+  });
   TOKEN_METERED_IMAGE_MODELS.forEach(id => {
     models[id] = { id, aliases:[], metered:true, note:'按实际 Token 用量结算，无法给出固定次数', variants:[] };
   });
@@ -176,6 +243,82 @@ function parseApimartPricingHtml(html = '') {
       variants: rows
     };
   });
+  return { ...parsed, ...parseEmbeddedVideoPricing(source) };
+}
+
+function decodeNextFlightChunks(source = '') {
+  const decoded = [];
+  const pattern = /self\.__next_f\.push\(\[1,"((?:\\.|[^"])*)"\]\)/g;
+  let match;
+  while ((match = pattern.exec(String(source || '')))) {
+    try { decoded.push(JSON.parse(`"${match[1]}"`)); } catch {}
+  }
+  return decoded.join('');
+}
+
+function extractJsonArrayAfterKey(source = '', key = '') {
+  const marker = `"${key}":`;
+  const markerIndex = String(source || '').indexOf(marker);
+  if (markerIndex < 0) return [];
+  const start = source.indexOf('[', markerIndex + marker.length);
+  if (start < 0) return [];
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = start; index < source.length; index += 1) {
+    const char = source[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') { inString = true; continue; }
+    if (char === '[') depth += 1;
+    else if (char === ']' && --depth === 0) {
+      try { return JSON.parse(source.slice(start, index + 1)); } catch { return []; }
+    }
+  }
+  return [];
+}
+
+function pricingUnitFromUsd(unit = '') {
+  if (unit === 'usd_per_second') return '秒';
+  if (unit === 'usd_per_image') return '张';
+  return '次';
+}
+
+function parseEmbeddedVideoPricing(html = '') {
+  const flightData = decodeNextFlightChunks(html);
+  const videoModels = extractJsonArrayAfterKey(flightData, 'video');
+  const parsed = {};
+  videoModels.forEach(item => {
+    const id = String(item?.id || '').trim();
+    const fixed = item?.fixed_prices || {};
+    if (!id || !Array.isArray(fixed.items)) return;
+    const unit = pricingUnitFromUsd(fixed.unit);
+    const variants = fixed.items.map(row => {
+      const usd = Number(row?.after_discount);
+      if (!Number.isFinite(usd) || usd <= 0) return null;
+      return {
+        spec: normalizeSpec(row?.key || 'default'),
+        // The page payload stores USD; one USD equals ten APIMart Credits.
+        credits: Number((usd * 10).toFixed(8)),
+        unit
+      };
+    }).filter(Boolean);
+    if (!variants.length) return;
+    parsed[id] = {
+      id,
+      aliases: [item?.alias].filter(Boolean),
+      category: 'video',
+      metered: false,
+      note: '',
+      billing_type: String(item?.billing_type || item?.specification || ''),
+      dimension: String(fixed.dimension || ''),
+      variants
+    };
+  });
   return parsed;
 }
 
@@ -186,7 +329,7 @@ function createFallbackPricingCatalog(warning = '') {
     source_url: APIMART_PRICING_URL,
     fetched_at: new Date().toISOString(),
     warning: String(warning || ''),
-    model_aliases: { ...APP_IMAGE_PRICE_MODEL_MAP },
+    model_aliases: { ...APP_IMAGE_PRICE_MODEL_MAP, ...APP_VIDEO_PRICE_MODEL_MAP },
     models: fallbackModels()
   };
 }
@@ -201,7 +344,7 @@ function createLivePricingCatalog(html = '') {
     source_url: APIMART_PRICING_URL,
     fetched_at: new Date().toISOString(),
     warning: '',
-    model_aliases: { ...APP_IMAGE_PRICE_MODEL_MAP },
+    model_aliases: { ...APP_IMAGE_PRICE_MODEL_MAP, ...APP_VIDEO_PRICE_MODEL_MAP },
     models: mergePricingModels(liveModels)
   };
 }
@@ -209,7 +352,9 @@ function createLivePricingCatalog(html = '') {
 module.exports = {
   APIMART_PRICING_URL,
   APP_IMAGE_PRICE_MODEL_MAP,
+  APP_VIDEO_PRICE_MODEL_MAP,
   createFallbackPricingCatalog,
   createLivePricingCatalog,
+  parseEmbeddedVideoPricing,
   parseApimartPricingHtml
 };

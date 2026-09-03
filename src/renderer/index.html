@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>TENYING_AI 1.0</title>
-  <link rel="stylesheet" href="/static/style.css?v=1.0.91" />
+  <link rel="stylesheet" href="/static/style.css?v=1.0.92" />
 </head>
 <body>
   <div class="app-shell">
@@ -356,7 +356,12 @@
         </div>
         <div class="grid two">
           <div class="card">
-            <div class="card-title-row"><h2 id="videoParameterTitle">APIMart 视频参数</h2></div>
+            <div class="card-title-row">
+              <h2 id="videoParameterTitle">APIMart 视频参数</h2>
+              <button class="model-usage-estimate" id="videoModelUsageEstimateBtn" type="button" title="查看全部视频模型预计可用次数">
+                <span>预计可用</span><strong id="videoModelUsageEstimateValue">计算中</strong>
+              </button>
+            </div>
             <label id="videoApiKeyLabel">APIMart API Key</label>
             <input id="videoApiKey" type="password" placeholder="默认使用首页 APIMart API Key" />
             <div class="video-platform-state" id="videoPlatformState">Omni Flash · 支持直接上传视频编辑</div>
@@ -1011,6 +1016,6 @@
       </div>
     </div>
   </div>
-  <script src="/static/app.js?v=1.0.91"></script>
+  <script src="/static/app.js?v=1.0.92"></script>
 </body>
 </html>

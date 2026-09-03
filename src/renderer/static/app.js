@@ -310,6 +310,7 @@ function renderApimartBalanceState(){
   btn.classList.toggle('has-value', apimartBalanceState.status === 'ready');
   renderApimartBalanceDetails();
   renderModelUsageEstimate();
+  renderVideoModelUsageEstimate();
 }
 function ensureApimartBalanceModal(){
   let modal = $('#apiBalanceModal');
@@ -419,13 +420,24 @@ function currentImageModelId(){
 function currentImageModelLabel(modelId = ''){
   return APIMART_MODEL_OPTIONS.find(([id])=>id === modelId)?.[1] || modelId || '自定义模型';
 }
-function resolveImagePricingEntry(modelId = ''){
+function resolvePricingEntry(modelId = ''){
   const models = apimartPricingState.models || {};
-  const mappedId = apimartPricingState.modelAliases?.[modelId] || modelId;
-  if(models[mappedId]) return {priceModelId:mappedId, entry:models[mappedId]};
-  if(models[modelId]) return {priceModelId:modelId, entry:models[modelId]};
-  const entry = Object.values(models).find(item=>Array.isArray(item?.aliases) && item.aliases.includes(modelId));
-  return entry ? {priceModelId:entry.id || modelId, entry} : {priceModelId:mappedId, entry:null};
+  const aliases = apimartPricingState.modelAliases || {};
+  const normalizedId = String(modelId || '').trim();
+  const mappedPair = Object.entries(aliases).find(([key])=>key.toLowerCase() === normalizedId.toLowerCase());
+  const mappedId = mappedPair?.[1] || normalizedId;
+  const findModel = id=>{
+    if(models[id]) return {priceModelId:id, entry:models[id]};
+    const pair = Object.entries(models).find(([key])=>key.toLowerCase() === String(id || '').toLowerCase());
+    return pair ? {priceModelId:pair[0], entry:pair[1]} : null;
+  };
+  const direct = findModel(mappedId) || findModel(normalizedId);
+  if(direct) return direct;
+  const entry = Object.values(models).find(item=>Array.isArray(item?.aliases) && item.aliases.some(alias=>String(alias).toLowerCase() === normalizedId.toLowerCase()));
+  return entry ? {priceModelId:entry.id || normalizedId, entry} : {priceModelId:mappedId, entry:null};
+}
+function resolveImagePricingEntry(modelId = ''){
+  return resolvePricingEntry(modelId);
 }
 function normalizePricingSpec(value = ''){
   return String(value || '').trim().toUpperCase();
@@ -642,11 +654,275 @@ function closeModelUsageModal(){
   modal?.classList.remove('active');
   modal?.setAttribute('aria-hidden', 'true');
 }
+
+function allApimartVideoModels(){
+  const seen = new Set();
+  const rows = [];
+  APIMART_VIDEO_MODEL_GROUPS_UI.forEach(([, models])=>models.forEach(modelId=>{
+    const key = String(modelId || '').toLowerCase();
+    if(!key || seen.has(key)) return;
+    seen.add(key);
+    const rule = APIMART_VIDEO_MODEL_RULES_UI[key];
+    if(rule) rows.push({modelId, label:rule.label || modelId, rule});
+  }));
+  return rows;
+}
+function videoPricingHasInput(){
+  return hasReferenceVideo() || videoRefImages.length > 0 || videoAudioFilesData.length > 0 || !!videoAttachmentFileData || !!wan3DocumentFileData || !!($('#wan3LinkUrl')?.value || '').trim();
+}
+function videoPricingAudioEnabled(rule = currentApimartVideoRule(), modelId = $('#videoModel')?.value || ''){
+  const id = String(modelId || '').toLowerCase();
+  if(id === 'doubao-seedance-2.5') return $('#seedance25GenerateAudio')?.checked !== false;
+  if(rule?.forceGeneratedAudio === true) return true;
+  return rule?.supportsGeneratedAudio === true && $('#videoGenerateAudio')?.checked === true;
+}
+function videoPricingSpecCandidates(modelId = '', resolution = '', duration = undefined, rule = currentApimartVideoRule()){
+  const id = String(modelId || '').toLowerCase();
+  const res = normalizePricingSpec(resolution || rule?.defaultResolution || '');
+  const hasVideo = hasReferenceVideo();
+  const hasInput = videoPricingHasInput();
+  const audio = videoPricingAudioEnabled(rule, modelId);
+  const mode = currentVideoModeValue();
+  const extend = mode === 'veo_remix' || currentVideoReferenceType() === 'extend' || !!($('#videoSourceTaskId')?.value || '').trim();
+  const candidates = [];
+  const add = value=>{ if(value && !candidates.some(item=>normalizePricingSpec(item) === normalizePricingSpec(value))) candidates.push(value); };
+  if(id === 'omni-flash-ext'){
+    if(hasVideo) add(`${res}-VIDREF`);
+    else if(Number.isFinite(Number(duration))) add(`${res}-${Number(duration)}S`);
+  }else if(['veo3.1-fast','veo3.1-quality','veo3.1-lite'].includes(id)){
+    if(extend && res === '4K') add('EXTEND-4K');
+    if(extend) add('extend');
+    add(res);
+  }else if(['veo3.1-fast-official','veo3.1-quality-official'].includes(id)){
+    if(audio) add(`${res}-audio`);
+    add(res);
+    if(audio) add('audio');
+  }else if(id === 'flux-3-video'){
+    if(hasVideo) add(`V2V-${res}`);
+    add(res);
+  }else if(id.startsWith('doubao-seedance-2.')){
+    if(hasInput) add(`${res}-input`);
+    add(res);
+  }else if(id.startsWith('skyreels-v4-')){
+    if(hasVideo) add(`${res}-refvideo`);
+    add(res);
+  }else if(id === 'happyhorse-1.0'){
+    if(hasVideo || mode === 'video_edit') add(`edit-${res}`);
+    add(res);
+  }else if(id === 'sora-2-pro'){
+    add(`official-${res}`);
+    add(res);
+  }else if(id.startsWith('kling-')){
+    const tier = res === '4K' ? '4k' : (res === '1080P' ? 'pro' : 'default');
+    if(hasVideo && ['kling-v3-omni','kling-video-o1'].includes(id)) add(tier === 'default' ? 'video' : `${tier}-video`);
+    if(audio) add(tier === 'default' ? 'sound' : `${tier}-sound`);
+    add(tier);
+    add(res);
+  }else if(audio && ['pixverse-v6','wan2.6-i2v-flash'].includes(id)){
+    add(`${res}-audio`);
+    add(res);
+  }else{
+    add(res);
+  }
+  add('default');
+  return candidates;
+}
+function resolveVideoPricingVariant(entry, modelId = '', resolution = '', duration = undefined, rule = currentApimartVideoRule()){
+  const variants = Array.isArray(entry?.variants) ? entry.variants.filter(item=>Number(item?.credits) > 0) : [];
+  if(!variants.length) return null;
+  const exact = spec=>variants.find(item=>normalizePricingSpec(item.spec) === normalizePricingSpec(spec));
+  for(const candidate of videoPricingSpecCandidates(modelId, resolution, duration, rule)){
+    const match = exact(candidate);
+    if(match) return match;
+  }
+  if(variants.length === 1) return variants[0];
+  return variants.reduce((max, item)=>Number(item.credits) > Number(max.credits) ? item : max, variants[0]);
+}
+function currentVideoEstimateDuration(){
+  const sourceDurations = videoFilesData.map(item=>Number(item?.duration_seconds)).filter(value=>Number.isFinite(value) && value > 0);
+  const rule = currentApimartVideoRule();
+  const followsSource = hasReferenceVideo() && !apimartVideoUsesRequestedDurationWithReference(rule);
+  if(followsSource) return sourceDurations.length ? Math.max(...sourceDurations) : null;
+  const selected = Number(selectedVideoDuration());
+  if(Number.isFinite(selected) && selected > 0) return selected;
+  return sourceDurations.length ? Math.max(...sourceDurations) : null;
+}
+function videoPricePerTask(variant, duration){
+  const credits = Number(variant?.credits);
+  if(!Number.isFinite(credits) || credits <= 0) return null;
+  if(variant?.unit === '秒'){
+    const seconds = Number(duration);
+    return Number.isFinite(seconds) && seconds > 0 ? credits * seconds : null;
+  }
+  return credits;
+}
+function getCurrentVideoModelUsageContext(){
+  const modelId = String($('#videoModel')?.value || '').trim();
+  const rule = currentApimartVideoRule();
+  const label = rule?.label || modelId || '视频模型';
+  const resolution = String($('#videoResolution')?.value || rule?.defaultResolution || '');
+  const duration = currentVideoEstimateDuration();
+  const resolved = resolvePricingEntry(modelId);
+  const variant = resolveVideoPricingVariant(resolved.entry, modelId, resolution, duration, rule);
+  const perTaskCredits = videoPricePerTask(variant, duration);
+  const uses = perTaskCredits === null ? null : estimateUsesForPrice(perTaskCredits, 1);
+  return {platform:currentVideoPlatform(), modelId, label, rule, resolution, duration, mode:currentVideoModeValue(), priceModelId:resolved.priceModelId, entry:resolved.entry, variant, perTaskCredits, uses};
+}
+function formatVideoPrice(value){
+  const number = Number(value);
+  return Number.isFinite(number) ? number.toFixed(6).replace(/0+$/,'').replace(/\.$/,'') : '--';
+}
+function renderVideoModelUsageEstimate(){
+  const button = $('#videoModelUsageEstimateBtn');
+  const value = $('#videoModelUsageEstimateValue');
+  if(!button || !value) return;
+  const context = getCurrentVideoModelUsageContext();
+  const noBalance = modelUsageCredits() === null;
+  let text = '计算中';
+  let title = '正在读取 APIMart 视频价格与账户积分';
+  let state = 'loading';
+  if(context.platform !== 'apimart'){
+    text = '仅 APIMart';
+    title = '预计可用次数使用 APIMart 公开价格计算';
+    state = 'variable';
+  }else if(apimartPricingState.status === 'error' && !Object.keys(apimartPricingState.models || {}).length){
+    text = '价格异常';
+    title = apimartPricingState.warning || '价格表读取失败，点击查看详情';
+    state = 'error';
+  }else if(!context.variant){
+    text = '暂无定价';
+    title = `${context.label} 暂无公开固定单价，点击查看详情`;
+    state = 'variable';
+  }else if(context.variant.unit === '秒' && context.perTaskCredits === null){
+    text = '时长自动';
+    title = `${context.label} 按秒计费，但当前任务时长由模型决定，无法固定估算`;
+    state = 'variable';
+  }else if(noBalance){
+    text = '需余额';
+    title = '请先填写 APIMart API Key，以账户剩余积分计算预计可用次数';
+    state = 'variable';
+  }else{
+    text = context.uses === 0 ? '不足 1 次' : (context.uses === Infinity ? '不限' : `约 ${formatModelUsageCount(context.uses)} 次`);
+    const durationText = context.variant.unit === '秒' ? ` · ${formatVideoPrice(context.duration)} 秒` : '';
+    title = `${context.label} · ${context.variant.spec}${durationText} · 约 ${formatVideoPrice(context.perTaskCredits)} Credits/次`;
+    state = 'ready';
+  }
+  value.textContent = text;
+  button.title = title;
+  button.dataset.state = state;
+  button.classList.toggle('is-loading', state === 'loading');
+  button.classList.toggle('has-value', state === 'ready');
+  button.classList.toggle('is-variable', state === 'variable');
+  button.classList.toggle('has-error', state === 'error');
+  renderVideoModelUsageDetails();
+}
+function defaultVideoPricingDuration(rule = {}){
+  const direct = Number(rule.defaultDuration);
+  if(Number.isFinite(direct) && direct > 0) return direct;
+  const first = (rule.durations || []).map(Number).find(value=>Number.isFinite(value) && value > 0);
+  return first || 5;
+}
+function renderVideoModelUsageDetails(){
+  const modal = $('#videoModelUsageModal');
+  if(!modal) return;
+  const context = getCurrentVideoModelUsageContext();
+  const credits = modelUsageCredits();
+  const balance = $('#videoModelUsageBalance');
+  if(balance) balance.textContent = credits === Infinity ? '账户积分：不限' : credits === null ? '账户剩余积分：--（请填写 API Key）' : `账户剩余积分：${formatApimartBalanceValue(credits)}`;
+  const current = $('#videoModelUsageCurrent');
+  if(current){
+    const durationText = context.duration ? `${formatVideoPrice(context.duration)} 秒` : '自动时长';
+    const priceText = context.variant ? `${modelUsagePriceText(context.variant)}${context.perTaskCredits === null ? '' : ` · 约 ${formatVideoPrice(context.perTaskCredits)} Credits/次`}` : '暂无公开固定单价';
+    const usesText = !context.variant || context.perTaskCredits === null ? '无法固定估算' : context.uses === null ? '等待余额' : context.uses === 0 ? '余额不足 1 次' : `约 ${formatModelUsageCount(context.uses)} 次`;
+    current.innerHTML = `<div><span>当前视频配置</span><strong>${escapeHtml(context.label)}</strong><small>${escapeHtml(context.resolution)} · ${escapeHtml(durationText)} · ${escapeHtml(videoModeLabel(context.mode))} · ${escapeHtml(priceText)}</small></div><b>${escapeHtml(usesText)}</b>`;
+  }
+  const source = $('#videoModelUsageSource');
+  if(source){
+    const sourceName = apimartPricingState.source === 'live' ? 'APIMart 官网实时价格' : '内置价格快照';
+    const fetched = apimartPricingState.fetchedAt ? new Date(apimartPricingState.fetchedAt).toLocaleString('zh-CN') : '尚未更新';
+    source.textContent = `${sourceName} · ${fetched}`;
+  }
+  const warning = $('#videoModelUsageWarning');
+  if(warning){ warning.textContent = apimartPricingState.warning || ''; warning.classList.toggle('show', !!apimartPricingState.warning); }
+  const search = String($('#videoModelUsageSearch')?.value || '').trim().toLowerCase();
+  const list = $('#videoModelUsageList');
+  if(!list) return;
+  const rows = [];
+  allApimartVideoModels().forEach(({modelId, label, rule})=>{
+    if(search && !`${modelId} ${label}`.toLowerCase().includes(search)) return;
+    const resolved = resolvePricingEntry(modelId);
+    const variants = Array.isArray(resolved.entry?.variants) ? resolved.entry.variants.filter(item=>Number(item?.credits) > 0) : [];
+    if(!variants.length){
+      rows.push(`<div class="model-usage-row ${modelId === context.modelId ? 'current' : ''}"><div class="model-usage-name"><strong>${escapeHtml(label)}</strong><small>${escapeHtml(modelId)}</small></div><span>--</span><span>暂无公开固定单价</span><b>--</b></div>`);
+      return;
+    }
+    const duration = modelId === context.modelId && context.duration ? context.duration : defaultVideoPricingDuration(rule);
+    variants.forEach((variant, index)=>{
+      const cost = videoPricePerTask(variant, duration);
+      const uses = cost === null ? null : estimateUsesForPrice(cost, 1);
+      const currentVariant = modelId === context.modelId && normalizePricingSpec(variant.spec) === normalizePricingSpec(context.variant?.spec);
+      const spec = variant.unit === '秒' ? `${variant.spec || 'default'} · ${formatVideoPrice(duration)}秒` : (variant.spec || 'default');
+      const price = variant.unit === '秒' ? `${modelUsagePriceText(variant)} · ${formatVideoPrice(cost)} Credits/次` : modelUsagePriceText(variant);
+      rows.push(`<div class="model-usage-row ${currentVariant ? 'current' : ''}"><div class="model-usage-name">${index === 0 ? `<strong>${escapeHtml(label)}</strong><small>${escapeHtml(modelId)}</small>` : '<span class="model-usage-repeat">同模型</span>'}</div><span>${escapeHtml(spec)}</span><span>${escapeHtml(price)}</span><b>${uses === null ? '--' : uses === Infinity ? '不限' : `约 ${escapeHtml(formatModelUsageCount(uses))} 次`}</b></div>`);
+    });
+  });
+  list.innerHTML = rows.length ? rows.join('') : '<div class="model-usage-empty">没有匹配的视频模型</div>';
+  const refresh = $('#videoModelUsageRefreshBtn');
+  if(refresh){ refresh.disabled = apimartPricingState.status === 'loading'; refresh.textContent = apimartPricingState.status === 'loading' ? '刷新中...' : '刷新价格与余额'; }
+}
+function ensureVideoModelUsageModal(){
+  let modal = $('#videoModelUsageModal');
+  if(modal) return modal;
+  modal = document.createElement('div');
+  modal.id = 'videoModelUsageModal';
+  modal.className = 'modal model-usage-modal';
+  modal.setAttribute('aria-hidden', 'true');
+  modal.innerHTML = `
+    <div class="model-usage-dialog glass-modal" role="dialog" aria-modal="true" aria-labelledby="videoModelUsageTitle">
+      <div class="model-usage-head"><div><div class="api-balance-kicker">APIMart Video Pricing</div><h2 id="videoModelUsageTitle">视频模型预计可用次数</h2><p id="videoModelUsageBalance">账户剩余积分：--</p></div><button class="api-balance-close" id="videoModelUsageCloseBtn" type="button" title="关闭" aria-label="关闭">×</button></div>
+      <section class="model-usage-current" id="videoModelUsageCurrent"></section>
+      <div class="model-usage-toolbar"><input id="videoModelUsageSearch" type="search" placeholder="搜索视频模型名称或 ID" autocomplete="off" /><button class="secondary" id="videoModelUsageRefreshBtn" type="button">刷新价格与余额</button></div>
+      <div class="model-usage-table-head"><span>模型</span><span>规格 / 时长</span><span>单价 / 单次</span><span>预计可用</span></div>
+      <div class="model-usage-list" id="videoModelUsageList"></div>
+      <div class="model-usage-warning" id="videoModelUsageWarning" role="status"></div>
+      <div class="model-usage-foot"><div><span id="videoModelUsageSource">价格尚未读取</span><a href="https://apimart.ai/zh/pricing" target="_blank" rel="noreferrer">查看官方价格表</a></div><p>当前卡片按已选模型、分辨率、时长、参考模式和音频选项估算；列表中的按秒模型使用各模型默认时长。参考素材可能产生额外费用，自动时长无法固定估算，最终以 APIMart 实际扣费为准。</p></div>
+    </div>`;
+  document.body.appendChild(modal);
+  modal.addEventListener('click', event=>{ if(event.target === modal) closeVideoModelUsageModal(); });
+  $('#videoModelUsageCloseBtn')?.addEventListener('click', closeVideoModelUsageModal);
+  $('#videoModelUsageSearch')?.addEventListener('input', renderVideoModelUsageDetails);
+  $('#videoModelUsageRefreshBtn')?.addEventListener('click', async ()=>{
+    await Promise.all([loadApimartPricing({force:true, manual:true}), refreshApimartBalance({manual:false, details:true})]);
+    renderVideoModelUsageEstimate();
+  });
+  return modal;
+}
+function openVideoModelUsageModal(){
+  const modal = ensureVideoModelUsageModal();
+  modal.classList.add('active');
+  modal.setAttribute('aria-hidden', 'false');
+  renderVideoModelUsageEstimate();
+  if(apimartPricingState.status === 'idle') loadApimartPricing();
+  refreshApimartBalance({details:true});
+}
+function closeVideoModelUsageModal(){
+  const modal = $('#videoModelUsageModal');
+  modal?.classList.remove('active');
+  modal?.setAttribute('aria-hidden', 'true');
+}
+function setupVideoModelUsageEstimate(){
+  const button = $('#videoModelUsageEstimateBtn');
+  if(!button || button.dataset.bound === '1') return;
+  button.dataset.bound = '1';
+  button.addEventListener('click', openVideoModelUsageModal);
+  renderVideoModelUsageEstimate();
+}
 async function loadApimartPricing(opts = {}){
   if(apimartPricingRequest) return apimartPricingRequest;
   const hasCatalog = Object.keys(apimartPricingState.models || {}).length > 0;
   apimartPricingState = {...apimartPricingState, status:hasCatalog ? 'ready' : 'loading'};
   renderModelUsageEstimate();
+  renderVideoModelUsageEstimate();
   const force = opts.force === true;
   if(force) apimartPricingLiveAttempted = true;
   const path = force ? '/api/apimart/pricing/refresh' : '/api/apimart/pricing';
@@ -663,6 +939,7 @@ async function loadApimartPricing(opts = {}){
         warning:result.warning || ''
       };
       renderModelUsageEstimate();
+      renderVideoModelUsageEstimate();
       if(opts.manual) toast(result.source === 'live' ? 'APIMart 价格与余额已刷新' : '官网价格暂不可用，已使用内置价格快照');
       if(!force && !apimartPricingLiveAttempted && (result.refreshing || result.source !== 'live')){
         apimartPricingLiveAttempted = true;
@@ -673,6 +950,7 @@ async function loadApimartPricing(opts = {}){
     .catch(error=>{
       apimartPricingState = {...apimartPricingState, status:'error', warning:String(error?.message || error || '价格表读取失败')};
       renderModelUsageEstimate();
+      renderVideoModelUsageEstimate();
       if(opts.manual) toast(`价格表刷新失败：${apimartPricingState.warning}`);
       return null;
     })
@@ -684,6 +962,7 @@ function setupModelUsageEstimate(){
   if(!button || button.dataset.bound === '1') return;
   button.dataset.bound = '1';
   button.addEventListener('click', openModelUsageModal);
+  setupVideoModelUsageEstimate();
   renderModelUsageEstimate();
   loadApimartPricing();
 }
@@ -8222,6 +8501,7 @@ function updateVideoTaskEstimate(){
   if(rule) rule.textContent = multiFirstFrame
     ? `已启用多首帧：仅执行参考图区图片，${videoRefImages.length} 张图片 = ${videoRefImages.length} 个独立首帧任务`
     : multiVideoReference ? `已启用多模态参考：${videoFilesData.length} 个主任务视频 = 1 个独立任务` : '一个主任务视频 = 一个独立任务';
+  renderVideoModelUsageEstimate();
 }
 function clearVideoAttachmentFile(){
   videoAttachmentFileData = null;
@@ -9306,6 +9586,7 @@ function setupVideoPage(){
     $('#videoAdvancedRuleRow').insertAdjacentHTML('afterend', '<div class="row hidden" id="seedance25Options"><div><label>输出格式</label><select id="seedance25OutputFormat"><option value="mp4">MP4</option><option value="mov">MOV（适合编辑 / 延长）</option></select><div class="field-help">Seedance 2.5 仅支持 MP4 或 MOV。</div></div><div class="seedance25-switches"><label class="switch-line"><input id="seedance25AutoDuration" type="checkbox" /> 自动时长</label><label class="switch-line"><input id="seedance25GenerateAudio" type="checkbox" checked /> 生成音频</label><label class="switch-line"><input id="seedance25Watermark" type="checkbox" /> 添加 AI 水印</label><label class="switch-line"><input id="seedance25ReturnLastFrame" type="checkbox" /> 返回尾帧</label></div></div>');
   }
   setVideoApiPlatform(localStorage.getItem(VIDEO_PLATFORM_KEY) || 'apimart', true);
+  setupVideoModelUsageEstimate();
   $('#apiKey')?.addEventListener('input', syncVideoApiKeyFromHome);
   $$('#videoApiPlatformSwitch .platform-btn').forEach(btn=>btn.addEventListener('click',()=>setVideoApiPlatform(btn.dataset.platform || 'apimart')));
   $('#videoApiKey')?.addEventListener('input', e=>{
@@ -9365,6 +9646,7 @@ function setupVideoPage(){
   });
   $('#videoUrlInput')?.addEventListener('input', ()=>{
     updateVideoDurationVisibility();
+    updateVideoTaskEstimate();
   });
   $('#videoReferenceType')?.addEventListener('change', ()=>{
     updateVideoDurationVisibility();
@@ -9515,7 +9797,7 @@ function setupVideoPage(){
   });
 }
 
-document.addEventListener('keydown',e=>{ if(e.key==='Escape'){ closePreview(); closeVideoPreview?.(); } });
+document.addEventListener('keydown',e=>{ if(e.key==='Escape'){ closePreview(); closeVideoPreview?.(); closeVideoModelUsageModal?.(); } });
 
 function setPanelCollapsed(collapsed){
   $('.right-panel')?.classList.toggle('collapsed', collapsed);
