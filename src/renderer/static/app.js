@@ -60,6 +60,9 @@ let apimartBalanceRefreshQueued = false;
 let apimartBalanceRefreshTimer = null;
 let apimartBalancePollTimer = null;
 let apimartBalanceLastTaskSignature = '';
+let apimartPricingState = { status:'idle', models:{}, modelAliases:{}, source:'', sourceUrl:'https://apimart.ai/zh/pricing', fetchedAt:'', warning:'' };
+let apimartPricingRequest = null;
+let apimartPricingLiveAttempted = false;
 const APIMART_BALANCE_POLL_INTERVAL_MS = 15000;
 function isLanDesktopClient(){ return !!(window.lanClient && typeof window.lanClient.getShortcuts === 'function' && typeof window.lanClient.saveShortcuts === 'function'); }
 function canEditShortcutSettings(){ return isLocalClient || isLanDesktopClient(); }
@@ -306,6 +309,7 @@ function renderApimartBalanceState(){
   btn.classList.toggle('has-error', apimartBalanceState.status === 'error');
   btn.classList.toggle('has-value', apimartBalanceState.status === 'ready');
   renderApimartBalanceDetails();
+  renderModelUsageEstimate();
 }
 function ensureApimartBalanceModal(){
   let modal = $('#apiBalanceModal');
@@ -407,6 +411,281 @@ function setupApimartBalance(){
   if(apimartBalancePollTimer) clearInterval(apimartBalancePollTimer);
   apimartBalancePollTimer = setInterval(()=>{ if(!document.hidden) refreshApimartBalance(); }, APIMART_BALANCE_POLL_INTERVAL_MS);
   scheduleApimartBalanceRefresh(120);
+}
+
+function currentImageModelId(){
+  return String($('#model')?.value || $('#modelPreset')?.value || '').trim();
+}
+function currentImageModelLabel(modelId = ''){
+  return APIMART_MODEL_OPTIONS.find(([id])=>id === modelId)?.[1] || modelId || '自定义模型';
+}
+function resolveImagePricingEntry(modelId = ''){
+  const models = apimartPricingState.models || {};
+  const mappedId = apimartPricingState.modelAliases?.[modelId] || modelId;
+  if(models[mappedId]) return {priceModelId:mappedId, entry:models[mappedId]};
+  if(models[modelId]) return {priceModelId:modelId, entry:models[modelId]};
+  const entry = Object.values(models).find(item=>Array.isArray(item?.aliases) && item.aliases.includes(modelId));
+  return entry ? {priceModelId:entry.id || modelId, entry} : {priceModelId:mappedId, entry:null};
+}
+function normalizePricingSpec(value = ''){
+  return String(value || '').trim().toUpperCase();
+}
+function resolutionToMegapixelSpec(resolution = ''){
+  const value = normalizePricingSpec(resolution);
+  if(value === '0.5K' || value === '1K') return '1MP';
+  if(value === '1.5K' || value === '2K') return '2MP';
+  if(value === '3K') return '3MP';
+  if(value === '4K') return '4MP';
+  return '';
+}
+function resolveImagePricingVariant(entry, resolution = '', quality = ''){
+  const variants = Array.isArray(entry?.variants) ? entry.variants.filter(item=>Number(item?.credits) > 0) : [];
+  if(!variants.length) return null;
+  const resolutionKey = normalizePricingSpec(resolution || '');
+  const qualityKey = String(quality || 'auto').trim().toLowerCase();
+  const exact = (spec)=>variants.find(item=>normalizePricingSpec(item.spec) === normalizePricingSpec(spec));
+  if(resolutionKey && qualityKey && qualityKey !== 'auto'){
+    const combined = exact(`${resolutionKey}@${qualityKey}`);
+    if(combined) return combined;
+  }
+  const direct = exact(resolutionKey);
+  if(direct) return direct;
+  const mpSpec = resolutionToMegapixelSpec(resolutionKey);
+  if(mpSpec){
+    const mp = exact(mpSpec);
+    if(mp) return mp;
+  }
+  const scoped = variants.filter(item=>normalizePricingSpec(item.spec).startsWith(`${resolutionKey}@`));
+  if(scoped.length){
+    if(qualityKey && qualityKey !== 'auto'){
+      const qualityMatch = scoped.find(item=>normalizePricingSpec(item.spec).endsWith(`@${qualityKey.toUpperCase()}`));
+      if(qualityMatch) return qualityMatch;
+    }
+    return scoped.reduce((max, item)=>Number(item.credits) > Number(max.credits) ? item : max, scoped[0]);
+  }
+  const defaultVariant = exact('default');
+  if(defaultVariant) return defaultVariant;
+  if(variants.length === 1) return variants[0];
+  // An unknown specification uses the highest fixed tier so the estimate is conservative.
+  return variants.reduce((max, item)=>Number(item.credits) > Number(max.credits) ? item : max, variants[0]);
+}
+function modelUsageCredits(){
+  const user = apimartBalanceState.user;
+  if(apimartBalanceIsUnlimited(user)) return Infinity;
+  const credits = Number(user?.remain_credits);
+  return Number.isFinite(credits) && credits >= 0 ? credits : null;
+}
+function formatModelUsageCount(count){
+  if(count === Infinity) return '不限';
+  if(!Number.isFinite(count)) return '--';
+  return new Intl.NumberFormat('zh-CN', {maximumFractionDigits:0}).format(Math.max(0, Math.floor(count)));
+}
+function estimateUsesForPrice(priceCredits, outputCount = 1){
+  const credits = modelUsageCredits();
+  const unitCost = Number(priceCredits) * Math.max(1, Number(outputCount || 1));
+  if(credits === Infinity) return Infinity;
+  if(!Number.isFinite(credits) || !Number.isFinite(unitCost) || unitCost <= 0) return null;
+  return Math.floor(credits / unitCost);
+}
+function getCurrentModelUsageContext(){
+  const modelId = currentImageModelId();
+  const label = currentImageModelLabel(modelId);
+  const resolution = String($('#clarity')?.value || $('#claritySettings')?.value || '1K');
+  const quality = String($('#imageQuality')?.value || 'auto');
+  const resolved = resolveImagePricingEntry(modelId);
+  const variant = resolveImagePricingVariant(resolved.entry, resolution, quality);
+  const outputCount = typeof isMultiNImageModel === 'function' && isMultiNImageModel(modelId)
+    ? Math.max(1, Number($('#imageN')?.value || 1))
+    : 1;
+  const uses = variant ? estimateUsesForPrice(variant.credits, outputCount) : null;
+  return {modelId, label, resolution, quality, outputCount, priceModelId:resolved.priceModelId, entry:resolved.entry, variant, uses};
+}
+function renderModelUsageEstimate(){
+  const button = $('#modelUsageEstimateBtn');
+  const value = $('#modelUsageEstimateValue');
+  if(!button || !value) return;
+  const context = getCurrentModelUsageContext();
+  const noBalance = modelUsageCredits() === null;
+  let text = '计算中';
+  let title = '正在读取 APIMart 价格与账户积分';
+  let state = 'loading';
+  if(apimartPricingState.status === 'error' && !Object.keys(apimartPricingState.models || {}).length){
+    text = '价格异常';
+    title = apimartPricingState.warning || '价格表读取失败，点击查看详情';
+    state = 'error';
+  }else if(context.entry?.metered){
+    text = '动态计费';
+    title = `${context.label} 按实际 Token 用量结算，无法给出固定次数`;
+    state = 'variable';
+  }else if(!context.variant){
+    text = '暂无定价';
+    title = `${context.label} 暂无公开固定单价，点击查看详情`;
+    state = 'variable';
+  }else if(noBalance){
+    text = '需余额';
+    title = '请先填写 APIMart API Key，以账户剩余积分计算预计可用次数';
+    state = 'variable';
+  }else{
+    const countText = formatModelUsageCount(context.uses);
+    text = context.uses === 0 ? '不足 1 次' : (context.uses === Infinity ? '不限' : `约 ${countText} 次`);
+    const perUse = Number(context.variant.credits) * context.outputCount;
+    title = `${context.label} · ${context.variant.spec} · ${context.quality} · ${context.outputCount} 张/次，约 ${perUse.toFixed(6).replace(/0+$/,'').replace(/\.$/,'')} Credits/次`;
+    state = 'ready';
+  }
+  value.textContent = text;
+  button.title = title;
+  button.dataset.state = state;
+  button.classList.toggle('is-loading', state === 'loading');
+  button.classList.toggle('has-value', state === 'ready');
+  button.classList.toggle('is-variable', state === 'variable');
+  button.classList.toggle('has-error', state === 'error');
+  renderModelUsageDetails();
+}
+function modelUsagePriceText(variant){
+  if(!variant) return '--';
+  const value = Number(variant.credits);
+  return `${Number.isFinite(value) ? value.toFixed(6).replace(/0+$/,'').replace(/\.$/,'') : '--'} Credits/${variant.unit || '张'}`;
+}
+function renderModelUsageDetails(){
+  const modal = $('#modelUsageModal');
+  if(!modal) return;
+  const context = getCurrentModelUsageContext();
+  const credits = modelUsageCredits();
+  const balance = $('#modelUsageBalance');
+  if(balance) balance.textContent = credits === Infinity ? '账户积分：不限' : credits === null ? '账户剩余积分：--（请填写 API Key）' : `账户剩余积分：${formatApimartBalanceValue(credits)}`;
+  const current = $('#modelUsageCurrent');
+  if(current){
+    const repeatsResolution = normalizePricingSpec(context.variant?.spec) === normalizePricingSpec(context.resolution);
+    const pricingText = context.entry?.metered
+      ? '按 Token 动态计费'
+      : context.variant
+        ? `${repeatsResolution ? '' : `${context.variant.spec} 价格档 · `}${modelUsagePriceText(context.variant)} · ${context.outputCount} 张/次`
+        : '暂无公开固定单价';
+    const usesText = context.entry?.metered || !context.variant
+      ? '无法固定估算'
+      : context.uses === null ? '等待余额' : context.uses === 0 ? '余额不足 1 次' : `约 ${formatModelUsageCount(context.uses)} 次`;
+    current.innerHTML = `<div><span>当前配置</span><strong>${escapeHtml(context.label)}</strong><small>${escapeHtml(context.resolution)} · ${escapeHtml(context.quality)} · ${escapeHtml(pricingText)}</small></div><b>${escapeHtml(usesText)}</b>`;
+  }
+  const source = $('#modelUsageSource');
+  if(source){
+    const sourceName = apimartPricingState.source === 'live' ? 'APIMart 官网实时价格' : '内置价格快照';
+    const fetched = apimartPricingState.fetchedAt ? new Date(apimartPricingState.fetchedAt).toLocaleString('zh-CN') : '尚未更新';
+    source.textContent = `${sourceName} · ${fetched}`;
+  }
+  const warning = $('#modelUsageWarning');
+  if(warning){ warning.textContent = apimartPricingState.warning || ''; warning.classList.toggle('show', !!apimartPricingState.warning); }
+  const search = String($('#modelUsageSearch')?.value || '').trim().toLowerCase();
+  const list = $('#modelUsageList');
+  if(!list) return;
+  const currentVariantSpec = normalizePricingSpec(context.variant?.spec);
+  const rows = [];
+  APIMART_MODEL_OPTIONS.forEach(([modelId, label])=>{
+    if(search && !`${modelId} ${label}`.toLowerCase().includes(search)) return;
+    const resolved = resolveImagePricingEntry(modelId);
+    const entry = resolved.entry;
+    const variants = Array.isArray(entry?.variants) ? entry.variants.filter(item=>Number(item?.credits) > 0) : [];
+    if(entry?.metered){
+      rows.push(`<div class="model-usage-row ${modelId === context.modelId ? 'current' : ''}"><div class="model-usage-name"><strong>${escapeHtml(label)}</strong><small>${escapeHtml(modelId)}</small></div><span>Token</span><span>动态计费</span><b>按实际用量</b></div>`);
+      return;
+    }
+    if(!variants.length){
+      rows.push(`<div class="model-usage-row ${modelId === context.modelId ? 'current' : ''}"><div class="model-usage-name"><strong>${escapeHtml(label)}</strong><small>${escapeHtml(modelId)}</small></div><span>--</span><span>暂无公开固定单价</span><b>--</b></div>`);
+      return;
+    }
+    variants.forEach((variant, index)=>{
+      const uses = estimateUsesForPrice(variant.credits, 1);
+      const isCurrent = modelId === context.modelId && normalizePricingSpec(variant.spec) === currentVariantSpec;
+      rows.push(`<div class="model-usage-row ${isCurrent ? 'current' : ''}"><div class="model-usage-name">${index === 0 ? `<strong>${escapeHtml(label)}</strong><small>${escapeHtml(modelId)}</small>` : '<span class="model-usage-repeat">同模型</span>'}</div><span>${escapeHtml(variant.spec || 'default')}</span><span>${escapeHtml(modelUsagePriceText(variant))}</span><b>${uses === null ? '--' : uses === Infinity ? '不限' : `约 ${escapeHtml(formatModelUsageCount(uses))} 次`}</b></div>`);
+    });
+  });
+  list.innerHTML = rows.length ? rows.join('') : '<div class="model-usage-empty">没有匹配的模型</div>';
+  const refresh = $('#modelUsageRefreshBtn');
+  if(refresh){ refresh.disabled = apimartPricingState.status === 'loading'; refresh.textContent = apimartPricingState.status === 'loading' ? '刷新中...' : '刷新价格与余额'; }
+}
+function ensureModelUsageModal(){
+  let modal = $('#modelUsageModal');
+  if(modal) return modal;
+  modal = document.createElement('div');
+  modal.id = 'modelUsageModal';
+  modal.className = 'modal model-usage-modal';
+  modal.setAttribute('aria-hidden', 'true');
+  modal.innerHTML = `
+    <div class="model-usage-dialog glass-modal" role="dialog" aria-modal="true" aria-labelledby="modelUsageTitle">
+      <div class="model-usage-head"><div><div class="api-balance-kicker">APIMart Pricing</div><h2 id="modelUsageTitle">模型预计可用次数</h2><p id="modelUsageBalance">账户剩余积分：--</p></div><button class="api-balance-close" id="modelUsageCloseBtn" type="button" title="关闭" aria-label="关闭">×</button></div>
+      <section class="model-usage-current" id="modelUsageCurrent"></section>
+      <div class="model-usage-toolbar"><input id="modelUsageSearch" type="search" placeholder="搜索模型名称或 ID" autocomplete="off" /><button class="secondary" id="modelUsageRefreshBtn" type="button">刷新价格与余额</button></div>
+      <div class="model-usage-table-head"><span>模型</span><span>规格</span><span>单价</span><span>预计可用</span></div>
+      <div class="model-usage-list" id="modelUsageList"></div>
+      <div class="model-usage-warning" id="modelUsageWarning" role="status"></div>
+      <div class="model-usage-foot"><div><span id="modelUsageSource">价格尚未读取</span><a href="https://apimart.ai/zh/pricing" target="_blank" rel="noreferrer">查看官方价格表</a></div><p>当前卡片按已选模型、分辨率、质量和每次输出张数估算；列表按每次生成 1 张估算。参考图、提示词扩展及 Token 动态费用可能另行计费，最终以 APIMart 实际扣费为准。</p></div>
+    </div>`;
+  document.body.appendChild(modal);
+  modal.addEventListener('click', event=>{ if(event.target === modal) closeModelUsageModal(); });
+  $('#modelUsageCloseBtn')?.addEventListener('click', closeModelUsageModal);
+  $('#modelUsageSearch')?.addEventListener('input', renderModelUsageDetails);
+  $('#modelUsageRefreshBtn')?.addEventListener('click', async ()=>{
+    await Promise.all([loadApimartPricing({force:true, manual:true}), refreshApimartBalance({manual:false, details:true})]);
+    renderModelUsageEstimate();
+  });
+  return modal;
+}
+function openModelUsageModal(){
+  const modal = ensureModelUsageModal();
+  modal.classList.add('active');
+  modal.setAttribute('aria-hidden', 'false');
+  renderModelUsageEstimate();
+  if(apimartPricingState.status === 'idle') loadApimartPricing();
+  refreshApimartBalance({details:true});
+}
+function closeModelUsageModal(){
+  const modal = $('#modelUsageModal');
+  modal?.classList.remove('active');
+  modal?.setAttribute('aria-hidden', 'true');
+}
+async function loadApimartPricing(opts = {}){
+  if(apimartPricingRequest) return apimartPricingRequest;
+  const hasCatalog = Object.keys(apimartPricingState.models || {}).length > 0;
+  apimartPricingState = {...apimartPricingState, status:hasCatalog ? 'ready' : 'loading'};
+  renderModelUsageEstimate();
+  const force = opts.force === true;
+  if(force) apimartPricingLiveAttempted = true;
+  const path = force ? '/api/apimart/pricing/refresh' : '/api/apimart/pricing';
+  const requestOptions = force ? {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'} : {};
+  apimartPricingRequest = api(path, requestOptions)
+    .then(result=>{
+      apimartPricingState = {
+        status:'ready',
+        models:result.models || {},
+        modelAliases:result.model_aliases || {},
+        source:result.source || 'fallback',
+        sourceUrl:result.source_url || 'https://apimart.ai/zh/pricing',
+        fetchedAt:result.fetched_at || new Date().toISOString(),
+        warning:result.warning || ''
+      };
+      renderModelUsageEstimate();
+      if(opts.manual) toast(result.source === 'live' ? 'APIMart 价格与余额已刷新' : '官网价格暂不可用，已使用内置价格快照');
+      if(!force && !apimartPricingLiveAttempted && (result.refreshing || result.source !== 'live')){
+        apimartPricingLiveAttempted = true;
+        setTimeout(()=>loadApimartPricing({force:true}), 180);
+      }
+      return result;
+    })
+    .catch(error=>{
+      apimartPricingState = {...apimartPricingState, status:'error', warning:String(error?.message || error || '价格表读取失败')};
+      renderModelUsageEstimate();
+      if(opts.manual) toast(`价格表刷新失败：${apimartPricingState.warning}`);
+      return null;
+    })
+    .finally(()=>{ apimartPricingRequest = null; });
+  return apimartPricingRequest;
+}
+function setupModelUsageEstimate(){
+  const button = $('#modelUsageEstimateBtn');
+  if(!button || button.dataset.bound === '1') return;
+  button.dataset.bound = '1';
+  button.addEventListener('click', openModelUsageModal);
+  renderModelUsageEstimate();
+  loadApimartPricing();
 }
 
 function bindSoftwareUpdateModal(modal){
@@ -1182,6 +1461,7 @@ function applyImagePlatformFields(cfg = {}, platform='apimart'){
   if($('#outputCompression')) $('#outputCompression').value = merged.output_compression || 90;
   if($('#imageN')) $('#imageN').value = String(merged.image_n || 1);
   updateApiKeyWarning();
+  renderModelUsageEstimate();
 }
 function setImageApiPlatform(platform='apimart', silent=false, skipSaveCurrent=false){
   const p = normalizeImagePlatformValue(platform);
@@ -1541,6 +1821,7 @@ function updateModelFromPreset(){
   else { $('#model').value = v; $('#model').classList.remove('show'); }
   updateSizeHint();
   updateOfficialImageOptions();
+  renderModelUsageEstimate();
 }
 
 
@@ -4429,18 +4710,20 @@ $('#promptMultilineTasks')?.addEventListener('change', calcEstimate);
 $('#repeatCount').addEventListener('input', calcEstimate);
 $('#outputDir')?.addEventListener('input', ()=>updateRuntimeDataDirHint($('#outputDir')?.value || ''));
 $('#modelPreset').addEventListener('change', updateModelFromPreset);
-$('#model')?.addEventListener('input', ()=>{ updateSizeHint(); updateOfficialImageOptions(); });
-$('#size').addEventListener('change', updateSizeHint);
-$('#customWidth').addEventListener('input', updateSizeHint);
-$('#customHeight').addEventListener('input', updateSizeHint);
+$('#model')?.addEventListener('input', ()=>{ updateSizeHint(); updateOfficialImageOptions(); renderModelUsageEstimate(); });
+$('#size').addEventListener('change', ()=>{ updateSizeHint(); renderModelUsageEstimate(); });
+$('#customWidth').addEventListener('input', ()=>{ updateSizeHint(); renderModelUsageEstimate(); });
+$('#customHeight').addEventListener('input', ()=>{ updateSizeHint(); renderModelUsageEstimate(); });
 $('#servicePort')?.addEventListener('input', ()=>updateLanDisplay({lan_enabled: $('#lanEnabled').checked, port:Number($('#servicePort').value||7868)}));
 $('#backgroundKeepalive')?.addEventListener('change', ()=>enableKeepAlive($('#backgroundKeepalive').checked));
 $('#themeMode')?.addEventListener('change', ()=>{ if($('#themeModeQuick')) $('#themeModeQuick').value = $('#themeMode').value; applyThemeMode($('#themeMode').value); });
 $('#themeModeQuick')?.addEventListener('change', ()=>{ $('#themeMode').value = $('#themeModeQuick').value; applyThemeMode($('#themeModeQuick').value); });
 $('#skinIdSettings')?.addEventListener('change', ()=>applySkinSettings($('#skinIdSettings').value, $('#mascotEnabledSettings')?.checked !== false));
 $('#mascotEnabledSettings')?.addEventListener('change', ()=>applySkinSettings($('#skinIdSettings')?.value || 'classic', $('#mascotEnabledSettings').checked));
-$('#clarity')?.addEventListener('change', ()=>{ if($('#claritySettings')) $('#claritySettings').value = $('#clarity').value; updateSizeHint(); });
-$('#claritySettings')?.addEventListener('change', ()=>{ if($('#clarity')) $('#clarity').value = $('#claritySettings').value; updateSizeHint(); });
+$('#clarity')?.addEventListener('change', ()=>{ if($('#claritySettings')) $('#claritySettings').value = $('#clarity').value; updateSizeHint(); renderModelUsageEstimate(); });
+$('#claritySettings')?.addEventListener('change', ()=>{ if($('#clarity')) $('#clarity').value = $('#claritySettings').value; updateSizeHint(); renderModelUsageEstimate(); });
+$('#imageQuality')?.addEventListener('change', renderModelUsageEstimate);
+$('#imageN')?.addEventListener('change', renderModelUsageEstimate);
 $('#outputFormat')?.addEventListener('change', updateOfficialImageOptions);
 $('#apiKey')?.addEventListener('input', updateApiKeyWarning);
 $('#apiKey')?.addEventListener('change', ()=>{
@@ -12081,6 +12364,7 @@ async function startup(){
     await loadConfig();
     setupRecentUploadPanel();
     setupApimartBalance();
+    setupModelUsageEstimate();
     calcEstimate();
     await refreshAll();
     if(globalRunningPollTimer) clearInterval(globalRunningPollTimer);

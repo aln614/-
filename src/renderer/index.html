@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>TENYING_AI 1.0</title>
-  <link rel="stylesheet" href="/static/style.css?v=1.0.90" />
+  <link rel="stylesheet" href="/static/style.css?v=1.0.91" />
 </head>
 <body>
   <div class="app-shell">
@@ -98,7 +98,12 @@
 
         <div class="grid two">
           <div class="card">
-            <div class="card-title-row"><h2>APIMart API 与参数</h2></div>
+            <div class="card-title-row">
+              <h2>APIMart API 与参数</h2>
+              <button class="model-usage-estimate" id="modelUsageEstimateBtn" type="button" title="查看全部图像模型预计可用次数">
+                <span>预计可用</span><strong id="modelUsageEstimateValue">计算中</strong>
+              </button>
+            </div>
             <label>API Key</label>
             <input id="apiKey" type="password" placeholder="请输入当前平台 API Key / Bearer Token" />
             <div class="api-key-warning" id="apiKeyWarning">API Key 未填写，请先填写后再开始生成。</div>
@@ -1006,6 +1011,6 @@
       </div>
     </div>
   </div>
-  <script src="/static/app.js?v=1.0.90"></script>
+  <script src="/static/app.js?v=1.0.91"></script>
 </body>
 </html>

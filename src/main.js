@@ -14,6 +14,7 @@ const { initDB, getDB, addLog, listBatches, listImages, listLogs, nowISO, uuid, 
 const { TaskQueue } = require('./services/taskQueue');
 const { chatCompletion, getApimartChatModels, refreshApimartChatModels, APIMART_IMAGE_MODELS } = require('./services/apiClient');
 const { safeName, ensureDir, makeDirs, createThumb, convertImageToUploadPng, removeTemporaryUploadFile, downloadToFile } = require('./services/cache');
+const { APIMART_PRICING_URL, createFallbackPricingCatalog, createLivePricingCatalog } = require('./services/apimartPricing');
 
 let mainWindow = null;
 let server = null;
@@ -42,6 +43,7 @@ const STATUS_CACHE_TTL_MS = 650;
 const HOST_STATS_CACHE_TTL_MS = 900;
 const STALE_CLEANUP_TTL_MS = 15000;
 const MIDJOURNEY_RECONCILE_INTERVAL_MS = 10000;
+const APIMART_PRICING_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const BASE_SECURITY_HEADERS = {
   'X-Content-Type-Options': 'nosniff',
   'Referrer-Policy': 'no-referrer'
@@ -2660,6 +2662,9 @@ function normalizeProxyUrl(v = '') {
   return s;
 }
 let lastGoodApimartProxy = '';
+let apimartPricingCatalog = createFallbackPricingCatalog();
+let apimartPricingLiveFetchedAt = 0;
+let apimartPricingRefreshPromise = null;
 function markGoodApimartProxy(proxy = '') {
   const p = normalizeProxyUrl(proxy);
   if (p) lastGoodApimartProxy = p;
@@ -3162,6 +3167,96 @@ function normalizeApimartVideoError(err, hasVideoUrl) {
     return '参考视频公网通道暂时不可用，程序将重建通道并自动重试。原始错误：' + msg;
   }
   return msg;
+}
+
+function curlTextRequest(targetUrl, timeoutMs = 20000, proxyUrl = '') {
+  return new Promise((resolve, reject) => {
+    const timeoutSec = Math.min(30, Math.max(8, Math.ceil(Number(timeoutMs || 20000) / 1000)));
+    const args = ['-sS', '-L', '--compressed', '--connect-timeout', '4', '--max-time', String(timeoutSec)];
+    if (proxyUrl) args.push('--proxy', String(proxyUrl));
+    args.push(targetUrl, '-H', 'Accept: text/html,application/xhtml+xml', '-H', 'User-Agent: TENYING-AI/1.0 APIMart-Pricing');
+    const exe = process.platform === 'win32' ? 'curl.exe' : 'curl';
+    const child = spawn(exe, args, { windowsHide:true });
+    const chunks = [];
+    const errors = [];
+    let bytes = 0;
+    let settled = false;
+    const finish = (error, value = '') => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) reject(error);
+      else resolve(value);
+    };
+    const timer = setTimeout(() => {
+      try { child.kill(); } catch {}
+      finish(new Error(`APIMart 价格页请求超时 ${timeoutSec}s`));
+    }, (timeoutSec + 4) * 1000);
+    child.stdout.on('data', chunk => {
+      if (settled) return;
+      bytes += chunk.length;
+      if (bytes > 4 * 1024 * 1024) {
+        try { child.kill(); } catch {}
+        finish(new Error('APIMart 价格页响应超过 4MB 安全上限'));
+        return;
+      }
+      chunks.push(chunk);
+    });
+    child.stderr.on('data', chunk => errors.push(chunk));
+    child.on('error', error => finish(error));
+    child.on('close', code => {
+      if (settled) return;
+      const output = Buffer.concat(chunks).toString('utf8').trim();
+      const errorText = Buffer.concat(errors).toString('utf8').trim();
+      if (code !== 0) return finish(new Error(errorText || `curl 退出码 ${code}`));
+      if (!output) return finish(new Error('APIMart 价格页返回空内容'));
+      finish(null, output);
+    });
+    child.stdin.end();
+  });
+}
+
+function getCachedApimartPricingCatalog() {
+  const refreshing = !!apimartPricingRefreshPromise;
+  return {
+    ...apimartPricingCatalog,
+    refreshing,
+    cache_expires_at: apimartPricingLiveFetchedAt
+      ? new Date(apimartPricingLiveFetchedAt + APIMART_PRICING_CACHE_TTL_MS).toISOString()
+      : ''
+  };
+}
+
+async function refreshApimartPricingCatalog(force = false) {
+  if (!force && apimartPricingLiveFetchedAt && Date.now() - apimartPricingLiveFetchedAt < APIMART_PRICING_CACHE_TTL_MS) {
+    return getCachedApimartPricingCatalog();
+  }
+  if (apimartPricingRefreshPromise) return apimartPricingRefreshPromise;
+  apimartPricingRefreshPromise = (async () => {
+    const configuredProxy = String(readConfig().apimart_proxy_url || process.env.APIMART_PROXY_URL || process.env.HTTPS_PROXY || process.env.HTTP_PROXY || '').trim();
+    const candidates = getApimartProxyCandidates(configuredProxy).slice(0, 4);
+    const attempts = [...candidates, ''];
+    const errors = [];
+    for (const proxy of attempts) {
+      try {
+        const html = await curlTextRequest(APIMART_PRICING_URL, 18000, proxy);
+        const catalog = createLivePricingCatalog(html);
+        if (proxy) markGoodApimartProxy(proxy);
+        apimartPricingCatalog = catalog;
+        apimartPricingLiveFetchedAt = Date.now();
+        addLog(`APIMart 价格表已更新：${Object.keys(catalog.models || {}).length} 个模型${proxy ? `（代理 ${proxy}）` : '（直连）'}`);
+        return getCachedApimartPricingCatalog();
+      } catch (error) {
+        errors.push(`${proxy || '直连'}: ${String(error?.message || error)}`);
+      }
+    }
+    const warning = `官网价格暂时无法刷新，当前使用内置价格快照。${errors.slice(0, 2).join(' | ')}`;
+    if (apimartPricingCatalog.source !== 'live') apimartPricingCatalog = createFallbackPricingCatalog(warning);
+    else apimartPricingCatalog = { ...apimartPricingCatalog, warning };
+    addLog(warning, { level:'warn' });
+    return getCachedApimartPricingCatalog();
+  })().finally(() => { apimartPricingRefreshPromise = null; });
+  return apimartPricingRefreshPromise;
 }
 
 function isTransientApimartVideoTransportError(error) {
@@ -8725,6 +8820,14 @@ async function apiHandler(req, res, parsed) {
         user: normalizeApimartBalanceResponse(userPayload),
         queried_at: nowISO()
       });
+    }
+    if (method === 'GET' && p === '/api/apimart/pricing') {
+      void refreshApimartPricingCatalog(false).catch(() => {});
+      return send(res, getCachedApimartPricingCatalog());
+    }
+    if (method === 'POST' && p === '/api/apimart/pricing/refresh') {
+      await refreshApimartPricingCatalog(true);
+      return send(res, getCachedApimartPricingCatalog());
     }
     if (method === 'POST' && p === '/api/update/check') {
       if (!local) return send(res, {ok:false,error:'只有主机端可以检查软件更新'}, 403);
