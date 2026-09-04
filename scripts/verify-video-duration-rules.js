@@ -45,7 +45,7 @@ for (const group of pickerBlock.matchAll(/\['[^']+',\s*\[([^\]]+)\]\]/g)) {
   for (const model of group[1].matchAll(/'([^']+)'/g)) picker.add(model[1].toLowerCase());
 }
 
-assert(backend.size === 49, `Expected 49 official backend models, found ${backend.size}`);
+assert(backend.size === 51, `Expected 51 official backend models, found ${backend.size}`);
 assert(picker.size === backend.size, `Model picker/backend count mismatch: picker=${picker.size}, backend=${backend.size}`);
 for (const model of picker) assert(backend.has(model), `Model picker has no backend rule: ${model}`);
 for (const model of backend.keys()) assert(picker.has(model), `Backend model is missing from picker: ${model}`);
@@ -92,6 +92,8 @@ assert(/model:'MiniMax-Hailuo-02'[^\n]*resolutions:\['512p','768p','1080p'\][^\n
 assert(/model:'MiniMax-Hailuo-2\.3'[^\n]*durations:\[6,10\][^\n]*resolutionDurationRules:\{'1080p':\[6\]\}/.test(main), 'Hailuo 2.3 1080p must be fixed to 6 seconds');
 assert(/model:'MiniMax-H3'[^\n]*resolutions:\['2K','768P'\][^\n]*durationRange:\[4,15\][^\n]*maxImageCount:9[^\n]*maxVideoCount:3[^\n]*referenceVideoDurationRange:\[2,15\][^\n]*referenceVideoTotalDurationMax:15[^\n]*audioMinDuration:2[^\n]*audioTotalDuration:15/.test(main), 'MiniMax H3 must use official 2K/768P and the documented multimodal duration limits');
 assert(/model:'MiniMax-H3'[^\n]*durationMin:4,\s*durationMax:15[^\n]*supportsVideo:true/.test(app), 'MiniMax H3 slider and video-reference UI rule must be registered');
+assert(/model:'MiniMax-H3-Max'[^\n]*resolutions:\['768P','480P'\][^\n]*durationRange:\[5,15\][^\n]*allowedImageCounts:\[0,1,2\][^\n]*frameOnlyImages:true[^\n]*omitAspectWithImages:true/.test(main), 'MiniMax H3 Max must use 768P/480P, 5-15 seconds, and frame-only image controls');
+assert(/model:'MiniMax-H3-Max'[^\n]*durationMin:5,\s*durationMax:15[^\n]*frameOnlyImages:true/.test(app), 'MiniMax H3 Max slider and frame-only UI rule must be registered');
 assert(/model:'skyreels-v4-fast'[^\n]*durationRange:\[3,15\][^\n]*videoParam:'ref_videos'/.test(main), 'SkyReels V4 must support 3-15 seconds and tagged video references');
 assert(/model:'skyreels-v4-fast'[^\n]*omitAspectWithImageModes:\['first_frame','first_last_frame'\][^\n]*omitAspectWithVideo:true/.test(main), 'SkyReels must only omit aspect ratio for I2V or video reference modes');
 assert(/videoReferenceType[^\n]*extend/.test(app) && /video_reference_type:currentVideoReferenceType\(\)/.test(app), 'SkyReels reference and extension mode must reach the backend');
@@ -118,8 +120,10 @@ assert(/model:'kling-v2-6'[^\n]*durations:\[5,10\][^\n]*modeFromResolution:true/
 assert(/model:'kling-v3'[^\n]*durationRange:\[3,15\]/.test(main), 'Kling v3 must support 3-15 seconds');
 assert(/model:'viduq3'[^\n]*durationRange:\[3,16\][^\n]*minImageCount:1/.test(main), 'Vidu Q3 standard must require images and support 3-16 seconds');
 assert(/model:'pixverse-v6'[^\n]*durationRange:\[1,15\][^\n]*firstLastDurations:\[5,8\]/.test(main), 'Pixverse v6 must support 1-15 seconds and 5/8 second first-last mode');
-assert(/model:'Omni-Flash-Ext'[^\n]*durations:\[4,6,8,10\][^\n]*durationWithVideo:false/.test(main), 'Omni Flash Ext must use 4/6/8/10 seconds and omit duration for video edit');
+assert(/model:'Omni-Flash-Ext'[^\n]*apiModel:'gemini-omni-1\.1-flash-ext'[^\n]*resolutions:\['360p','720p','1080p','4k'\][^\n]*durations:\[4,6,8,10\][^\n]*durationWithVideo:false/.test(main), 'Omni Flash Ext must submit the current model id with documented resolutions and omit duration for video edit');
 assert(/model:'gemini-omni-flash-preview'[^\n]*supportsDuration:false/.test(main), 'Gemini Omni Flash duration must be model-controlled');
+assert(/model:'gemini-omni-1\.1-flash'[^\n]*resolutions:\['360p','720p','1080p','4k'\][^\n]*maxImageCount:10[^\n]*referenceVideoDurationRange:\[1,10\][^\n]*supportsDuration:false/.test(main), 'Gemini Omni 1.1 Flash must support official multimodal inputs and model-controlled duration');
+assert(/rule\.apiModel \|\| rule\.model \|\| videoModel/.test(main), 'Updated APIMart aliases must submit their documented API model id');
 assert(/model:'flux-3-video'[^\n]*resolutions:\['hd','fhd'\][^\n]*durationRange:\[5,20\][^\n]*videoParam:'video_url'/.test(main), 'FLUX 3 Video must use documented HD/FHD, 5-20 second, video-url rules');
 assert(/model:'veo3\.1-fast-official'[^\n]*durations:\[4,6,8\][^\n]*imageParam:'first_frame_image'/.test(main), 'VEO3 official Fast must use its documented frame controls');
 assert(/model:'doubao-seedance-2\.0'[^\n]*aspectParam:'size'/.test(main), 'Seedance 2.0 must submit size instead of aspect_ratio');

@@ -21,6 +21,7 @@ const APP_IMAGE_PRICE_MODEL_MAP = Object.freeze({
 
 const APP_VIDEO_PRICE_MODEL_MAP = Object.freeze({
   'omni-flash-ext': 'Omni-Flash-Ext',
+  'gemini-omni-1.1-flash-ext': 'Omni-Flash-Ext',
   'doubao-seedance-1-0-pro-fast': 'seedance-1-0-pro-fast',
   'doubao-seedance-1-0-pro-quality': 'seedance-1-0-pro-quality',
   'doubao-seedance-1-5-pro': 'seedance-1-5-pro',
@@ -65,6 +66,7 @@ const FIXED_IMAGE_PRICES = Object.freeze({
 // page; this table keeps estimates available while the network is offline.
 const FIXED_VIDEO_PRICES = Object.freeze({
   'MiniMax-H3': { unit:'秒', rows:[['default',0.9144],['2K',0.9144],['768P',0.5712]] },
+  'MiniMax-H3-Max': { unit:'秒', rows:[['default',0.75],['768P',0.75],['480P',0.495]] },
   'MiniMax-Hailuo-02': { unit:'秒', rows:[['1080P',0.8],['512P',0.104],['768P',0.4]] },
   'MiniMax-Hailuo-2.3': { unit:'秒', rows:[['default',0.488],['1080P',0.72]] },
   'MiniMax-Hailuo-2.3-Fast': { unit:'秒', rows:[['default',0.248],['1080P',0.424]] },
