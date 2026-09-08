@@ -6282,6 +6282,7 @@ function storeImageTaskPreview(task = {}){
     remote_task_id: task.remote_task_id || '',
     model: task.model || '',
     batch: task.batch_name || '',
+    batch_id: task.batch_id || '',
     status: task.status || '',
     progress: Math.max(0, Math.min(100, Number(task.progress || 0))),
     progress_text: task.progress_text || '',
@@ -7202,7 +7203,7 @@ function setPreviewInfo(meta = {}){
     setPreviewLabel('previewInfoTitle', '生成信息');
     setPreviewLabel('previewModelLabel', '模型');
     setPreviewLabel('previewSizeLabel', '尺寸');
-    setPreviewLabel('previewBatchLabel', '任务ID');
+    setPreviewLabel('previewBatchLabel', '批次');
     setPreviewLabel('previewStatusLabel', '状态');
     setPreviewLabel('previewProgressLabel', '进度');
     setPreviewLabel('previewTaskIdLabel', '任务ID');
@@ -7210,7 +7211,7 @@ function setPreviewInfo(meta = {}){
     setPreviewLabel('previewPromptLabel', '提示词');
     if($('#previewModel')) $('#previewModel').textContent = meta.model || '-';
     if($('#previewSize')) $('#previewSize').textContent = [meta.size, meta.imageSize].filter(Boolean).join(' / ') || '-';
-    if($('#previewBatch')) $('#previewBatch').textContent = meta.taskId || meta.remote_task_id || meta.remoteTaskId || meta.id || '-';
+    if($('#previewBatch')) $('#previewBatch').textContent = meta.batch || meta.batch_name || meta.batch_id || '-';
     if($('#previewStatus')) $('#previewStatus').textContent = meta.status || '-';
     if($('#previewProgress')) $('#previewProgress').textContent = (meta.progress_text || typeof meta.progress !== 'undefined') ? [typeof meta.progress !== 'undefined' ? `${meta.progress}%` : '', meta.progress_text || ''].filter(Boolean).join(' · ') : '-';
     if($('#previewTaskId')) $('#previewTaskId').textContent = meta.taskId || meta.remote_task_id || meta.remoteTaskId || meta.id || '-';
