@@ -8,6 +8,7 @@ const { Readable } = require('stream');
 const { pipeline } = require('stream/promises');
 const { spawn } = require('child_process');
 const { downloadToFile, convertImageToUploadPng, removeTemporaryUploadFile } = require('./cache');
+const { createLimiter } = require('./asyncWork');
 
 function cleanBase(base) { return String(base || '').replace(/\/+$/, ''); }
 const AUTO_PROXY_CANDIDATES = [
@@ -776,7 +777,7 @@ function isInvalidApimartImageContentError(error) {
 async function uploadImageToApimart(baseUrl, apiKey, filePath, proxyUrl='', normalized=false){
   if(!filePath) return '';
   apiKey = assertApimartUploadApiKey(apiKey);
-  const stat = fs.statSync(filePath);
+  await fs.promises.stat(filePath);
   const errors = [];
   for (const proxy of getProxyCandidates(proxyUrl)) {
     try { return await uploadImageToApimartByCurl(baseUrl, apiKey, filePath, proxy); }
@@ -799,7 +800,7 @@ async function uploadImageToApimart(baseUrl, apiKey, filePath, proxyUrl='', norm
   }
   // 代理都失败后再走 fetch 直连兜底。
   try {
-    const buf = fs.readFileSync(filePath);
+    const buf = await fs.promises.readFile(filePath);
     const form = new FormData();
     form.append('file', new Blob([buf], { type: mimeFromPath(filePath) }), path.basename(filePath));
     const res = await fetchNoSingleTimeout(makeApimartUrl(baseUrl, '/v1/uploads/images'), { method:'POST', headers:{ 'Authorization': apiKey ? `Bearer ${apiKey}` : '' }, body:form });
@@ -1107,10 +1108,10 @@ async function queryApimartTaskSingle(base, apiKey, taskId, proxyUrl = '') {
 function normalizeSingleTaskFromBatch(resp, taskId) {
   const id = String(taskId || '').trim();
   const items = flattenApimartTaskItems(resp);
-  const exact = items.find(x => taskItemId(x) === id) || items.find(x => taskItemId(x) && (taskItemId(x).includes(id) || id.includes(taskItemId(x))));
-  return exact || (resp && resp.data && !Array.isArray(resp.data) ? resp.data : resp);
+  return items.find(x => taskItemId(x) === id) || null;
 }
 const apimartBatchState = { timer:null, queue:[], taskMeta:new Map() };
+const apimartQuerySlots = createLimiter(4);
 function taskMetaFor(id){
   const key = String(id || '').trim();
   let meta = apimartBatchState.taskMeta.get(key);
@@ -1125,6 +1126,7 @@ function shouldForceSingleTaskCheck(taskId, item, statusText){
   if (hasTaskResultPayload(item)) return false;
   const st = String(statusText || '').toLowerCase();
   const meta = taskMetaFor(taskId);
+  if (!item) return true;
   const now = Date.now();
   if (isFinishedTaskStatus(st)) return true;
   if (!isPendingTaskStatus(st)) return true;
@@ -1147,51 +1149,62 @@ function queryApimartTaskBatchAware(base, apiKey, taskId, proxyUrl = '', timeout
           if (!groups.has(key)) groups.set(key, []);
           groups.get(key).push(j);
         }
+        const chunks = [];
         for (const group of groups.values()) {
+          for (let offset = 0; offset < group.length; offset += 50) chunks.push(group.slice(offset, offset + 50));
+        }
+        await Promise.all(chunks.map(async group => {
           const first = group[0];
           const baseUrl = normalizeApimartBase(first.base);
           const ids = [...new Set(group.map(j => j.taskId))];
           try {
             const batchUrl = makeApimartUrl(baseUrl, '/v1/tasks/batch');
-            const resp = await postJson(batchUrl, first.apiKey, { task_ids: ids }, first.proxyUrl);
+            const resp = await apimartQuerySlots.run(() => postJson(batchUrl, first.apiKey, { task_ids: ids }, first.proxyUrl));
             assertApimartCode200(resp, 'APIMart 批量查询');
-            for (const j of group) {
+            await Promise.all(group.map(async j => {
               const item = normalizeSingleTaskFromBatch(resp, j.taskId);
               const st = pickTaskStatus(item);
               if (shouldForceSingleTaskCheck(j.taskId, item, st)) {
                 try {
                   const meta = taskMetaFor(j.taskId);
                   meta.lastSingleAt = Date.now();
-                  const single = await queryApimartTaskSingle(baseUrl, j.apiKey, j.taskId, j.proxyUrl);
+                  const single = await apimartQuerySlots.run(() => queryApimartTaskSingle(baseUrl, j.apiKey, j.taskId, j.proxyUrl));
                   if (hasTaskResultPayload(single) || !isPendingTaskStatus(pickTaskStatus(single))) {
                     if (hasTaskResultPayload(single) || isFinishedTaskStatus(pickTaskStatus(single))) apimartBatchState.taskMeta.delete(j.taskId);
                     j.resolve(single);
                   } else {
-                    j.resolve(item);
+                    j.resolve(item || single);
                   }
-                } catch (_) { j.resolve(item); }
+                } catch (error) {
+                  if (item) j.resolve(item);
+                  else j.reject(error);
+                }
               } else {
                 if (hasTaskResultPayload(item) || isFinishedTaskStatus(st)) apimartBatchState.taskMeta.delete(j.taskId);
                 j.resolve(item);
               }
-            }
+            }));
           } catch (batchErr) {
-            for (const j of group) {
+            await Promise.all(group.map(async j => {
               try {
-                const single = await queryApimartTaskSingle(baseUrl, j.apiKey, j.taskId, j.proxyUrl);
+                const single = await apimartQuerySlots.run(() => queryApimartTaskSingle(baseUrl, j.apiKey, j.taskId, j.proxyUrl));
                 j.resolve(single);
               } catch (singleErr) {
                 j.reject(new Error(`批量查询失败：${batchErr.message || batchErr}；单任务兜底也失败：${singleErr.message || singleErr}`));
               }
-            }
+            }));
           }
-        }
+        }));
       }, 180);
     }
   });
 }
 
 async function generateOne({ cfg, prompt, mainImagePath, refImages = [], outputPath, remoteTaskId = '', onSubmitted = null, onProgress = null }) {
+  const checkActive = () => {
+    if (typeof cfg.shouldContinue === 'function' && !cfg.shouldContinue()) throw new Error('任务已停止');
+  };
+  checkActive();
   const proxyUrl = getProxyUrl(cfg.apimartProxyUrl || cfg.proxyUrl || cfg.apimart_proxy_url || '');
   const rawBase = cleanBase('https://api.apimart.ai');
   const apimartMode = isApimartBase(rawBase);
@@ -1201,7 +1214,7 @@ async function generateOne({ cfg, prompt, mainImagePath, refImages = [], outputP
 
   const model = cfg.model || 'gemini-3.1-flash-image-preview';
   const rule = getApimartImageRule(model);
-  if (apimartMode && allImagePaths.length) {
+  if (apimartMode && !remoteTaskId && allImagePaths.length) {
     let maxImages = Number(rule.maxImageUrls ?? 16);
     if (Number.isFinite(Number(rule.maxReferencesAndOutputs))) {
       const requestedN = clampInt(cfg.imageN || cfg.image_n || cfg.n || cfg.count || 1, rule.nMin || 1, rule.nMax || 1, rule.defaultN || 1);
@@ -1211,7 +1224,9 @@ async function generateOne({ cfg, prompt, mainImagePath, refImages = [], outputP
     if (maxImages <= 0) throw new Error(`${model} 当前输出数量已占满参考图名额，请减少 n 后再上传参考图`);
     for (const [index, p] of allImagePaths.slice(0, maxImages).entries()) {
       try {
-        imageUrls.push(await uploadImageToApimart(base, cfg.apiKey, p, proxyUrl));
+        checkActive();
+        const upload = () => uploadImageToApimart(base, cfg.apiKey, p, proxyUrl);
+        imageUrls.push(await (typeof cfg.uploadImageCache === 'function' ? cfg.uploadImageCache(p, upload) : upload()));
       } catch (error) {
         const label = index === 0 && mainImagePath ? '主图' : `参考图 ${mainImagePath ? index : index + 1}`;
         throw new Error(`${label}（${path.basename(p)}）上传失败：${error.message || error}`);
@@ -1268,6 +1283,7 @@ async function generateOne({ cfg, prompt, mainImagePath, refImages = [], outputP
   let taskId = String(remoteTaskId || '');
 
   if (!taskId) {
+    checkActive();
     const generateUrl = apimartMode ? makeApimartUrl(base, (getApimartImageRule(model).endpoint || '/v1/images/generations')) : urlJoin(base, '/v1/api/generate');
     if (typeof cfg.onSubmitLog === 'function') {
       try { cfg.onSubmitLog({ url: generateUrl, payload: compactPayloadForLog(payload) }); } catch {}
@@ -1287,18 +1303,21 @@ async function generateOne({ cfg, prompt, mainImagePath, refImages = [], outputP
     if (apimartMode && !taskId && !imageUrl && !b64) {
       throw new Error(`APIMart 图像接口没有返回 task_id。请检查 API Key、账户余额、模型名、请求格式和网络/代理。实际响应：${JSON.stringify(submit).slice(0,1000)}`);
     }
+    if (typeof cfg.onSubmissionAccepted === 'function') cfg.onSubmissionAccepted();
   }
 
   if (!imageUrl && !b64 && taskId) {
     const resultUrl = apimartMode ? makeApimartUrl(base, `/v1/tasks/${encodeURIComponent(taskId)}`) : urlJoin(base, `/v1/api/result?id=${encodeURIComponent(taskId)}`);
     let firstPoll = true;
     while (Date.now() < deadlineAt) {
+      checkActive();
       const firstPollMs = Math.max(2500, Number(cfg.apimartFirstPollMs || 3000));
       const waitTarget = apimartMode && firstPoll ? Math.max(firstPollMs, pollMs) : pollMs;
       firstPoll = false;
       const waitMs = Math.min(waitTarget, Math.max(0, deadlineAt - Date.now()));
       if (waitMs > 0) await new Promise(r => setTimeout(r, waitMs));
       if (Date.now() >= deadlineAt) break;
+      checkActive();
       let status;
       try {
         status = apimartMode
@@ -1358,27 +1377,32 @@ async function generateOne({ cfg, prompt, mainImagePath, refImages = [], outputP
     }
   }
 
-  if (imageUrl) {
-    imageUrlsResult = normalizeResultImageUrls(imageUrlsResult.length ? imageUrlsResult : [imageUrl], expectedCount);
-    imageUrl = imageUrlsResult[0] || imageUrl;
-    const downloaded = [];
-    const pathObj = require('path');
-    const ext = pathObj.extname(outputPath) || '.png';
-    const baseNoExt = outputPath.slice(0, outputPath.length - ext.length);
-    for (let i = 0; i < imageUrlsResult.length; i++) {
-      const target = i === 0 ? outputPath : `${baseNoExt}_${String(i+1).padStart(2,'0')}${ext}`;
-      await downloadResultToFile(imageUrlsResult[i], target, proxyUrl);
-      downloaded.push({ outputPath: target, imageUrl: imageUrlsResult[i] });
+  checkActive();
+  const saveResult = async () => {
+    checkActive();
+    if (imageUrl) {
+      imageUrlsResult = normalizeResultImageUrls(imageUrlsResult.length ? imageUrlsResult : [imageUrl], expectedCount);
+      imageUrl = imageUrlsResult[0] || imageUrl;
+      const downloaded = [];
+      const ext = path.extname(outputPath) || '.png';
+      const baseNoExt = outputPath.slice(0, outputPath.length - ext.length);
+      for (let i = 0; i < imageUrlsResult.length; i++) {
+        checkActive();
+        const target = i === 0 ? outputPath : `${baseNoExt}_${String(i+1).padStart(2,'0')}${ext}`;
+        await downloadResultToFile(imageUrlsResult[i], target, proxyUrl);
+        downloaded.push({ outputPath: target, imageUrl: imageUrlsResult[i] });
+      }
+      return { outputPath, extraImages: downloaded.slice(1), remoteTaskId: taskId || '', imageUrl: imageUrl || '', imageUrls: imageUrlsResult, response: submit };
     }
-    return { outputPath, extraImages: downloaded.slice(1), remoteTaskId: taskId || '', imageUrl: imageUrl || '', imageUrls: imageUrlsResult, response: submit };
-  }
-  if (b64) {
-    const cleaned = String(b64).replace(/^data:image\/\w+;base64,/, '');
-    require('fs').writeFileSync(outputPath, Buffer.from(cleaned, 'base64'));
-    return { outputPath, remoteTaskId: taskId || '', imageUrl: imageUrl || '', response: submit };
-  }
-  if (Date.now() >= deadlineAt) throw new Error(`单任务累计超时：${Math.round(Number(cfg.timeoutMs || 0) / 1000)} 秒`);
-  throw new Error('API 未返回图片 URL / base64 / task_id');
+    if (b64) {
+      const cleaned = String(b64).replace(/^data:image\/\w+;base64,/, '');
+      await fs.promises.writeFile(outputPath, Buffer.from(cleaned, 'base64'));
+      return { outputPath, remoteTaskId: taskId || '', imageUrl: imageUrl || '', response: submit };
+    }
+    if (Date.now() >= deadlineAt) throw new Error(`单任务累计超时：${Math.round(Number(cfg.timeoutMs || 0) / 1000)} 秒`);
+    throw new Error('API 未返回图片 URL / base64 / task_id');
+  };
+  return typeof cfg.runResultDownload === 'function' ? cfg.runResultDownload(saveResult) : saveResult();
 }
 
 function resolveFlow2ApiImageModel(model='', size='auto', clarity='1K') {

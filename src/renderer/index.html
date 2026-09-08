@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>TENYING_AI 1.0</title>
-  <link rel="stylesheet" href="/static/style.css?v=1.0.93" />
+  <link rel="stylesheet" href="/static/style.css?v=1.0.94" />
 </head>
 <body>
   <div class="app-shell">
@@ -235,7 +235,7 @@
               <div><label>输出压缩 0-100</label><input id="outputCompression" type="number" min="0" max="100" step="1" value="90" /><div class="field-help">仅 jpeg / webp 有效，png 会自动不传。</div></div>
             </div>
             <div class="row">
-              <div><label>并发数量</label><input id="concurrency" type="number" min="1" value="30" /><div class="field-help">同时跑几个任务，不是总张数。例：总任务100、并发20，就是每次最多20个任务同时提交/生成。</div></div>
+              <div><label>提交并发</label><input id="concurrency" type="number" min="1" step="1" value="30" title="同时向 API 提交的请求数；收到任务 ID 后立即提交下一项，远端生成与下载独立进行" /><div class="field-help">接口接收后立即补位，远端生成任务不占提交名额。</div></div>
               <div><label>每个任务重复生成次数</label><input id="repeatCount" type="number" min="1" value="1" /><div class="field-help">同一张主图 + 同一条提示词重复生成几张，用来一次抽多张效果。</div></div>
             </div>
             <div class="row">
@@ -1016,6 +1016,6 @@
       </div>
     </div>
   </div>
-  <script src="/static/app.js?v=1.0.93"></script>
+  <script src="/static/app.js?v=1.0.94"></script>
 </body>
 </html>

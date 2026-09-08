@@ -3,8 +3,9 @@ const path = require('path');
 const { EventEmitter } = require('events');
 const { getDB, nowISO, uuid, addLog } = require('./db');
 const { generateOne } = require('./apiClient');
-const { safeName, createThumb, ensureDir } = require('./cache');
+const { safeName, createThumbAsync } = require('./cache');
 const { isTerminalGenerationError } = require('./taskErrors');
+const { createLimiter, createUploadCache } = require('./asyncWork');
 
 function parseTimeMs(v) {
   if (!v) return Date.now();
@@ -12,7 +13,6 @@ function parseTimeMs(v) {
   const d = new Date(str.includes('T') ? str : str.replace(' ', 'T') + 'Z');
   return Number.isNaN(d.getTime()) ? Date.now() : d.getTime();
 }
-function elapsedMsSince(v) { return Math.max(0, Date.now() - parseTimeMs(v)); }
 function taskTimeoutMs(cfg) { return Math.max(1000, Number(cfg.timeoutMs || 0) || 20 * 60 * 1000); }
 function isFlowRiskCooldownError(err) {
   const text = String(err && (err.message || err) || '').toLowerCase();
@@ -58,6 +58,8 @@ class TaskQueue extends EventEmitter {
     this.remoteDownloadRecoveryDueAt = 0;
     this.remoteDownloadRecoveryInFlight = false;
     this.remoteDownloadRecoveryStopped = true;
+    this.resultDownloads = createLimiter(4);
+    this.resultPreviews = createLimiter(2);
   }
 
   async waitForFlow2ApiBackoff(batchId, taskId, token) {
@@ -171,6 +173,7 @@ class TaskQueue extends EventEmitter {
             progress_text:'远端已生成，正在恢复成品下载',
             finished_at:'',
             recovery_started_at:now,
+            execution_started_at_ms:Date.now(),
             updated_at:now,
             remote_download_retry_count:recoveryAttempt,
             remote_download_retry_at:Date.now() + remoteDownloadBackoffMs(recoveryAttempt)
@@ -238,6 +241,7 @@ class TaskQueue extends EventEmitter {
         task.updated_at = now;
         // 离线时间不计入单任务运行超时，但保留原始创建时间用于历史展示。
         task.recovery_started_at = now;
+        task.execution_started_at_ms = hasRemote ? Date.now() : 0;
         if (hasRemote) resumedRemote += 1;
         else resetForSubmit += 1;
         changed = true;
@@ -362,19 +366,27 @@ class TaskQueue extends EventEmitter {
         return;
       }
       const cfg = JSON.parse(batch.config_json || '{}');
-      const concurrency = Math.max(1, Number(batch.concurrency || cfg.concurrency || 1));
+      const requestedConcurrency = Number(batch.concurrency || cfg.concurrency || 1);
+      const concurrency = Number.isFinite(requestedConcurrency) ? Math.max(1, Math.floor(requestedConcurrency)) : 1;
       const batchTasks = (db._store.tasks || [])
         .filter(task => task.batch_id === batchId)
         .sort((a, b) => Number(a.task_index) - Number(b.task_index));
       const recoveryOnly = batchTasks.some(task => task.status === '下载中' && String(task.remote_task_id || '').trim())
         && !batchTasks.some(task => task.status === '等待中' || task.status === '生成中');
       const workerCount = recoveryOnly ? Math.min(2, concurrency) : concurrency;
+      const runtime = {
+        submitSlots: createLimiter(workerCount),
+        uploadImageCache: createUploadCache(),
+        recoveryOnly
+      };
       this.batchTaskCache.set(batchId, batchTasks);
+      batch.running_count = 0;
       db.prepare('UPDATE batches SET status=?, updated_at=? WHERE id=?').run(recoveryOnly ? '下载中' : '生成中', nowISO(), batchId);
       this.emit('changed');
-      addLog(recoveryOnly ? `批次恢复成品下载，并发：${workerCount}` : `批次开始生成，并发：${workerCount}`, { ownerId: batch.owner_id, batchId });
+      addLog(recoveryOnly ? `批次恢复成品下载，并发：${workerCount}` : `批次开始生成，提交并发：${workerCount}，接口接收后立即补位，结果独立查询`, { ownerId: batch.owner_id, batchId });
 
-      const workers = Array.from({ length: workerCount }, () => this.worker(batchId, token));
+      const eligibleCount = batchTasks.filter(task => task.status === '等待中' || (['生成中','下载中'].includes(task.status) && task.remote_task_id)).length;
+      const workers = Array.from({ length: recoveryOnly ? Math.min(workerCount, eligibleCount) : eligibleCount }, () => this.worker(batchId, token, runtime));
       await Promise.all(workers);
       if (token !== this.resetToken) return;
       const finalBatch = db.prepare('SELECT * FROM batches WHERE id=?').get(batchId);
@@ -401,7 +413,7 @@ class TaskQueue extends EventEmitter {
     }
   }
 
-  async worker(batchId, token = this.resetToken) {
+  async worker(batchId, token = this.resetToken, runtime) {
     const db = getDB();
     while (!this.stopFlags.has(batchId) && token === this.resetToken) {
       const candidates = this.batchTaskCache.get(batchId) || [];
@@ -410,15 +422,25 @@ class TaskQueue extends EventEmitter {
       );
       if (!task) break;
       this.claimedTasks.add(task.id);
+      let releaseSubmit = () => {};
       try {
+        if (!task.remote_task_id || runtime.recoveryOnly) releaseSubmit = await runtime.submitSlots.acquire();
+        if (token !== this.resetToken || this.stopFlags.has(batchId)) return;
         const batch = db.prepare('SELECT * FROM batches WHERE id=?').get(batchId);
         const cfg = JSON.parse(batch.config_json || '{}');
         const limitMs = taskTimeoutMs(cfg);
-        const elapsedBefore = elapsedMsSince(task.recovery_started_at || task.created_at);
+        // Queue wait is not generation time. Persist the clock across retries.
+        if (!Number(task.execution_started_at_ms)) task.execution_started_at_ms = Date.now();
+        const taskElapsedMs = () => Math.max(0, Date.now() - Number(task.execution_started_at_ms));
+        const elapsedBefore = taskElapsedMs();
         if (elapsedBefore >= limitMs) {
           db.transaction(() => {
-            db.prepare('UPDATE tasks SET status=?, error_message=?, updated_at=?, finished_at=? WHERE id=?').run('失败', `单任务累计超时：${Math.round(elapsedBefore/1000)} 秒`, nowISO(), nowISO(), task.id);
-            db.prepare('UPDATE batches SET fail_count=fail_count+1, updated_at=? WHERE id=?').run(nowISO(), batchId);
+            Object.assign(task, {
+              status:'失败', progress:100, progress_text:'单任务累计超时',
+              error_message:`单任务累计超时：${Math.round(elapsedBefore/1000)} 秒`, updated_at:nowISO(), finished_at:nowISO()
+            });
+            batch.fail_count = Number(batch.fail_count || 0) + 1;
+            batch.updated_at = nowISO();
           })();
           addLog(`任务 ${task.task_index} 累计超时`, { ownerId: task.owner_id, batchId, level: 'error' });
           this.emit('changed');
@@ -430,27 +452,33 @@ class TaskQueue extends EventEmitter {
           if (!canContinue) return;
         }
         const recoveringDownload = task.status === '下载中' && !!String(task.remote_task_id || '').trim();
-        const resumingRemote = ['生成中','下载中'].includes(task.status) && !!String(task.remote_task_id || '').trim();
+        const resumingRemote = !!String(task.remote_task_id || '').trim();
         const attempt = Number(task.attempt || 0) + (resumingRemote ? 0 : 1);
         const nextStatus = recoveringDownload ? '下载中' : (task.remote_task_id ? '生成中' : '提交生成中');
         const platformName = String(cfg.imageApiPlatform || '').toLowerCase() === 'flow2api' ? '本地 Flow2API' : 'APIMart';
         const nextProgress = recoveringDownload ? 99 : (task.remote_task_id ? Math.max(3, Number(task.progress || 0)) : 1);
         const nextProgressText = recoveringDownload ? '远端已生成，正在恢复成品下载' : (task.remote_task_id ? '批量查询远端结果中' : `正在提交到 ${platformName}`);
         db.prepare('UPDATE tasks SET status=?, attempt=?, progress=?, progress_text=?, updated_at=? WHERE id=?').run(nextStatus, attempt, nextProgress, nextProgressText, nowISO(), task.id);
-        if (!resumingRemote) db.prepare('UPDATE batches SET running_count=running_count+1, updated_at=? WHERE id=?').run(nowISO(), batchId);
+        db.prepare('UPDATE batches SET running_count=running_count+1, updated_at=? WHERE id=?').run(nowISO(), batchId);
         this.emit('changed');
         try {
         const ext = '.png';
         const fileName = String(task.task_index).padStart(5, '0') + ext;
         const outPath = path.join(batch.output_dir, fileName);
         const refImages = JSON.parse(task.ref_images_json || '[]');
-        const remainingMs = Math.max(1000, limitMs - elapsedMsSince(task.recovery_started_at || task.created_at));
+        const remainingMs = Math.max(1000, limitMs - taskElapsedMs());
+        const submitStartedAt = Date.now();
+        if (!resumingRemote) task.submit_started_at = nowISO();
         addLog(task.remote_task_id ? `任务 ${task.task_index} 并发查询结果ID：${task.remote_task_id}` : `任务 ${task.task_index} 提交 API`, { ownerId: task.owner_id, batchId });
         const result = await generateOne({
           cfg: {
             ...cfg,
             timeoutMs: remainingMs,
             deadlineAt: Date.now() + remainingMs,
+            uploadImageCache: runtime.uploadImageCache,
+            runResultDownload: fn => this.resultDownloads.run(fn),
+            shouldContinue: () => token === this.resetToken && !this.stopFlags.has(batchId),
+            onSubmissionAccepted: () => { if (!runtime.recoveryOnly) releaseSubmit(); },
             onSubmitLog: (info = {}) => {
               if (info.url) addLog(`${platformName} 图片实际提交：POST ${info.url}`, { ownerId: task.owner_id, batchId });
               if (info.payload) addLog(`${platformName} 图片提交参数：${info.payload}`, { ownerId: task.owner_id, batchId });
@@ -464,12 +492,17 @@ class TaskQueue extends EventEmitter {
           outputPath: outPath,
           remoteTaskId: task.remote_task_id || '',
           onSubmitted: (remoteId) => {
+            if (token !== this.resetToken) return;
             db.prepare('UPDATE tasks SET status=?, remote_task_id=?, progress=?, progress_text=?, updated_at=? WHERE id=?').run('生成中', remoteId || '', 5, '已提交，等待批量查询结果', nowISO(), task.id);
+            task.remote_submitted_at = nowISO();
+            task.submit_elapsed_ms = Date.now() - submitStartedAt;
             db._save();
-            addLog(`任务 ${task.task_index} 已提交，开始并发查询ID：${remoteId}`, { ownerId: task.owner_id, batchId });
+            if (!runtime.recoveryOnly) releaseSubmit();
+            addLog(`任务 ${task.task_index} 已提交，提交耗时 ${(task.submit_elapsed_ms / 1000).toFixed(2)} 秒，开始并发查询ID：${remoteId}`, { ownerId: task.owner_id, batchId });
             this.emit('changed');
           },
           onProgress: (info = {}) => {
+            if (token !== this.resetToken || this.stopFlags.has(batchId)) return;
             const mapped = friendlyImageProgress(info);
             const p = recoveringDownload ? Math.max(99, mapped.progress) : mapped.progress;
             const txt = recoveringDownload ? '远端已生成，正在恢复成品下载' : mapped.text;
@@ -484,23 +517,27 @@ class TaskQueue extends EventEmitter {
         });
         if (token !== this.resetToken || this.stopFlags.has(batchId)) return;
         const thumbPath = path.join(batch.output_dir, '_thumbs', String(task.task_index).padStart(5, '0') + '.png');
-        ensureDir(path.dirname(thumbPath));
-        createThumb(outPath, thumbPath, Number(cfg.thumbSize || 300));
-        const stat = fs.existsSync(outPath) ? fs.statSync(outPath) : { size: 0 };
+        await this.resultPreviews.run(() => createThumbAsync(outPath, thumbPath, Number(cfg.thumbSize || 300)));
+        const stat = await fs.promises.stat(outPath);
         const extraImages = Array.isArray(result.extraImages) ? result.extraImages : [];
+        const extraRecords = [];
+        for (let i = 0; i < extraImages.length; i++) {
+          const extra = extraImages[i] || {};
+          if (!extra.outputPath) continue;
+          const extraStat = await fs.promises.stat(extra.outputPath).catch(() => null);
+          if (!extraStat) continue;
+          const extraThumb = path.join(batch.output_dir, '_thumbs', String(task.task_index).padStart(5, '0') + '_' + String(i+2).padStart(2, '0') + '.png');
+          await this.resultPreviews.run(() => createThumbAsync(extra.outputPath, extraThumb, Number(cfg.thumbSize || 300)));
+          extraRecords.push({ ...extra, thumbPath:extraThumb, size:extraStat.size });
+        }
+        if (token !== this.resetToken || this.stopFlags.has(batchId)) return;
         db.transaction(() => {
           db.prepare('UPDATE tasks SET progress=?, progress_text=?, updated_at=? WHERE id=?').run(100, '已完成', nowISO(), task.id);
           db.prepare('UPDATE tasks SET status=?, remote_task_id=?, result_path=?, thumb_path=?, updated_at=?, finished_at=? WHERE id=?').run('已完成', result.remoteTaskId || '', outPath, thumbPath, nowISO(), nowISO(), task.id);
           db.prepare('INSERT INTO images(id,batch_id,task_id,owner_id,file_path,thumb_path,size_bytes,created_at,remote_url) VALUES(?,?,?,?,?,?,?,?,?)').run(uuid('img_'), batchId, task.id, task.owner_id, outPath, thumbPath, stat.size || 0, nowISO(), result.imageUrl || '');
           this.progressUpdateCache.delete(task.id);
-          for (let i = 0; i < extraImages.length; i++) {
-            const extra = extraImages[i] || {};
-            if (!extra.outputPath || !fs.existsSync(extra.outputPath)) continue;
-            const extraThumb = path.join(batch.output_dir, '_thumbs', String(task.task_index).padStart(5, '0') + '_' + String(i+2).padStart(2, '0') + '.png');
-            ensureDir(path.dirname(extraThumb));
-            createThumb(extra.outputPath, extraThumb, Number(cfg.thumbSize || 300));
-            const extraStat = fs.statSync(extra.outputPath);
-            db.prepare('INSERT INTO images(id,batch_id,task_id,owner_id,file_path,thumb_path,size_bytes,created_at,remote_url) VALUES(?,?,?,?,?,?,?,?,?)').run(uuid('img_'), batchId, task.id, task.owner_id, extra.outputPath, extraThumb, extraStat.size || 0, nowISO(), extra.imageUrl || '');
+          for (const extra of extraRecords) {
+            db.prepare('INSERT INTO images(id,batch_id,task_id,owner_id,file_path,thumb_path,size_bytes,created_at,remote_url) VALUES(?,?,?,?,?,?,?,?,?)').run(uuid('img_'), batchId, task.id, task.owner_id, extra.outputPath, extra.thumbPath, extra.size || 0, nowISO(), extra.imageUrl || '');
           }
           db.prepare('UPDATE batches SET success_count=success_count+1, running_count=MAX(running_count-1,0), updated_at=? WHERE id=?').run(nowISO(), batchId);
         })();
@@ -513,7 +550,7 @@ class TaskQueue extends EventEmitter {
         } catch (err) {
         if (token !== this.resetToken || this.stopFlags.has(batchId)) return;
         const maxRetry = Number(batch.retry_times || cfg.retryTimes || 0);
-        const timedOut = elapsedMsSince(task.recovery_started_at || task.created_at) >= taskTimeoutMs(cfg);
+        const timedOut = taskElapsedMs() >= taskTimeoutMs(cfg);
         const flowRiskCooldown = flow2apiMode && isFlowRiskCooldownError(err);
         const terminalError = isTerminalGenerationError(err);
         const remoteDownloadFailure = isRemoteDownloadFailure(err);
@@ -534,7 +571,7 @@ class TaskQueue extends EventEmitter {
           : (err.message || String(err));
         const failedStatus = remoteDownloadFailure ? '下载待恢复' : (shouldRetry ? '等待中' : '失败');
         db.transaction(() => {
-          db.prepare('UPDATE tasks SET status=?, attempt=?, error_message=?, updated_at=? WHERE id=?').run(failedStatus, nextAttempt, timedOut ? `单任务累计超时：${Math.round(elapsedMsSince(task.recovery_started_at || task.created_at)/1000)} 秒` : retryError, nowISO(), task.id);
+          db.prepare('UPDATE tasks SET status=?, attempt=?, error_message=?, updated_at=? WHERE id=?').run(failedStatus, nextAttempt, timedOut ? `单任务累计超时：${Math.round(taskElapsedMs()/1000)} 秒` : retryError, nowISO(), task.id);
           db.prepare('UPDATE batches SET fail_count=fail_count+?, running_count=MAX(running_count-1,0), updated_at=? WHERE id=?').run(shouldRetry || remoteDownloadFailure ? 0 : 1, nowISO(), batchId);
         })();
         if (remoteDownloadFailure) {
@@ -551,6 +588,7 @@ class TaskQueue extends EventEmitter {
       }
       this.emit('changed');
       } finally {
+        releaseSubmit();
         this.claimedTasks.delete(task.id);
       }
     }

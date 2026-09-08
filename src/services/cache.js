@@ -42,6 +42,18 @@ function createThumb(srcPath, thumbPath, size = 300) {
 
 let chromiumImageConversionQueue = Promise.resolve();
 
+async function createThumbAsync(srcPath, thumbPath, size = 300) {
+  try {
+    const input = await fs.promises.readFile(srcPath);
+    const img = nativeImage.createFromBuffer(input);
+    if (img.isEmpty()) return null;
+    const thumb = img.resize({ width:size, height:size, quality:'good' });
+    await fs.promises.mkdir(path.dirname(thumbPath), { recursive:true });
+    await fs.promises.writeFile(thumbPath, thumb.toPNG());
+    return thumbPath;
+  } catch { return null; }
+}
+
 async function convertImageWithChromium(srcPath, tempPath) {
   if (!app?.isReady?.() || typeof BrowserWindow !== 'function') throw new Error('Chromium 图片转换器尚未就绪');
   const run = async() => {
@@ -133,4 +145,4 @@ async function downloadToFile(url, outputPath) {
   }
 }
 
-module.exports = { safeName, ensureDir, makeDirs, createThumb, convertImageToUploadPng, removeTemporaryUploadFile, fileToDataUrl, downloadToFile };
+module.exports = { safeName, ensureDir, makeDirs, createThumb, createThumbAsync, convertImageToUploadPng, removeTemporaryUploadFile, fileToDataUrl, downloadToFile };
