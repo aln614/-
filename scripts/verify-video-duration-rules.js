@@ -45,7 +45,7 @@ for (const group of pickerBlock.matchAll(/\['[^']+',\s*\[([^\]]+)\]\]/g)) {
   for (const model of group[1].matchAll(/'([^']+)'/g)) picker.add(model[1].toLowerCase());
 }
 
-assert(backend.size === 51, `Expected 51 official backend models, found ${backend.size}`);
+assert(backend.size === 52, `Expected 52 official backend models, found ${backend.size}`);
 assert(picker.size === backend.size, `Model picker/backend count mismatch: picker=${picker.size}, backend=${backend.size}`);
 for (const model of picker) assert(backend.has(model), `Model picker has no backend rule: ${model}`);
 for (const model of backend.keys()) assert(picker.has(model), `Backend model is missing from picker: ${model}`);
@@ -102,6 +102,8 @@ assert(/model:'happyhorse-1\.0'[^\n]*audioSettingParam:'audio_setting'[^\n]*prom
 assert(/keep_original_sound:'no'/.test(main), 'Kling Omni and Video O1 must use the documented default of not keeping reference-video audio');
 assert(/model:'wan2\.5-preview'[^\n]*durations:\[5,10\]/.test(main), 'Wan2.5 must support 5 or 10 seconds');
 assert(/model:'wan2\.6'[^\n]*durations:\[5,10,15\]/.test(main), 'Wan2.6 must support 5, 10, or 15 seconds');
+assert(/model:'wan2\.6-i2v'[^\n]*durationRange:\[2,15\][^\n]*supportsImageUrls:true[^\n]*minImageCount:1[^\n]*maxImageCount:1/.test(main), 'Wan2.6 I2V must require exactly one image_urls entry and support 2-15 seconds');
+assert(/model:'wan2\.6-i2v-flash'[^\n]*durationRange:\[2,15\][^\n]*supportsImageUrls:true[^\n]*minImageCount:1[^\n]*maxImageCount:1[^\n]*audioParam:'audio'/.test(main), 'Wan2.6 I2V Flash must submit image_urls and preserve generated audio support');
 assert(/model:'wan3\.0-video'[^\n]*resolutions:\['480P','720P','1080P'\][^\n]*durationRange:\[2,30\][^\n]*supportsAutoDuration:true[^\n]*maxImageCount:10[^\n]*maxVideoCount:5/.test(main), 'Wan3.0 Video must support its documented resolution, duration, image, and video limits');
 assert(/model:'wan3\.0-video'[^\n]*audioReferenceParam:'audio_urls'[^\n]*maxAudioCount:5[^\n]*audioMinDuration:1[^\n]*audioTotalDuration:15[^\n]*supportsDocumentReference:true[^\n]*supportsLinkReference:true/.test(main), 'Wan3.0 Video must support documented audio, document, and web references');
 assert(/model:'wan3\.0-video'[^\n]*referenceVideoDurationRange:\[1,15\][^\n]*referenceVideoTotalDurationMax:15[^\n]*referenceVideoDurationPlusOutputMax:30/.test(main), 'Wan3.0 Video must enforce reference video duration limits');
@@ -124,11 +126,14 @@ assert(/model:'Omni-Flash-Ext'[^\n]*apiModel:'gemini-omni-1\.1-flash-ext'[^\n]*r
 assert(/model:'gemini-omni-flash-preview'[^\n]*supportsDuration:false/.test(main), 'Gemini Omni Flash duration must be model-controlled');
 assert(/model:'gemini-omni-1\.1-flash'[^\n]*resolutions:\['360p','720p','1080p','4k'\][^\n]*maxImageCount:10[^\n]*referenceVideoDurationRange:\[1,10\][^\n]*supportsDuration:false/.test(main), 'Gemini Omni 1.1 Flash must support official multimodal inputs and model-controlled duration');
 assert(/rule\.apiModel \|\| rule\.model \|\| videoModel/.test(main), 'Updated APIMart aliases must submit their documented API model id');
+assert(/model:'doubao-seedance-2\.5'[^\n]*apiModel:'seedance-2\.5'/.test(main), 'Seedance compatibility key must submit the current documented model id');
+assert(/model:'grok-imagine-1\.5-video-apimart'[^\n]*apiModel:'grok-imagine-1\.5-video-ext'/.test(main), 'Grok compatibility key must submit the current documented model id');
 assert(/model:'flux-3-video'[^\n]*resolutions:\['hd','fhd'\][^\n]*durationRange:\[5,20\][^\n]*videoParam:'video_url'/.test(main), 'FLUX 3 Video must use documented HD/FHD, 5-20 second, video-url rules');
 assert(/model:'veo3\.1-fast-official'[^\n]*durations:\[4,6,8\][^\n]*imageParam:'first_frame_image'/.test(main), 'VEO3 official Fast must use its documented frame controls');
 assert(/model:'doubao-seedance-2\.0'[^\n]*aspectParam:'size'/.test(main), 'Seedance 2.0 must submit size instead of aspect_ratio');
 const videoModelPicker = app.slice(app.indexOf('const APIMART_VIDEO_MODEL_GROUPS_UI'), app.indexOf('function apimartVideoModelOptionsHtml'));
-assert(!/(?:doubao-seedance-2\.0-face|doubao-seedance-2\.0-fast-face|['"]wan2\.6-i2v['"])/.test(videoModelPicker), 'Undocumented legacy model variants must not appear in the model picker');
+assert(!/(?:doubao-seedance-2\.0-face|doubao-seedance-2\.0-fast-face)/.test(videoModelPicker), 'Undocumented legacy model variants must not appear in the model picker');
+assert(/['"]wan2\.6-i2v['"]/.test(videoModelPicker), 'Documented Wan2.6 I2V model must appear in the model picker');
 assert(/flux-3-video/.test(videoModelPicker), 'FLUX 3 Video must appear in the video model picker');
 assert(/id="videoDuration"\s+type="range"/.test(html), 'Video duration must use a range input');
 assert(!/<select\s+id="videoDuration"/.test(html), 'Legacy video duration select must not return');

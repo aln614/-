@@ -1570,6 +1570,8 @@ const APIMART_MODEL_OPTIONS = [
   ['gpt-image-1.5-official','GPT-Image-1.5 Official'],
   ['gpt-image-2','GPT-Image-2'],
   ['gpt-image-2-official','GPT-Image-2 Official'],
+  ['gpt-image-2.5-flare','GPT Image 2.5 Flare'],
+  ['gpt-image-2.5-sunburst','GPT Image 2.5 Sunburst'],
   ['seedream-4.0','Seedream-4.0'],
   ['seedream-4.5','Seedream-4.5'],
   ['seedream-5-0-lite','Seedream-5.0 Lite'],
@@ -1894,6 +1896,9 @@ function canonicalApimartImageModel(model){
 function isOfficialImageModel(model){
   return ['gpt-image-2-official','gpt-image-1-official','gpt-image-1.5-official'].includes(imageModelKey(model));
 }
+function isGptImage25Model(model){
+  return ['gpt-image-2.5-flare','gpt-image-2.5-sunburst'].includes(imageModelKey(model));
+}
 function isSeedream5LiteModel(model){
   return ['seedream-5-0-lite','doubao-seedream-5-0-lite','doubao-seedream-5.0-lite','seedream-5.0-lite'].includes(imageModelKey(model));
 }
@@ -2030,7 +2035,16 @@ function applyFluxImageUiGuard(model){
 }
 function isMultiNImageModel(model){
   const m = imageModelKey(model);
-  return isOfficialImageModel(m) || isQwenImage2Model(m) || isQwenImage3Model(m) || isNanoBananaLiteModel(m) || isGrokAspectRatioImageModel(m) || isGrokImagine2ExtModel(m) || isWan27ImageModel(m) || ['gemini-2.5-flash-image-preview','gemini-2.5-flash-image-preview-official','doubao-seedance-4-0','doubao-seedream-4.0','doubao-seedream-4-0','seedream-4.0','seedream-4.5','seedream-5-0-lite','doubao-seedream-5-0-lite','doubao-seedream-5.0-lite','seedream-5.0-lite','grok-imagine-1.5-apimart','grok-imagine-1.5-ext','grok-imagine-1.0','grok-imagine-1.5-edit-apimart','grok-imagine-1.0-edit-apimart','grok-imagine-1.0-edit'].includes(m);
+  return isOfficialImageModel(m) || isGptImage25Model(m) || isQwenImage2Model(m) || isQwenImage3Model(m) || isNanoBananaLiteModel(m) || isGrokAspectRatioImageModel(m) || isGrokImagine2ExtModel(m) || isWan27ImageModel(m) || ['gemini-2.5-flash-image-preview','gemini-2.5-flash-image-preview-official','doubao-seedance-4-0','doubao-seedream-4.0','doubao-seedream-4-0','seedream-4.0','seedream-4.5','seedream-5-0-lite','doubao-seedream-5-0-lite','doubao-seedream-5.0-lite','seedream-5.0-lite','grok-imagine-1.5-apimart','grok-imagine-1.5-ext','grok-imagine-1.0','grok-imagine-1.5-edit-apimart','grok-imagine-1.0-edit-apimart','grok-imagine-1.0-edit'].includes(m);
+}
+function applyGptImage25UiGuard(model){
+  if(currentImagePlatform() !== 'apimart' || !isGptImage25Model(model)) return;
+  const allowedSizes = new Set(['auto','1:1','3:2','2:3','4:3','3:4','5:4','4:5','16:9','9:16','2:1','1:2','21:9','9:21','3:1','1:3']);
+  const size = $('#size');
+  if(size && size.value !== 'custom' && !allowedSizes.has(getSizeValue())) applySizeToUI('auto');
+  if($('#clarity') && !['1K','2K','4K'].includes(String($('#clarity').value || '').toUpperCase())) $('#clarity').value = '1K';
+  if($('#claritySettings')) $('#claritySettings').value = $('#clarity')?.value || '1K';
+  clampImageOutputCount(4);
 }
 function applyQwenImage3UiGuard(model){
   if(currentImagePlatform() !== 'apimart' || !isQwenImage3Model(model)) return;
@@ -2060,15 +2074,26 @@ function updateOfficialImageOptions(){
   const platform = currentImagePlatform();
   const model = $('#model')?.value || $('#modelPreset')?.value || '';
   applyFluxImageUiGuard(model);
+  applyGptImage25UiGuard(model);
   applyQwenImage3UiGuard(model);
   applySeedream5ProUiGuard(model);
   applyDocumentedImageUiGuard(model);
   const grsai = platform === 'grsai';
   const official = !grsai && isOfficialImageModel(model);
+  const gptImage25 = !grsai && isGptImage25Model(model);
   const flux = !grsai && isFluxImageModel(model);
-  const showOutput = !grsai && (official || isSeedream5OutputFormatModel(model) || flux);
+  const showOutput = !grsai && (official || gptImage25 || isSeedream5OutputFormatModel(model) || flux);
   const showN = !grsai && isMultiNImageModel(model);
-  const showQuality = !grsai && official;
+  const showQuality = !grsai && (official || gptImage25);
+  const quality = $('#imageQuality');
+  if(quality){
+    [...quality.options].forEach(option=>{
+      if(!['xhigh','max'].includes(option.value)) return;
+      option.hidden = !gptImage25;
+      option.disabled = !gptImage25;
+    });
+    if(!gptImage25 && ['xhigh','max'].includes(quality.value)) quality.value = 'auto';
+  }
   const row1 = $('#officialImageOptions'); if(row1) row1.style.display = showOutput ? '' : 'none';
   const row2 = $('#officialImageOptions2'); if(row2) row2.style.display = showN ? '' : 'none';
   const row3 = $('#officialImageOptions3'); if(row3) row3.style.display = showQuality ? '' : 'none';
@@ -7798,13 +7823,13 @@ registerApimartVideoUiRules([
 registerApimartVideoUiRules([
   { model:'gemini-omni-flash-preview', label:'Gemini Omni Flash Preview', resolutions:['720p'], defaultResolution:'720p', aspects:['16:9','9:16'], defaultAspect:'16:9', supportsDuration:false, supportsVideo:true, maxImageCount:16, promptOptionalWithMedia:true, note:'720p / 24fps; duration is selected automatically by the model (3-10 seconds).' },
   { model:'omni-flash-ext', label:'Gemini Omni 1.1 Flash Ext', resolutions:['360p','720p','1080p','4k'], defaultResolution:'720p', aspects:['16:9','9:16'], defaultAspect:'16:9', durations:[4,6,8,10], defaultDuration:6, supportsVideo:true },
-  { model:'doubao-seedance-1-0-pro-fast', label:'Doubao Seedance 1.0 Pro Fast', resolutions:['480p','720p','1080p'], defaultResolution:'1080p', aspects:['16:9','9:16','1:1','4:3','3:4','21:9'], defaultAspect:'16:9', durationMin:2, durationMax:12, defaultDuration:5, maxImageCount:1 },
-  { model:'doubao-seedance-1-0-pro-quality', label:'Doubao Seedance 1.0 Pro Quality', resolutions:['480p','720p','1080p'], defaultResolution:'1080p', aspects:['16:9','9:16','1:1','4:3','3:4','21:9'], defaultAspect:'16:9', durationMin:2, durationMax:12, defaultDuration:5, maxImageCount:2 },
-  { model:'doubao-seedance-1-5-pro', label:'Doubao Seedance 1.5 Pro', resolutions:['480p','720p','1080p'], defaultResolution:'720p', aspects:['16:9','9:16','1:1','4:3','3:4','21:9'], durationMin:4, durationMax:12, defaultDuration:5, maxImageCount:2 },
-  { model:'doubao-seedance-2.0', label:'Doubao Seedance 2.0', resolutions:['480p','720p','1080p','4k'], aspects:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'], durationMin:4, durationMax:15, defaultDuration:5, supportsVideo:true, durationWithVideo:true, maxImageCount:9, maxVideoCount:3, supportsAudioReference:true, maxAudioCount:3, audioReferenceParam:'audio_urls', audioRequiresReference:true, audioMaxDuration:15, audioTotalDuration:15, promptOptionalWithMedia:true },
-  { model:'doubao-seedance-2.0-fast', label:'Doubao Seedance 2.0 Fast', resolutions:['480p','720p'], aspects:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'], durationMin:4, durationMax:15, defaultDuration:5, supportsVideo:true, durationWithVideo:true, maxImageCount:9, maxVideoCount:3, supportsAudioReference:true, maxAudioCount:3, audioReferenceParam:'audio_urls', audioRequiresReference:true, audioMaxDuration:15, audioTotalDuration:15, promptOptionalWithMedia:true },
-  { model:'doubao-seedance-2.0-mini', label:'Doubao Seedance 2.0 Mini', resolutions:['480p','720p'], aspects:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'], durationMin:4, durationMax:15, defaultDuration:5, supportsVideo:true, durationWithVideo:true, maxImageCount:9, maxVideoCount:3, supportsAudioReference:true, maxAudioCount:3, audioRequiresReference:true, audioMaxDuration:15, audioTotalDuration:15, promptOptionalWithMedia:true },
-  { model:'doubao-seedance-2.5', label:'Doubao Seedance 2.5', resolutions:['480p','720p'], defaultResolution:'720p', aspects:['16:9','4:3','1:1','3:4','9:16','21:9','adaptive'], defaultAspect:'adaptive', durationMin:4, durationMax:30, defaultDuration:5, supportsAutoDuration:true, supportsVideo:true, durationWithVideo:true, maxImageCount:30, maxVideoCount:10, supportsAudioReference:true, maxAudioCount:10, audioReferenceParam:'audio_urls', audioMinDuration:2, audioMaxDuration:30, audioTotalDuration:30, forceAdaptiveForVideoEdit:true, forceAdaptiveForFrameModes:true, forceAutoDurationForVideoEdit:true, outputFormats:['mp4','mov'], note:'Supports text, image, video, and audio references. Video editing automatically uses adaptive size and automatic duration.' },
+  { model:'doubao-seedance-1-0-pro-fast', label:'Seedance 1.0 Pro Fast', resolutions:['480p','720p','1080p'], defaultResolution:'1080p', aspects:['16:9','9:16','1:1','4:3','3:4','21:9'], defaultAspect:'16:9', durationMin:2, durationMax:12, defaultDuration:5, maxImageCount:1 },
+  { model:'doubao-seedance-1-0-pro-quality', label:'Seedance 1.0 Pro Quality', resolutions:['480p','720p','1080p'], defaultResolution:'1080p', aspects:['16:9','9:16','1:1','4:3','3:4','21:9'], defaultAspect:'16:9', durationMin:2, durationMax:12, defaultDuration:5, maxImageCount:2 },
+  { model:'doubao-seedance-1-5-pro', label:'Seedance 1.5 Pro', resolutions:['480p','720p','1080p'], defaultResolution:'720p', aspects:['16:9','9:16','1:1','4:3','3:4','21:9'], durationMin:4, durationMax:12, defaultDuration:5, maxImageCount:2 },
+  { model:'doubao-seedance-2.0', label:'Seedance 2.0', resolutions:['480p','720p','1080p','4k'], aspects:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'], durationMin:4, durationMax:15, defaultDuration:5, supportsVideo:true, durationWithVideo:true, maxImageCount:9, maxVideoCount:3, supportsAudioReference:true, maxAudioCount:3, audioReferenceParam:'audio_urls', audioRequiresReference:true, audioMaxDuration:15, audioTotalDuration:15, promptOptionalWithMedia:true },
+  { model:'doubao-seedance-2.0-fast', label:'Seedance 2.0 Fast', resolutions:['480p','720p'], aspects:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'], durationMin:4, durationMax:15, defaultDuration:5, supportsVideo:true, durationWithVideo:true, maxImageCount:9, maxVideoCount:3, supportsAudioReference:true, maxAudioCount:3, audioReferenceParam:'audio_urls', audioRequiresReference:true, audioMaxDuration:15, audioTotalDuration:15, promptOptionalWithMedia:true },
+  { model:'doubao-seedance-2.0-mini', label:'Seedance 2.0 Mini', resolutions:['480p','720p'], aspects:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'], durationMin:4, durationMax:15, defaultDuration:5, supportsVideo:true, durationWithVideo:true, maxImageCount:9, maxVideoCount:3, supportsAudioReference:true, maxAudioCount:3, audioRequiresReference:true, audioMaxDuration:15, audioTotalDuration:15, promptOptionalWithMedia:true },
+  { model:'doubao-seedance-2.5', label:'Seedance 2.5', resolutions:['480p','720p'], defaultResolution:'720p', aspects:['16:9','4:3','1:1','3:4','9:16','21:9','adaptive'], defaultAspect:'adaptive', durationMin:4, durationMax:30, defaultDuration:5, supportsAutoDuration:true, supportsVideo:true, durationWithVideo:true, maxImageCount:30, maxVideoCount:10, supportsAudioReference:true, maxAudioCount:10, audioReferenceParam:'audio_urls', audioMinDuration:2, audioMaxDuration:30, audioTotalDuration:30, forceAdaptiveForVideoEdit:true, forceAdaptiveForFrameModes:true, forceAutoDurationForVideoEdit:true, outputFormats:['mp4','mov'], note:'Supports text, image, video, and audio references. Video editing automatically uses adaptive size and automatic duration.' },
   { model:'sora-2', label:'Sora 2', resolutions:['720p'], aspects:['16:9','9:16'], durations:[4,8,12,16,20], defaultDuration:4, maxImageCount:1 },
   { model:'sora-2-pro', label:'Sora 2 Pro', resolutions:['720p','1024p','1080p'], aspects:['16:9','9:16'], durations:[4,8,12,16,20], defaultDuration:4, maxImageCount:1 },
   { model:'veo3.1-fast', label:'VEO3.1 Fast', resolutions:['720p','1080p','4k'], aspects:['16:9','9:16'], durations:[8], defaultDuration:8, maxImageCount:3 },
@@ -7857,6 +7882,7 @@ registerApimartVideoUiRules([
   { model:'wan3.0-video', label:'Wan3.0 Video', resolutions:['480P','720P','1080P'], defaultResolution:'1080P', aspects:['adaptive','16:9','4:3','1:1','3:4','9:16'], defaultAspect:'adaptive', durationMin:2, durationMax:30, defaultDuration:5, supportsAutoDuration:true, supportsVideo:true, durationWithVideo:true, maxImageCount:10, maxVideoCount:5, referenceVideoDurationRange:[1,15], referenceVideoTotalDurationMax:15, referenceVideoDurationPlusOutputMax:30, supportsAudioReference:true, maxAudioCount:5, audioReferenceParam:'audio_urls', audioMinDuration:1, audioMaxDuration:15, audioTotalDuration:15, promptOptionalWithMedia:true, supportsDocumentReference:true, supportsLinkReference:true, supportsGeneratedAudio:true, defaultGeneratedAudio:true, note:'支持首帧/首尾帧、多图/视频/音频参考，以及单个文档或公开网页参考；文档与网页不能同时使用。' },
   { model:'wan2.5-preview', label:'Wan2.5 Preview', resolutions:['480p','720p','1080p'], defaultResolution:'720p', aspects:['16:9','9:16','1:1','4:3','3:4'], resolutionAspectRatios:{'480p':['16:9','9:16','1:1']}, durations:[5,10], defaultDuration:5, maxImageCount:1, supportsAudioReference:true, maxAudioCount:1, audioReferenceParam:'audio_url', audioMinDuration:3, audioMaxDuration:30, promptOptionalWithMedia:true },
   { model:'wan2.6', label:'Wan2.6', resolutions:['720p','1080p'], defaultResolution:'720p', aspects:['16:9','9:16','1:1','4:3','3:4'], durations:[5,10,15], defaultDuration:5, maxImageCount:1, supportsAudioReference:true, maxAudioCount:1, audioReferenceParam:'audio_url', audioDurationAtMostVideo:true, promptOptionalWithMedia:true },
+  { model:'wan2.6-i2v', label:'Wan2.6 I2V', resolutions:['720p','1080p'], defaultResolution:'1080p', supportsAspect:false, durationMin:2, durationMax:15, defaultDuration:5, minImageCount:1, maxImageCount:1, promptOptionalWithMedia:true, note:'需要 1 张首帧图，输出比例自动跟随图片；该标准版不支持生成音频。' },
   { model:'wan2.6-i2v-flash', label:'Wan2.6 I2V Flash', resolutions:['720p','1080p'], defaultResolution:'1080p', supportsAspect:false, durationMin:2, durationMax:15, defaultDuration:5, minImageCount:1, maxImageCount:1, supportsAudioReference:true, maxAudioCount:1, audioReferenceParam:'audio_url', audioMinDuration:3, audioMaxDuration:30, promptOptionalWithMedia:true, note:'First-frame image is required; output ratio follows the uploaded image.' },
   { model:'wan2.7', label:'Wan2.7', resolutions:['720P','1080P'], defaultResolution:'1080P', aspects:['16:9','9:16','1:1','4:3','3:4'], durationMin:2, durationMax:15, defaultDuration:5, supportsVideo:true, durationWithVideo:true, supportsAudioReference:true, maxAudioCount:1, audioReferenceParam:'audio_url', audioMinDuration:2, audioMaxDuration:30, audioDisallowsVideo:true, audioDisallowsImages:true, promptOptionalWithMedia:true },
   { model:'wan2.7-videoedit', label:'Wan2.7 VideoEdit', resolutions:['720P','1080P'], defaultResolution:'1080P', aspects:['16:9','9:16','1:1','4:3','3:4'], durations:[0,2,3,4,5,6,7,8,9,10], defaultDuration:0, supportsVideo:true, durationWithVideo:true, requiredVideo:true, maxImageCount:4, promptOptionalWithMedia:true },
@@ -7914,9 +7940,9 @@ applyApimartVideoUiDocumentDeltas([
 ]);
 const APIMART_VIDEO_MODEL_GROUPS_UI = [
   ['Omni / Google / FLUX / LTX', ['gemini-omni-1.1-flash','omni-flash-ext','gemini-omni-flash-preview','veo3.1-fast','veo3.1-quality','veo3.1-lite','veo3.1-fast-official','veo3.1-quality-official','flux-3-video','ltx-2.3-text-video','ltx-2.3-image-video']],
-  ['Doubao Seedance', ['doubao-seedance-1-0-pro-fast','doubao-seedance-1-0-pro-quality','doubao-seedance-1-5-pro','doubao-seedance-2.0','doubao-seedance-2.0-fast','doubao-seedance-2.0-mini','doubao-seedance-2.5']],
+  ['Seedance', ['doubao-seedance-1-0-pro-fast','doubao-seedance-1-0-pro-quality','doubao-seedance-1-5-pro','doubao-seedance-2.0','doubao-seedance-2.0-fast','doubao-seedance-2.0-mini','doubao-seedance-2.5']],
   ['Sora / MiniMax / SkyReels', ['sora-2','sora-2-pro','MiniMax-Hailuo-02','MiniMax-Hailuo-2.3','MiniMax-Hailuo-2.3-Fast','MiniMax-H3','MiniMax-H3-Max','skyreels-v4-fast','skyreels-v4-std']],
-  ['HappyHorse / Wan', ['happyhorse-1.0','happyhorse-1.1','wan3.0-video','wan2.5-preview','wan2.6','wan2.6-i2v-flash','wan2.7','wan2.7-r2v','wan2.7-videoedit']],
+  ['HappyHorse / Wan', ['happyhorse-1.0','happyhorse-1.1','wan3.0-video','wan2.5-preview','wan2.6','wan2.6-i2v','wan2.6-i2v-flash','wan2.7','wan2.7-r2v','wan2.7-videoedit']],
   ['Kling', ['kling-v2-6','kling-v2-6-motion-control','kling-v3','kling-v3-motion-control','kling-v3-omni','kling-video-o1','kling-3.0-turbo']],
   ['Vidu / Grok / Pixverse', ['viduq3','viduq3-mix','viduq3-pro','viduq3-turbo','grok-imagine-1.5-video-apimart','grok-imagine-video','grok-imagine-video-1.5','pixverse-v6']]
 ];

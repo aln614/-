@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>TENYING_AI 1.0</title>
-  <link rel="stylesheet" href="/static/style.css?v=1.0.95" />
+  <link rel="stylesheet" href="/static/style.css?v=1.0.96" />
 </head>
 <body>
   <div class="app-shell">
@@ -123,6 +123,8 @@
                   <option value="gpt-image-1.5-official">GPT-Image-1.5 Official</option>
                   <option value="gpt-image-2">GPT-Image-2</option>
                   <option value="gpt-image-2-official">GPT-Image-2 Official</option>
+                  <option value="gpt-image-2.5-flare">GPT Image 2.5 Flare</option>
+                  <option value="gpt-image-2.5-sunburst">GPT Image 2.5 Sunburst</option>
                   <option value="seedream-4.0">Seedream-4.0</option>
                   <option value="seedream-4.5">Seedream-4.5</option>
                   <option value="seedream-5-0-lite">Seedream-5.0 Lite</option>
@@ -229,8 +231,10 @@
               <div><label>质量</label><select id="imageQuality">
                 <option value="auto">auto</option>
                 <option value="low">low 快速省钱</option>
-                <option value="medium">medium 平衡</option>
-                <option value="high">high 最高精度</option>
+                 <option value="medium">medium 平衡</option>
+                 <option value="high">high 最高精度</option>
+                 <option value="xhigh">xhigh 超高精度</option>
+                 <option value="max">max 最大精度</option>
               </select></div>
               <div><label>输出压缩 0-100</label><input id="outputCompression" type="number" min="0" max="100" step="1" value="90" /><div class="field-help">仅 jpeg / webp 有效，png 会自动不传。</div></div>
             </div>
@@ -1016,6 +1020,6 @@
       </div>
     </div>
   </div>
-  <script src="/static/app.js?v=1.0.95"></script>
+  <script src="/static/app.js?v=1.0.96"></script>
 </body>
 </html>

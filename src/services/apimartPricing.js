@@ -108,6 +108,7 @@ const FIXED_VIDEO_PRICES = Object.freeze({
   'viduq3-turbo': { unit:'秒', rows:[['540P',0.32],['720P',0.48],['1080P',0.56]] },
   'wan2.5-preview': { unit:'秒', rows:[['480P',0.336],['720P',0.664],['1080P',1.096]] },
   'wan2.6': { unit:'秒', rows:[['default',0.5],['1080P',0.84]] },
+  'wan2.6-i2v': { unit:'秒', rows:[['720P',0.664],['1080P',1.096]] },
   'wan2.6-i2v-flash': { unit:'秒', rows:[['720P',0.168],['720P-audio',0.336],['1080P',0.28],['1080P-audio',0.552]] },
   'wan2.7': { unit:'秒', rows:[['default',0.664],['1080P',1.096]] },
   'wan2.7-r2v': { unit:'秒', rows:[['default',0.664],['1080P',1.096]] },
@@ -122,6 +123,8 @@ const TOKEN_METERED_IMAGE_MODELS = Object.freeze([
   'gpt-image-1-official',
   'gpt-image-1.5-official',
   'gpt-image-2-official',
+  'gpt-image-2.5-flare',
+  'gpt-image-2.5-sunburst',
   'nano-banana-pro'
 ]);
 

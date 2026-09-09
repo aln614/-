@@ -361,6 +361,7 @@ const APIMART_IMAGE_MODELS = [
   'gemini-2.5-flash-image-preview','gemini-2.5-flash-image-preview-official',
   'imagen-4.0-apimart',
   'gpt-image-1-official','gpt-image-1.5-official','gpt-image-2','gpt-image-2-official',
+  'gpt-image-2.5-flare','gpt-image-2.5-sunburst',
   'seedream-4.0','seedream-4-0','seedream-4.5','seedream-5-0-lite','seedream-5.0-lite','seedream-5-0-pro','seedream-5.0-pro',
   'doubao-seedance-4-0','doubao-seedream-4.0','doubao-seedream-4-0',
   'doubao-seedream-5-0-lite','doubao-seedream-5.0-lite',
@@ -472,6 +473,19 @@ const GROK_IMAGINE_EDIT_RULE = {
   nMin: 1, nMax: 10, defaultN: 1,
   noSize: true, noResolution: true
 };
+const GPT_IMAGE_25_RULE = {
+  endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 16,
+  nMin: 1, nMax: 4, defaultN: 1,
+  sizes: ['auto','1:1','3:2','2:3','4:3','3:4','5:4','4:5','16:9','9:16','2:1','1:2','21:9','9:21','3:1','1:3'], defaultSize: 'auto',
+  resolutions: ['1k','2k','4k'], defaultResolution: '1k',
+  qualities: ['auto','low','medium','high','xhigh','max'], defaultQuality: 'auto',
+  backgrounds: ['auto','opaque','transparent'], moderations: ['auto','low'],
+  outputFormats: ['png','jpeg','webp'], defaultOutputFormat: 'png',
+  allowQuality: true, allowOutputFormat: true, allowBackground: true, allowModeration: true,
+  customSizeMultiple: 16, customSizeMax: 3840,
+  customPixelMin: 655360, customPixelMax: 8294400,
+  minAspectRatio: 1 / 3, maxAspectRatio: 3
+};
 const QWEN_IMAGE_3_RULE = {
   endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 3,
   nMin: 1, nMax: 6, defaultN: 1,
@@ -548,6 +562,8 @@ const APIMART_MODEL_RULES = {
     backgrounds: ['auto','opaque','transparent'], moderations: ['auto','low'], outputFormats: ['png','jpeg','webp'],
     allowQuality: true, allowMask: true, allowOutputFormat: true, allowBackground: true, allowModeration: true
   },
+  'gpt-image-2.5-flare': GPT_IMAGE_25_RULE,
+  'gpt-image-2.5-sunburst': GPT_IMAGE_25_RULE,
   'gpt-image-1-official': { endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 16, nMin: 1, nMax: 4, defaultN: 1, resolutions: ['1k','2k','4k'], defaultResolution: '1k', qualities: ['auto','low','medium','high'], backgrounds: ['auto','opaque','transparent'], moderations: ['auto','low'], outputFormats: ['png','jpeg','webp'], allowQuality: true, allowMask: true, allowOutputFormat: true, allowBackground: true, allowModeration: true },
   'gpt-image-1.5-official': { endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 16, nMin: 1, nMax: 4, defaultN: 1, resolutions: ['1k','2k','4k'], defaultResolution: '1k', qualities: ['auto','low','medium','high'], backgrounds: ['auto','opaque','transparent'], moderations: ['auto','low'], outputFormats: ['png','jpeg','webp'], allowQuality: true, allowMask: true, allowOutputFormat: true, allowBackground: true, allowModeration: true },
   'imagen-4.0-apimart': IMAGEN_4_RULE,
@@ -631,6 +647,7 @@ function sanitizeApimartImagePayload(rawPayload = {}, model = '') {
         && height >= (rule.customSizeMin || 0)
         && width <= (rule.customSizeMax || Number.MAX_SAFE_INTEGER)
         && height <= (rule.customSizeMax || Number.MAX_SAFE_INTEGER)
+        && (!rule.customSizeMultiple || (width % rule.customSizeMultiple === 0 && height % rule.customSizeMultiple === 0))
         && pixels >= (rule.customPixelMin || 0)
         && pixels <= (rule.customPixelMax || Number.MAX_SAFE_INTEGER)
         && ratio >= (rule.minAspectRatio || 0)
@@ -659,6 +676,7 @@ function sanitizeApimartImagePayload(rawPayload = {}, model = '') {
   if (rule.allowModeration && moderation && (rule.moderations || ['auto','low']).includes(moderation)) payload.moderation = moderation;
   const outputFormatRaw = String(rawPayload.output_format || rawPayload.outputFormat || rule.defaultOutputFormat || '').trim().toLowerCase();
   if (rule.allowOutputFormat && outputFormatRaw && (rule.outputFormats || ['png','jpeg','webp']).includes(outputFormatRaw)) payload.output_format = outputFormatRaw;
+  if (payload.background === 'transparent' && payload.output_format === 'jpeg') payload.background = 'auto';
   const outputCompression = parseInt(rawPayload.output_compression ?? rawPayload.outputCompression, 10);
   if (rule.allowOutputFormat && Number.isFinite(outputCompression) && ['jpeg','webp'].includes(payload.output_format)) payload.output_compression = Math.max(0, Math.min(100, outputCompression));
   const maskUrl = String(rawPayload.mask_url || rawPayload.maskUrl || '').trim();
