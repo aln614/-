@@ -97,6 +97,8 @@ function main() {
     'qwen-image-3.0-pro',
     'gpt-image-2.5-flare',
     'gpt-image-2.5-sunburst',
+    'gpt-image-2.5-ext',
+    'gpt-image-2.5-ext-sunburst',
     'grok-imagine-image',
     'grok-imagine-image-quality',
     'grok-imagine-2.0-ext',
@@ -146,3 +148,4 @@ function main() {
 }
 
 main();
+require('./verify-apimart-model-contracts');

@@ -11,6 +11,7 @@ const APP_IMAGE_PRICE_MODEL_MAP = Object.freeze({
   'gemini-2.5-flash-image-preview': 'nano-banana-ext',
   'gemini-2.5-flash-image-preview-official': 'nano-banana',
   'gpt-image-2': 'gpt-image-2-ext',
+  'gpt-image-2.5-ext-sunburst': 'gpt-image-2.5-ext',
   'seedream-4.0': 'seedance-4-0',
   'seedream-4.5': 'seedance-4-5',
   'flux-kontext-max': 'flux-kontext',
@@ -32,6 +33,7 @@ const APP_VIDEO_PRICE_MODEL_MAP = Object.freeze({
 });
 
 const FIXED_IMAGE_PRICES = Object.freeze({
+  'gpt-image-2.5-ext': [['flare@1K', 0.085], ['flare@2K', 0.14], ['flare@4K', 0.21], ['sunburst@1K', 0.085], ['sunburst@2K', 0.14], ['sunburst@4K', 0.21]],
   'gpt-image-2-ext': [['default', 0.085], ['1K', 0.085], ['2K', 0.14], ['4K', 0.21]],
   'z-image-turbo': [['default', 0.1], ['prompt_extend', 0.2]],
   'nano-banana-ext': [['default', 0.125]],

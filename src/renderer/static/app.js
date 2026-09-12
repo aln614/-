@@ -437,7 +437,12 @@ function resolvePricingEntry(modelId = ''){
   return entry ? {priceModelId:entry.id || normalizedId, entry} : {priceModelId:mappedId, entry:null};
 }
 function resolveImagePricingEntry(modelId = ''){
-  return resolvePricingEntry(modelId);
+  const resolved = resolvePricingEntry(modelId);
+  if (!isGptImage25ExtModel(modelId) || !resolved.entry) return resolved;
+  const version = imageModelKey(modelId).endsWith('-sunburst') ? 'sunburst' : 'flare';
+  return { ...resolved, entry: { ...resolved.entry, variants: (resolved.entry.variants || [])
+    .filter(row => String(row.spec).toLowerCase().startsWith(version + '@'))
+    .map(row => ({ ...row, spec: String(row.spec).split('@')[1] })) } };
 }
 function normalizePricingSpec(value = ''){
   return String(value || '').trim().toUpperCase();
@@ -1572,6 +1577,8 @@ const APIMART_MODEL_OPTIONS = [
   ['gpt-image-2-official','GPT-Image-2 Official'],
   ['gpt-image-2.5-flare','GPT Image 2.5 Flare'],
   ['gpt-image-2.5-sunburst','GPT Image 2.5 Sunburst'],
+  ['gpt-image-2.5-ext','GPT Image 2.5 Ext Flare'],
+  ['gpt-image-2.5-ext-sunburst','GPT Image 2.5 Ext Sunburst'],
   ['seedream-4.0','Seedream-4.0'],
   ['seedream-4.5','Seedream-4.5'],
   ['seedream-5-0-lite','Seedream-5.0 Lite'],
@@ -1899,6 +1906,9 @@ function isOfficialImageModel(model){
 function isGptImage25Model(model){
   return ['gpt-image-2.5-flare','gpt-image-2.5-sunburst'].includes(imageModelKey(model));
 }
+function isGptImage25ExtModel(model){
+  return ['gpt-image-2.5-ext','gpt-image-2.5-ext-sunburst'].includes(imageModelKey(model));
+}
 function isSeedream5LiteModel(model){
   return ['seedream-5-0-lite','doubao-seedream-5-0-lite','doubao-seedream-5.0-lite','seedream-5.0-lite'].includes(imageModelKey(model));
 }
@@ -1954,7 +1964,15 @@ function applyDocumentedImageUiGuard(model){
     if($('#claritySettings') && [...$('#claritySettings').options].some(option=>option.value === fallback)) $('#claritySettings').value = fallback;
   };
 
-  if(isNanoBananaLiteModel(m)){
+  if(isGptImage25ExtModel(m)){
+    setSizeIfUnsupported(['auto','1:1','16:9','9:16','4:3','3:4','3:2','2:3','5:4','4:5','21:9'], 'auto');
+    setResolution(['1K','2K','4K'], '1K');
+    clampImageOutputCount(4);
+  }else if(['gemini-2.5-flash-image-preview','gemini-2.5-flash-image-preview-official'].includes(m)){
+    setSizeIfUnsupported(['1:1','3:2','2:3','4:3','3:4','16:9','9:16','5:4','4:5','21:9']);
+    setResolution(['1K'], '1K');
+    clampImageOutputCount(1);
+  }else if(isNanoBananaLiteModel(m)){
     setSizeIfUnsupported(['auto','1:1','3:2','2:3','4:3','3:4','16:9','9:16','5:4','4:5','21:9']);
     setResolution(['1K'], '1K');
     clampImageOutputCount(4);
@@ -1977,7 +1995,7 @@ function applyDocumentedImageUiGuard(model){
     clampImageOutputCount(m === 'grok-imagine-image' ? 10 : 10);
   }else if(isWan27ImageModel(m)){
     setSizeIfUnsupported(['auto','1:1','16:9','9:16','4:3','3:4','3:2','2:3']);
-    setResolution(m === 'wan2.7-image-pro' ? ['1K','2K','4K'] : ['1K','2K'], '2K');
+    setResolution(m === 'wan2.7-image-pro' && !mainImages.length && !refImages.length ? ['1K','2K','4K'] : ['1K','2K'], '2K');
     clampImageOutputCount(4);
   }else if(m === 'imagen-4.0-apimart'){
     setSizeIfUnsupported(['1:1','4:3','3:4','16:9','9:16'], '16:9');
@@ -1990,7 +2008,7 @@ function applyFluxImageUiGuard(model){
   const size = $('#size');
   const clarity = $('#clarity');
   if(!size || !clarity) return;
-  const profile = isFluxKontextModel(model) ? 'flux-kontext' : (isFlux2Model(model) ? 'flux-2' : 'default');
+  const profile = isFluxKontextModel(model) ? 'flux-kontext' : (isFlux2Model(model) ? 'flux-2' : (isGptImage25ExtModel(model) ? 'gpt-image-25-ext' : 'default'));
   if(size.dataset.modelProfile === profile){
     if(profile === 'flux-kontext'){
       clarity.value = '1MP';
@@ -2012,6 +2030,12 @@ function applyFluxImageUiGuard(model){
     clarity.disabled = false;
     size.value = [...size.options].some(option=>option.value === oldSize) ? oldSize : 'auto';
     clarity.value = [...clarity.options].some(option=>option.value === oldClarity) ? oldClarity : '2K';
+  }else if(profile === 'gpt-image-25-ext'){
+    size.innerHTML = ['auto','1:1','16:9','9:16','4:3','3:4','3:2','2:3','5:4','4:5','21:9'].map(value=>`<option value="${value}">${value === 'auto' ? 'auto 自动' : value}</option>`).join('');
+    size.value = [...size.options].some(option=>option.value === oldSize) ? oldSize : 'auto';
+    clarity.innerHTML = ['1K','2K','4K'].map(value=>`<option value="${value}">${value}</option>`).join('');
+    clarity.value = ['1K','2K','4K'].includes(oldClarity) ? oldClarity : '1K';
+    clarity.disabled = false;
   }else{
     size.innerHTML = FLUX_IMAGE_SIZES.map(value=>`<option value="${value}">${value === 'auto' ? 'auto 跟随参考图' : (value === 'custom' ? '自定义宽高' : value)}</option>`).join('');
     if([...size.options].some(option=>option.value === oldSize)) size.value = oldSize;
@@ -2035,7 +2059,7 @@ function applyFluxImageUiGuard(model){
 }
 function isMultiNImageModel(model){
   const m = imageModelKey(model);
-  return isOfficialImageModel(m) || isGptImage25Model(m) || isQwenImage2Model(m) || isQwenImage3Model(m) || isNanoBananaLiteModel(m) || isGrokAspectRatioImageModel(m) || isGrokImagine2ExtModel(m) || isWan27ImageModel(m) || ['gemini-2.5-flash-image-preview','gemini-2.5-flash-image-preview-official','doubao-seedance-4-0','doubao-seedream-4.0','doubao-seedream-4-0','seedream-4.0','seedream-4.5','seedream-5-0-lite','doubao-seedream-5-0-lite','doubao-seedream-5.0-lite','seedream-5.0-lite','grok-imagine-1.5-apimart','grok-imagine-1.5-ext','grok-imagine-1.0','grok-imagine-1.5-edit-apimart','grok-imagine-1.0-edit-apimart','grok-imagine-1.0-edit'].includes(m);
+  return isOfficialImageModel(m) || isGptImage25Model(m) || isGptImage25ExtModel(m) || isQwenImage2Model(m) || isQwenImage3Model(m) || isNanoBananaLiteModel(m) || isGrokAspectRatioImageModel(m) || isGrokImagine2ExtModel(m) || isWan27ImageModel(m) || ['doubao-seedance-4-0','doubao-seedream-4.0','doubao-seedream-4-0','seedream-4.0','seedream-4.5','seedream-5-0-lite','doubao-seedream-5-0-lite','doubao-seedream-5.0-lite','seedream-5.0-lite','grok-imagine-1.5-apimart','grok-imagine-1.5-ext','grok-imagine-1.0','grok-imagine-1.5-edit-apimart','grok-imagine-1.0-edit-apimart','grok-imagine-1.0-edit'].includes(m);
 }
 function applyGptImage25UiGuard(model){
   if(currentImagePlatform() !== 'apimart' || !isGptImage25Model(model)) return;
@@ -2081,26 +2105,31 @@ function updateOfficialImageOptions(){
   const grsai = platform === 'grsai';
   const official = !grsai && isOfficialImageModel(model);
   const gptImage25 = !grsai && isGptImage25Model(model);
+  const grokImage20 = !grsai && imageModelKey(model) === 'grok-imagine-image-2.0';
   const flux = !grsai && isFluxImageModel(model);
   const showOutput = !grsai && (official || gptImage25 || isSeedream5OutputFormatModel(model) || flux);
   const showN = !grsai && isMultiNImageModel(model);
-  const showQuality = !grsai && (official || gptImage25);
+  const showQuality = !grsai && (official || gptImage25 || grokImage20);
   const quality = $('#imageQuality');
   if(quality){
     [...quality.options].forEach(option=>{
-      if(!['xhigh','max'].includes(option.value)) return;
-      option.hidden = !gptImage25;
-      option.disabled = !gptImage25;
+      const supported = grokImage20 ? ['low','medium'].includes(option.value) : (gptImage25 || !['xhigh','max'].includes(option.value));
+      option.hidden = !supported;
+      option.disabled = !supported;
     });
     if(!gptImage25 && ['xhigh','max'].includes(quality.value)) quality.value = 'auto';
+    if(grokImage20 && !['low','medium'].includes(quality.value)) quality.value = 'medium';
   }
   const row1 = $('#officialImageOptions'); if(row1) row1.style.display = showOutput ? '' : 'none';
   const row2 = $('#officialImageOptions2'); if(row2) row2.style.display = showN ? '' : 'none';
   const row3 = $('#officialImageOptions3'); if(row3) row3.style.display = showQuality ? '' : 'none';
   const backgroundWrap = $('#imageBackground')?.closest('div');
   if(backgroundWrap) backgroundWrap.style.display = flux ? 'none' : '';
+  const moderationWrap = $('#moderation')?.closest('div');
+  if(moderationWrap) moderationWrap.style.display = official || gptImage25 ? '' : 'none';
   const fmt = String($('#outputFormat')?.value || 'png').toLowerCase();
   const compWrap = $('#outputCompression')?.closest('div');
+  if(compWrap) compWrap.style.display = grokImage20 ? 'none' : '';
   if(compWrap) compWrap.style.opacity = (fmt === 'jpeg' || fmt === 'webp') ? '1' : '.45';
 }
 function applyModelToUI(model){
@@ -7829,7 +7858,7 @@ registerApimartVideoUiRules([
   { model:'doubao-seedance-2.0', label:'Seedance 2.0', resolutions:['480p','720p','1080p','4k'], aspects:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'], durationMin:4, durationMax:15, defaultDuration:5, supportsVideo:true, durationWithVideo:true, maxImageCount:9, maxVideoCount:3, supportsAudioReference:true, maxAudioCount:3, audioReferenceParam:'audio_urls', audioRequiresReference:true, audioMaxDuration:15, audioTotalDuration:15, promptOptionalWithMedia:true },
   { model:'doubao-seedance-2.0-fast', label:'Seedance 2.0 Fast', resolutions:['480p','720p'], aspects:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'], durationMin:4, durationMax:15, defaultDuration:5, supportsVideo:true, durationWithVideo:true, maxImageCount:9, maxVideoCount:3, supportsAudioReference:true, maxAudioCount:3, audioReferenceParam:'audio_urls', audioRequiresReference:true, audioMaxDuration:15, audioTotalDuration:15, promptOptionalWithMedia:true },
   { model:'doubao-seedance-2.0-mini', label:'Seedance 2.0 Mini', resolutions:['480p','720p'], aspects:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'], durationMin:4, durationMax:15, defaultDuration:5, supportsVideo:true, durationWithVideo:true, maxImageCount:9, maxVideoCount:3, supportsAudioReference:true, maxAudioCount:3, audioRequiresReference:true, audioMaxDuration:15, audioTotalDuration:15, promptOptionalWithMedia:true },
-  { model:'doubao-seedance-2.5', label:'Seedance 2.5', resolutions:['480p','720p'], defaultResolution:'720p', aspects:['16:9','4:3','1:1','3:4','9:16','21:9','adaptive'], defaultAspect:'adaptive', durationMin:4, durationMax:30, defaultDuration:5, supportsAutoDuration:true, supportsVideo:true, durationWithVideo:true, maxImageCount:30, maxVideoCount:10, supportsAudioReference:true, maxAudioCount:10, audioReferenceParam:'audio_urls', audioMinDuration:2, audioMaxDuration:30, audioTotalDuration:30, forceAdaptiveForVideoEdit:true, forceAdaptiveForFrameModes:true, forceAutoDurationForVideoEdit:true, outputFormats:['mp4','mov'], note:'Supports text, image, video, and audio references. Video editing automatically uses adaptive size and automatic duration.' },
+  { model:'doubao-seedance-2.5', label:'Seedance 2.5', resolutions:['480p','720p','1080p'], defaultResolution:'720p', aspects:['16:9','4:3','1:1','3:4','9:16','21:9','adaptive'], defaultAspect:'adaptive', durationMin:4, durationMax:30, defaultDuration:5, supportsAutoDuration:true, supportsVideo:true, durationWithVideo:true, maxImageCount:30, maxVideoCount:10, supportsAudioReference:true, maxAudioCount:10, audioReferenceParam:'audio_urls', audioMinDuration:2, audioMaxDuration:30, audioTotalDuration:30, forceAdaptiveForVideoEdit:true, forceAdaptiveForFrameModes:true, forceAutoDurationForVideoEdit:true, outputFormats:['mp4','mov'], note:'Supports text, image, video, and audio references. Video editing automatically uses adaptive size and automatic duration.' },
   { model:'sora-2', label:'Sora 2', resolutions:['720p'], aspects:['16:9','9:16'], durations:[4,8,12,16,20], defaultDuration:4, maxImageCount:1 },
   { model:'sora-2-pro', label:'Sora 2 Pro', resolutions:['720p','1024p','1080p'], aspects:['16:9','9:16'], durations:[4,8,12,16,20], defaultDuration:4, maxImageCount:1 },
   { model:'veo3.1-fast', label:'VEO3.1 Fast', resolutions:['720p','1080p','4k'], aspects:['16:9','9:16'], durations:[8], defaultDuration:8, maxImageCount:3 },

@@ -11,6 +11,13 @@ if (!catalogBlock) {
 }
 const ids = [...catalogBlock[1].matchAll(/\{\s*id:\s*'([^']+)'/g)].map(match => match[1]);
 const required = [
+  'qwen3.8-max',
+  'qwen3.8-max-0902',
+  'gpt-6-astra',
+  'gemini-3.8-flash',
+  'claude-fable-5.1',
+  'glm-5.3',
+  'kimi-k3',
   'claude-sonnet-5',
   'claude-fable-5',
   'claude-opus-4-8',

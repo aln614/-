@@ -362,6 +362,7 @@ const APIMART_IMAGE_MODELS = [
   'imagen-4.0-apimart',
   'gpt-image-1-official','gpt-image-1.5-official','gpt-image-2','gpt-image-2-official',
   'gpt-image-2.5-flare','gpt-image-2.5-sunburst',
+  'gpt-image-2.5-ext','gpt-image-2.5-ext-sunburst',
   'seedream-4.0','seedream-4-0','seedream-4.5','seedream-5-0-lite','seedream-5.0-lite','seedream-5-0-pro','seedream-5.0-pro',
   'doubao-seedance-4-0','doubao-seedream-4.0','doubao-seedream-4-0',
   'doubao-seedream-5-0-lite','doubao-seedream-5.0-lite',
@@ -398,8 +399,8 @@ const GEMINI_3_PRO_RULE = {
   resolutions: ['1K','2K','4K'], defaultResolution: '1K'
 };
 const GEMINI_25_RULE = {
-  endpoint: '/v1/images/generations', taskQuery: 'batch',
-  nMin: 1, nMax: 4, defaultN: 1,
+  endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 14,
+  nMin: 1, nMax: 1, defaultN: 1,
   sizes: ['1:1','3:2','2:3','4:3','3:4','16:9','9:16','5:4','4:5','21:9'], defaultSize: '1:1',
   resolutions: ['1K'], defaultResolution: '1K'
 };
@@ -463,7 +464,7 @@ const LTX23_TEXT_IMAGE_RULE = {
   noSize: true, noResolution: true, textOnly: true
 };
 const GROK_IMAGINE_15_RULE = {
-  endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 1,
+  endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 5,
   nMin: 1, nMax: 10, defaultN: 1,
   sizes: ['1:1','16:9','9:16','3:2','2:3'], defaultSize: '1:1',
   noResolution: true
@@ -485,6 +486,14 @@ const GPT_IMAGE_25_RULE = {
   customSizeMultiple: 16, customSizeMax: 3840,
   customPixelMin: 655360, customPixelMax: 8294400,
   minAspectRatio: 1 / 3, maxAspectRatio: 3
+};
+const GPT_IMAGE_25_EXT_RULE = {
+  endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 16,
+  apiModel: 'gpt-image-2.5-ext', versions: ['flare','sunburst'], defaultVersion: 'flare',
+  nMin: 1, nMax: 4, defaultN: 1,
+  sizes: ['auto','1:1','16:9','9:16','4:3','3:4','3:2','2:3','5:4','4:5','21:9'],
+  defaultSize: 'auto', noCustomSize: true,
+  resolutions: ['1K','2K','4K'], defaultResolution: '1K'
 };
 const QWEN_IMAGE_3_RULE = {
   endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 3,
@@ -524,7 +533,7 @@ const WAN2_7_IMAGE_RULE = {
   resolutions: ['1K','2K'], defaultResolution: '2K',
   allowNegativePrompt: true, allowWatermark: true, allowSeed: true
 };
-const WAN2_7_IMAGE_PRO_RULE = { ...WAN2_7_IMAGE_RULE, resolutions: ['1K','2K','4K'] };
+const WAN2_7_IMAGE_PRO_RULE = { ...WAN2_7_IMAGE_RULE, resolutions: ['1K','2K','4K'], imageResolutions: ['1K','2K'] };
 const Z_IMAGE_TURBO_RULE = {
   endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 0,
   nMin: 1, nMax: 1, defaultN: 1,
@@ -548,7 +557,7 @@ const APIMART_MODEL_RULES = {
   'gemini-2.5-flash-image-preview': GEMINI_25_RULE,
   'gemini-2.5-flash-image-preview-official': GEMINI_25_RULE,
   'gpt-image-2': {
-    endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 16,
+    endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 15,
     nMin: 1, nMax: 1, defaultN: 1,
     resolutions: ['1k','2k','4k'], defaultResolution: '1k',
     allowQuality: false, allowMask: false, allowOutputFormat: false, allowBackground: false
@@ -564,8 +573,10 @@ const APIMART_MODEL_RULES = {
   },
   'gpt-image-2.5-flare': GPT_IMAGE_25_RULE,
   'gpt-image-2.5-sunburst': GPT_IMAGE_25_RULE,
-  'gpt-image-1-official': { endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 16, nMin: 1, nMax: 4, defaultN: 1, resolutions: ['1k','2k','4k'], defaultResolution: '1k', qualities: ['auto','low','medium','high'], backgrounds: ['auto','opaque','transparent'], moderations: ['auto','low'], outputFormats: ['png','jpeg','webp'], allowQuality: true, allowMask: true, allowOutputFormat: true, allowBackground: true, allowModeration: true },
-  'gpt-image-1.5-official': { endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 16, nMin: 1, nMax: 4, defaultN: 1, resolutions: ['1k','2k','4k'], defaultResolution: '1k', qualities: ['auto','low','medium','high'], backgrounds: ['auto','opaque','transparent'], moderations: ['auto','low'], outputFormats: ['png','jpeg','webp'], allowQuality: true, allowMask: true, allowOutputFormat: true, allowBackground: true, allowModeration: true },
+  'gpt-image-2.5-ext': GPT_IMAGE_25_EXT_RULE,
+  'gpt-image-2.5-ext-sunburst': { ...GPT_IMAGE_25_EXT_RULE, fixedVersion: 'sunburst' },
+  'gpt-image-1-official': { endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 15, nMin: 1, nMax: 4, defaultN: 1, resolutions: ['1k','2k','4k'], defaultResolution: '1k', qualities: ['auto','low','medium','high'], backgrounds: ['auto','opaque','transparent'], moderations: ['auto','low'], outputFormats: ['png','jpeg','webp'], allowQuality: true, allowMask: true, allowOutputFormat: true, allowBackground: true, allowModeration: true },
+  'gpt-image-1.5-official': { endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 15, nMin: 1, nMax: 4, defaultN: 1, resolutions: ['1k','2k','4k'], defaultResolution: '1k', qualities: ['auto','low','medium','high'], backgrounds: ['auto','opaque','transparent'], moderations: ['auto','low'], outputFormats: ['png','jpeg','webp'], allowQuality: true, allowMask: true, allowOutputFormat: true, allowBackground: true, allowModeration: true },
   'imagen-4.0-apimart': IMAGEN_4_RULE,
   'seedream-4.0': SEEDREAM4_RULE,
   'seedream-4-0': SEEDREAM4_RULE,
@@ -598,7 +609,7 @@ const APIMART_MODEL_RULES = {
   'grok-imagine-image': GROK_IMAGINE_IMAGE_RULE,
   'grok-imagine-image-quality': GROK_IMAGINE_IMAGE_QUALITY_RULE,
   'grok-imagine-2.0-ext': GROK_IMAGINE_2_EXT_RULE,
-  'grok-imagine-image-2.0': { ...GROK_IMAGINE_IMAGE_QUALITY_RULE, maxImageUrls: 3 },
+  'grok-imagine-image-2.0': { ...GROK_IMAGINE_IMAGE_QUALITY_RULE, maxImageUrls: 3, allowQuality: true, qualities: ['low','medium'], defaultQuality: 'medium', qualityTextOnly: true },
   'qwen-image-3.0': QWEN_IMAGE_3_RULE,
   'qwen-image-3.0-pro': QWEN_IMAGE_3_RULE,
   'wan2.7-image': WAN2_7_IMAGE_RULE,
@@ -625,12 +636,17 @@ function normalizeRuleResolution(value, rule = DEFAULT_APIMART_IMAGE_RULE) {
 function sanitizeApimartImagePayload(rawPayload = {}, model = '') {
   const rule = getApimartImageRule(model);
   const payload = {
-    model: String(model || rawPayload.model || '').trim() || 'gemini-3.1-flash-image-preview',
+    model: rule.apiModel || String(model || rawPayload.model || '').trim() || 'gemini-3.1-flash-image-preview',
     prompt: rawPayload.prompt,
     n: clampInt(rawPayload.n, rule.nMin || 1, rule.nMax || 1, rule.defaultN || 1)
   };
 
   const hasRefs = Array.isArray(rawPayload.image_urls) && rawPayload.image_urls.filter(Boolean).length > 0;
+  if (rule.versions) {
+    const version = String(rule.fixedVersion || rawPayload.version || rule.defaultVersion).toLowerCase();
+    if (!rule.versions.includes(version)) throw new Error('Unsupported image model version');
+    payload.version = version;
+  }
   if (!rule.noSize) {
     let rawSize = String(rawPayload.size || rule.defaultSize || 'auto').replace('×','x').replace(/\s+/g,'').toLowerCase();
     if (rawSize === 'none') rawSize = rule.defaultSize || '1:1';
@@ -658,6 +674,9 @@ function sanitizeApimartImagePayload(rawPayload = {}, model = '') {
     payload[rule.sizeParam || 'size'] = rawSize || rule.defaultSize || 'auto';
   }
   if (!rule.noResolution) payload.resolution = normalizeRuleResolution(rawPayload.resolution, rule);
+  if (hasRefs && rule.imageResolutions && !rule.imageResolutions.includes(payload.resolution)) {
+    payload.resolution = rule.defaultResolution || rule.imageResolutions[0];
+  }
 
   if (hasRefs) {
     if (rule.textOnly || Number(rule.maxImageUrls || 0) <= 0) throw new Error(`${payload.model} 仅支持文生图，不支持上传参考图`);
@@ -669,7 +688,10 @@ function sanitizeApimartImagePayload(rawPayload = {}, model = '') {
     payload.image_urls = rawPayload.image_urls.filter(Boolean).slice(0, maxImages);
   }
   const quality = String(rawPayload.quality || '').trim().toLowerCase();
-  if (rule.allowQuality && quality && (rule.qualities || ['auto','low','medium','high']).includes(quality)) payload.quality = quality;
+  if (rule.allowQuality && !(hasRefs && rule.qualityTextOnly)) {
+    if ((rule.qualities || ['auto','low','medium','high']).includes(quality)) payload.quality = quality;
+    else if (rule.defaultQuality) payload.quality = rule.defaultQuality;
+  }
   const background = String(rawPayload.background || '').trim().toLowerCase();
   if (rule.allowBackground && background && (rule.backgrounds || ['auto','opaque','transparent']).includes(background)) payload.background = background;
   const moderation = String(rawPayload.moderation || '').trim().toLowerCase();
@@ -1254,6 +1276,7 @@ async function generateOne({ cfg, prompt, mainImagePath, refImages = [], outputP
 
   const rawPayload = {
     model,
+    version: cfg.image_version,
     prompt,
     size: sizeToAspect(cfg.size, model, cfg.imageSize || cfg.clarity || '1K'),
     resolution: cfg.imageSize || cfg.clarity || '1K',
@@ -1486,6 +1509,7 @@ async function generateFlow2ApiImage({ cfg, prompt, mainImagePath, refImages = [
 
 const APIMART_RESPONSE_CHAT_MODELS = [
   // GPT first
+  { id: 'gpt-6-astra', name: 'GPT · gpt-6-astra' },
   { id: 'gpt-5.6-terra', name: 'GPT · gpt-5.6-terra' },
   { id: 'gpt-5.6-luna', name: 'GPT · gpt-5.6-luna' },
   { id: 'gpt-5.6-sol', name: 'GPT · gpt-5.6-sol' },
@@ -1524,6 +1548,10 @@ const APIMART_RESPONSE_CHAT_MODELS = [
   { id: 'o1-mini', name: 'GPT · o1-mini' },
 
   // Gemini second
+  { id: 'gemini-3.8-flash', name: 'Gemini · gemini-3.8-flash' },
+  { id: 'gemini-3.7-flash', name: 'Gemini · gemini-3.7-flash' },
+  { id: 'gemini-3.6-flash', name: 'Gemini · gemini-3.6-flash' },
+  { id: 'gemini-3.5-flash-lite', name: 'Gemini · gemini-3.5-flash-lite' },
   { id: 'gemini-2.5-pro', name: 'Gemini · gemini-2.5-pro' },
   { id: 'gemini-2.5-flash', name: 'Gemini · gemini-2.5-flash' },
   { id: 'gemini-2.5-flash-lite', name: 'Gemini · gemini-2.5-flash-lite' },
@@ -1536,6 +1564,8 @@ const APIMART_RESPONSE_CHAT_MODELS = [
   { id: 'gemini-3-pro-preview', name: 'Gemini · gemini-3-pro-preview' },
 
   // Claude
+  { id: 'claude-fable-5.1', name: 'Claude · claude-fable-5.1' },
+  { id: 'claude-opus-5', name: 'Claude · claude-opus-5' },
   { id: 'claude-sonnet-5', name: 'Claude · claude-sonnet-5' },
   { id: 'claude-fable-5', name: 'Claude · claude-fable-5' },
   { id: 'claude-opus-4-8', name: 'Claude · claude-opus-4-8' },
@@ -1576,6 +1606,10 @@ const APIMART_RESPONSE_CHAT_MODELS = [
   { id: 'deepseek-reasoner', name: 'DeepSeek · deepseek-reasoner' },
 
   // Kimi
+  { id: 'kimi-k3', name: 'Kimi · kimi-k3' },
+  { id: 'kimi-k2.7-code-highspeed', name: 'Kimi · kimi-k2.7-code-highspeed' },
+  { id: 'kimi-k2.7-code', name: 'Kimi · kimi-k2.7-code' },
+  { id: 'kimi-k2.6', name: 'Kimi · kimi-k2.6' },
   { id: 'kimi-k2', name: 'Kimi · kimi-k2' },
   { id: 'kimi-k2-turbo', name: 'Kimi · kimi-k2-turbo' },
   { id: 'kimi-k2-0905', name: 'Kimi · kimi-k2-0905' },
@@ -1585,6 +1619,16 @@ const APIMART_RESPONSE_CHAT_MODELS = [
   { id: 'moonshot-v1-128k', name: 'Kimi · moonshot-v1-128k' },
 
   // Qwen
+  { id: 'qwen3.8-max', name: 'Qwen · qwen3.8-max' },
+  { id: 'qwen3.8-max-0902', name: 'Qwen · qwen3.8-max-0902' },
+  { id: 'qwen3.8-flash', name: 'Qwen · qwen3.8-flash' },
+  { id: 'qwen3.8-27b', name: 'Qwen · qwen3.8-27b' },
+  { id: 'qwen3.8-2.4t-a95b', name: 'Qwen · qwen3.8-2.4t-a95b' },
+  { id: 'qwen3.7-max', name: 'Qwen · qwen3.7-max' },
+  { id: 'qwen3.7-plus', name: 'Qwen · qwen3.7-plus' },
+  { id: 'qwen3.7-flash', name: 'Qwen · qwen3.7-flash' },
+  { id: 'qwen3.6-plus', name: 'Qwen · qwen3.6-plus' },
+  { id: 'qwen3.6-flash', name: 'Qwen · qwen3.6-flash' },
   { id: 'qwen-max', name: 'Qwen · qwen-max' },
   { id: 'qwen-plus', name: 'Qwen · qwen-plus' },
   { id: 'qwen-turbo', name: 'Qwen · qwen-turbo' },
@@ -1598,6 +1642,9 @@ const APIMART_RESPONSE_CHAT_MODELS = [
   { id: 'qwen2.5-7b-instruct', name: 'Qwen · qwen2.5-7b-instruct' },
 
   // GLM
+  { id: 'glm-5.3', name: 'GLM · glm-5.3' },
+  { id: 'glm-5.3-flash', name: 'GLM · glm-5.3-flash' },
+  { id: 'glm-5.2', name: 'GLM · glm-5.2' },
   { id: 'glm-5', name: 'GLM · glm-5' },
   { id: 'glm-4.5', name: 'GLM · glm-4.5' },
   { id: 'glm-4.5-air', name: 'GLM · glm-4.5-air' },
@@ -1606,12 +1653,18 @@ const APIMART_RESPONSE_CHAT_MODELS = [
   { id: 'glm-4-flash', name: 'GLM · glm-4-flash' },
 
   // MiniMax
+  { id: 'minimax-m3', name: 'MiniMax · minimax-m3' },
+  { id: 'minimax-m2.7', name: 'MiniMax · minimax-m2.7' },
   { id: 'minimax-m2', name: 'MiniMax · minimax-m2' },
   { id: 'minimax-m2-pro', name: 'MiniMax · minimax-m2-pro' },
   { id: 'minimax-m2.5', name: 'MiniMax · minimax-m2.5' },
   { id: 'minimax-text-01', name: 'MiniMax · minimax-text-01' },
 
   // Grok
+  { id: 'grok-4.6', name: 'Grok · grok-4.6' },
+  { id: 'grok-4.5', name: 'Grok · grok-4.5' },
+  { id: 'grok-4.3', name: 'Grok · grok-4.3' },
+  { id: 'grok-build-0.1', name: 'Grok · grok-build-0.1' },
   { id: 'grok-4', name: 'Grok · grok-4' },
   { id: 'grok-3', name: 'Grok · grok-3' },
   { id: 'grok-3-mini', name: 'Grok · grok-3-mini' },
@@ -1630,6 +1683,8 @@ const APIMART_RESPONSE_CHAT_MODELS = [
   { id: 'llama-3.1-8b-instruct', name: 'Llama · llama-3.1-8b-instruct' },
 
   // Other useful models
+  { id: 'step-3.7-flash', name: 'StepFun · step-3.7-flash' },
+  { id: 'mimo-v2.5-pro', name: 'Xiaomi · mimo-v2.5-pro' },
   { id: 'doubao-pro-32k', name: 'Doubao · doubao-pro-32k' },
   { id: 'doubao-lite-32k', name: 'Doubao · doubao-lite-32k' },
   { id: 'yi-large', name: 'Yi · yi-large' },
