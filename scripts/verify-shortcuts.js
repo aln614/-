@@ -1,4 +1,5 @@
 const fs = require('fs');
+require('./verify-reference-paste');
 const path = require('path');
 
 const root = path.resolve(__dirname, '..');

@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>TENYING_AI 1.0</title>
-  <link rel="stylesheet" href="/static/style.css?v=1.0.97" />
+  <link rel="stylesheet" href="/static/style.css?v=1.0.98" />
 </head>
 <body>
   <div class="app-shell">
@@ -266,9 +266,9 @@
             </div>
             <div class="thumbs" id="mainThumbs"></div>
 
-            <div class="dropzone small" id="refDrop">
+              <div class="dropzone small" id="refDrop" tabindex="0" aria-keyshortcuts="Control+Shift+V">
               <strong>附加参考图上传</strong>
-              <span>会并发附加到每一个任务，小图可点击预览</span>
+              <span>Ctrl+Shift+V 粘贴参考图；会附加到每个任务，小图可点击预览</span>
               <input id="refFiles" type="file" multiple accept="image/*" />
             </div>
             <div class="thumbs" id="refThumbs"></div>
@@ -1022,6 +1022,6 @@
       </div>
     </div>
   </div>
-  <script src="/static/app.js?v=1.0.97"></script>
+  <script src="/static/app.js?v=1.0.98"></script>
 </body>
 </html>

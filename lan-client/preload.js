@@ -16,6 +16,7 @@ window.addEventListener('wheel', event => {
 }, { capture: true, passive: false });
 
 contextBridge.exposeInMainWorld('lanClient', {
+  pasteReferenceImages: () => ipcRenderer.send('reference-image-paste'),
   getConfig: () => ipcRenderer.invoke('lan-client:get-config'),
   saveHost: (hostUrl) => ipcRenderer.invoke('lan-client:save-host', hostUrl),
   retry: () => ipcRenderer.invoke('lan-client:retry'),

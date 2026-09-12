@@ -1,5 +1,6 @@
 const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('electronAPI', {
+  pasteReferenceImages: () => ipcRenderer.send('reference-image-paste'),
   startImageDrag: (payload) => ipcRenderer.invoke('start-image-drag', payload || {}),
   // Asset-library cards need a native file drag. URLs alone let some targets pick the thumbnail.
   prepareAssetDrag: (payload) => ipcRenderer.invoke('prepare-asset-drag', payload || {}),

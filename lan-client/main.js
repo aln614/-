@@ -67,7 +67,13 @@ function normalizeShortcutAccelerator(value = '') {
 }
 
 function validateShortcutConfiguration(input = {}, strict = false) {
-  const source = input.shortcut_settings && typeof input.shortcut_settings === 'object' ? input.shortcut_settings : {};
+  const source = { ...(input.shortcut_settings && typeof input.shortcut_settings === 'object' ? input.shortcut_settings : {}) };
+  for (const key of Object.keys(DEFAULT_SHORTCUT_SETTINGS)) {
+    if (normalizeShortcutAccelerator(source[key]) !== 'Ctrl+Shift+V') continue;
+    if (strict) throw new Error('Ctrl+Shift+V 已用于粘贴附加参考图，请选择其他快捷键。');
+    const used = new Set(Object.entries(DEFAULT_SHORTCUT_SETTINGS).filter(([other]) => other !== key).map(([other, fallback]) => normalizeShortcutAccelerator(source[other] || fallback)));
+    source[key] = [DEFAULT_SHORTCUT_SETTINGS[key], ...Object.values(DEFAULT_SHORTCUT_SETTINGS)].find(value => !used.has(value));
+  }
   const settings = {};
   try {
     for (const key of Object.keys(DEFAULT_SHORTCUT_SETTINGS)) {
@@ -280,7 +286,17 @@ function createWindow() {
   });
   mainWindow.once('ready-to-show', bringMainWindowToFront);
   mainWindow.webContents.on('did-finish-load', () => applyPageZoom());
+  let referencePasteGestureUntil = 0;
+  mainWindow.on('blur', () => { referencePasteGestureUntil = 0; });
+  mainWindow.webContents.on('ipc-message', (_event, channel) => {
+    if(channel !== 'reference-image-paste' || Date.now() > referencePasteGestureUntil) return;
+    referencePasteGestureUntil = 0;
+    mainWindow.webContents.paste();
+  });
   mainWindow.webContents.on('before-input-event', (event, input) => {
+    const referencePasteKey = input.control && input.shift && !input.alt && !input.meta && !input.isComposing && (input.code === 'KeyV' || String(input.key).toLowerCase() === 'v');
+    mainWindow.webContents.setIgnoreMenuShortcuts(!!referencePasteKey);
+    if(input.type === 'keyDown') referencePasteGestureUntil = referencePasteKey ? Date.now() + 1500 : 0;
     if (!(input.control || input.meta) || input.type !== 'keyDown') return;
     const key = String(input.key || '').toLowerCase();
     const code = String(input.code || '').toLowerCase();

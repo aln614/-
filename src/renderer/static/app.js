@@ -5096,9 +5096,60 @@ function setupChatDrop(){
 }
 setupChatDrop();
 
+let homepageReferencePasteUntil = 0;
+function canPasteHomepageReferences(){
+  if(!$('#page-home')?.classList.contains('active') || shortcutState.recording) return false;
+  return !document.querySelector('#assetLibraryLayer.active, #promptLibraryLayer.active, #agentPopoutModal.active, #chatPopoutModal.active, #shortcutSettingsLayer.active, .modal.active, .modal.show');
+}
+function markHomepageReferencePaste(){
+  homepageReferencePasteUntil = canPasteHomepageReferences() ? Date.now() + 1500 : 0;
+}
+function clearHomepageReferencePaste(){ homepageReferencePasteUntil = 0; }
+function consumeHomepageReferencePaste(){
+  const requested = homepageReferencePasteUntil > Date.now() && canPasteHomepageReferences();
+  clearHomepageReferencePaste();
+  return requested;
+}
+// Ctrl+Shift+V normally strips images. Desktop shells request a gesture-gated native paste.
+document.addEventListener('keydown', event=>{
+  clearHomepageReferencePaste();
+  if(event.defaultPrevented || event.isComposing || !event.ctrlKey || !event.shiftKey || event.altKey || event.metaKey || !(event.code === 'KeyV' || String(event.key).toLowerCase() === 'v') || !canPasteHomepageReferences()) return;
+  markHomepageReferencePaste();
+  const nativePaste = window.electronAPI?.pasteReferenceImages || window.lanClient?.pasteReferenceImages;
+  if(typeof nativePaste === 'function'){
+    event.preventDefault();
+    nativePaste();
+  }else if(!window.isSecureContext || typeof navigator.clipboard?.read !== 'function'){
+    event.preventDefault();
+    clearHomepageReferencePaste();
+    $('#refDrop')?.focus({preventScroll:true});
+    toast('当前浏览器限制图片快捷粘贴，请在参考图区按 Ctrl+V，或使用桌面客户端');
+  }
+}, true);
+document.addEventListener('pointerdown', clearHomepageReferencePaste, true);
+window.addEventListener('blur', clearHomepageReferencePaste);
+
 document.addEventListener('paste', async e => {
+  const pasteIntoReferences = consumeHomepageReferencePaste() || (canPasteHomepageReferences() && !!e.target?.closest?.('#refDrop'));
+  if(e.defaultPrevented) return;
   const items = [...(e.clipboardData?.items || [])];
   const clipboardFiles = [...(e.clipboardData?.files || [])];
+  if(pasteIntoReferences && !clipboardFiles.some(file=>String(file.type).startsWith('image/')) && !items.some(item=>String(item.type).startsWith('image/')) && window.isSecureContext && typeof navigator.clipboard?.read === 'function'){
+    // Secure browser access needs the Clipboard API because native plain-text paste hides image MIME types.
+    try{
+      const clipboardItems = await navigator.clipboard.read();
+      const files = [];
+      for(const item of clipboardItems){
+        const type = item.types.find(type=>type.startsWith('image/'));
+        if(type){
+          const blob = await item.getType(type);
+          files.push(new File([blob], `clipboard-${Date.now()}-${files.length}.${type.split('/')[1] || 'png'}`, {type}));
+        }
+      }
+      if(files.length){ await addFiles(files, 'ref'); toast(`已粘贴 ${files.length} 张附加参考图`); }
+    }catch(error){ toast('无法读取剪贴板图片，请允许浏览器剪贴板权限，或在参考图区使用 Ctrl+V'); }
+    return;
+  }
   if(!items.length && !clipboardFiles.length) return;
   if($('#assetLibraryLayer')?.classList.contains('active')){
     const assetFiles = [...clipboardFiles];
@@ -5128,6 +5179,15 @@ document.addEventListener('paste', async e => {
     else otherFiles.push(file);
   }
   if(!imageFiles.length && !videoFiles.length && !audioFiles.length && !otherFiles.length) return;
+
+  if(pasteIntoReferences && imageFiles.length){
+    e.preventDefault();
+    try{
+      await addFiles(imageFiles, 'ref');
+      toast(`已粘贴 ${imageFiles.length} 张附加参考图`);
+    }catch(error){ toast(error.message || '参考图粘贴失败，请重试'); }
+    return;
+  }
 
   if($('#page-video')?.classList.contains('active')){
     e.preventDefault();
@@ -9993,6 +10053,7 @@ function shortcutValidationError(settings={}){
   for(const action of Object.keys(SHORTCUT_DEFAULTS)){
     const value = normalizeShortcutText(settings[action]);
     if(!value) return `${SHORTCUT_LABELS[action]}：必须至少包含一个修饰键，并使用字母、数字或 F1-F12。`;
+    if(value === 'Ctrl+Shift+V') return 'Ctrl+Shift+V 已用于粘贴附加参考图，请选择其他快捷键。';
     if(SHORTCUT_BLOCKED.has(value)) return `${shortcutDisplay(value)} 是系统常用或高风险快捷键，请更换。`;
     values.push(value);
   }
@@ -10125,6 +10186,7 @@ function setupShortcutSettings(){
       if(['Control','Shift','Alt','Meta'].includes(event.key)) return;
       const value = shortcutFromKeyboardEvent(event);
       if(!value) return setShortcutMessage('请同时按下 Ctrl / Alt / Shift / Cmd 与字母、数字或 F1-F12。','error');
+      if(value === 'Ctrl+Shift+V') return setShortcutMessage('Ctrl+Shift+V 已用于粘贴附加参考图，请选择其他快捷键。','error');
       if(SHORTCUT_BLOCKED.has(value)) return setShortcutMessage(`${shortcutDisplay(value)} 是系统常用或高风险快捷键，请更换。`,'error');
       const duplicate = Object.entries(shortcutState.draft.settings).find(([action,current])=>action!==shortcutState.recording && normalizeShortcutText(current)===value);
       if(duplicate) return setShortcutMessage('该快捷键已被使用，请重新设置。','error');

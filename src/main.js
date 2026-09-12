@@ -745,7 +745,15 @@ function normalizeShortcutAccelerator(value = '') {
 
 function validateShortcutConfiguration(input = {}, strict = false) {
   const enabled = input.shortcuts_enabled !== false;
-  const source = input.shortcut_settings && typeof input.shortcut_settings === 'object' ? input.shortcut_settings : {};
+  const source = { ...(input.shortcut_settings && typeof input.shortcut_settings === 'object' ? input.shortcut_settings : {}) };
+  let repaired = false;
+  for (const key of Object.keys(DEFAULT_SHORTCUT_SETTINGS)) {
+    if (normalizeShortcutAccelerator(source[key]) !== 'Ctrl+Shift+V') continue;
+    if (strict) throw new Error('Ctrl+Shift+V 已用于粘贴附加参考图，请选择其他快捷键。');
+    const used = new Set(Object.entries(DEFAULT_SHORTCUT_SETTINGS).filter(([other]) => other !== key).map(([other, fallback]) => normalizeShortcutAccelerator(source[other] || fallback)));
+    source[key] = [DEFAULT_SHORTCUT_SETTINGS[key], ...Object.values(DEFAULT_SHORTCUT_SETTINGS)].find(value => !used.has(value));
+    repaired = true;
+  }
   const settings = {};
   try {
     for (const key of Object.keys(DEFAULT_SHORTCUT_SETTINGS)) {
@@ -756,7 +764,7 @@ function validateShortcutConfiguration(input = {}, strict = false) {
       settings[key] = normalized;
     }
     if (new Set(Object.values(settings)).size !== Object.keys(settings).length) throw new Error('快捷键不能重复，请重新设置。');
-    return { shortcuts_enabled: enabled, shortcut_settings: settings, repaired: false };
+    return { shortcuts_enabled: enabled, shortcut_settings: settings, repaired };
   } catch (error) {
     if (strict) throw error;
     return { shortcuts_enabled: true, shortcut_settings: { ...DEFAULT_SHORTCUT_SETTINGS }, repaired: true };
@@ -9518,6 +9526,19 @@ function createWindow() {
     webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: false, webSecurity: true, allowRunningInsecureContent: false, preload: path.join(__dirname, 'preload.js') }
   });
   setupImageContextMenu(mainWindow);
+  let referencePasteGestureUntil = 0;
+  mainWindow.on('blur', () => { referencePasteGestureUntil = 0; });
+  mainWindow.webContents.on('before-input-event', (_event, input) => {
+    const referencePasteKey = input.control && input.shift && !input.alt && !input.meta && !input.isComposing && (input.code === 'KeyV' || String(input.key).toLowerCase() === 'v');
+    mainWindow.webContents.setIgnoreMenuShortcuts(!!referencePasteKey);
+    if(input.type === 'keyDown') referencePasteGestureUntil = referencePasteKey ? Date.now() + 1500 : 0;
+  });
+  // Only a real foreground key gesture grants a one-shot native paste, never arbitrary clipboard reads.
+  mainWindow.webContents.on('ipc-message', (_event, channel) => {
+    if(channel !== 'reference-image-paste' || Date.now() > referencePasteGestureUntil) return;
+    referencePasteGestureUntil = 0;
+    mainWindow.webContents.paste();
+  });
   mainWindow.webContents.setWindowOpenHandler(({ url: target }) => {
     if (/^https?:\/\//i.test(String(target || ''))) shell.openExternal(target).catch(()=>{});
     return { action: 'deny' };
