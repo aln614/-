@@ -4433,3 +4433,8 @@ body.theme-dark *::-webkit-scrollbar-thumb:hover{
   width:0!important;
   height:0!important;
 }
+.asset-load-status { display:flex; align-items:center; gap:12px; padding:10px 16px; font-size:12px; line-height:1.6; flex-shrink:0; }
+.asset-load-status[hidden] { display:none; }
+.asset-load-status span { flex:1; min-width:0; overflow-wrap:anywhere; }
+.asset-load-status.error { color:#c43844; }
+.asset-load-status button { flex-shrink:0; }

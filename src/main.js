@@ -12,6 +12,7 @@ const { app, BrowserWindow, Tray, shell, Menu, clipboard, nativeImage, ipcMain, 
 const { spawn } = require('child_process');
 const { initDB, getDB, addLog, listBatches, listImages, listLogs, nowISO, uuid, setNetworkTimeOffset, getNetworkTimeInfo } = require('./services/db');
 const { TaskQueue } = require('./services/taskQueue');
+const assetIndex = require('./services/assetIndex');
 const { chatCompletion, getApimartChatModels, refreshApimartChatModels, APIMART_IMAGE_MODELS } = require('./services/apiClient');
 const { safeName, ensureDir, makeDirs, createThumb, convertImageToUploadPng, removeTemporaryUploadFile, downloadToFile } = require('./services/cache');
 const { APIMART_PRICING_URL, createFallbackPricingCatalog, createLivePricingCatalog } = require('./services/apimartPricing');
@@ -5705,14 +5706,24 @@ function scheduleOutputMediaIndex() {
 let runtimeMirrorInFlight = null;
 let runtimeMirrorPending = null;
 const runtimeMirrorSignatures = new Map();
-async function copyRuntimeMirrorFile(source, destination) {
+async function copyRuntimeMirrorFile(source, destination, validate = null) {
   let stat = null;
   try { stat = await fs.promises.stat(source); } catch { return false; }
   const key = path.resolve(destination);
   const signature = `${path.resolve(source)}|${stat.size}|${stat.mtimeMs}`;
   if (runtimeMirrorSignatures.get(key) === signature) return false;
   await fs.promises.mkdir(path.dirname(destination), { recursive:true });
-  await fs.promises.copyFile(source, destination);
+  if (validate) {
+    const data = await fs.promises.readFile(source);
+    validate(data);
+    const temp = `${destination}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`;
+    try {
+      await fs.promises.writeFile(temp, data, {flag:'wx'});
+      await fs.promises.rename(temp, destination);
+    } finally { await fs.promises.unlink(temp).catch(()=>{}); }
+  } else {
+    await fs.promises.copyFile(source, destination);
+  }
   runtimeMirrorSignatures.set(key, signature);
   return true;
 }
@@ -5781,7 +5792,7 @@ async function runRuntimeDataMirror(cfg = readConfig(), opts = {}) {
       const storeFile = currentStoreFilePath();
       await copyRuntimeMirrorFile(storeFile, path.join(dir, 'data', 'store.json'));
       const assetFile = assetDbPath(cfg);
-      if (assetFile) await copyRuntimeMirrorFile(assetFile, path.join(dir, 'assets_meta', 'assets_db.json'));
+      if (assetFile) await copyRuntimeMirrorFile(assetFile, path.join(dir, 'assets_meta', 'assets_db.json'), assetIndex.parseIndex);
     }
     return true;
   } catch {
@@ -5960,25 +5971,14 @@ function assetDbPath(cfg=readConfig()) {
   return path.join(base, 'meta', 'assets_db.json');
 }
 function readAssetDb(cfg=readConfig()) {
-  const p = assetDbPath(cfg);
-  if (!fs.existsSync(p)) {
-    const db = { groups: [], assets: [], created_at: nowISO(), updated_at: nowISO() };
-    fs.writeFileSync(p, JSON.stringify(db, null, 2), 'utf8');
-    return db;
-  }
-  try {
-    const db = JSON.parse(fs.readFileSync(p, 'utf8'));
-    db.groups = Array.isArray(db.groups) ? db.groups : [];
-    db.assets = Array.isArray(db.assets) ? db.assets : [];
-    return db;
-  } catch {
-    return { groups: [], assets: [], created_at: nowISO(), updated_at: nowISO() };
-  }
+  return assetIndex.read(assetDbPath(cfg), {filesDir:path.join(defaultAssetLibraryDir(cfg), 'files'), backupDir:assetIndexBackupDir(cfg), now:nowISO});
+}
+function assetIndexBackupDir(cfg=readConfig()) {
+  const key = crypto.createHash('sha256').update(pathKey(defaultAssetLibraryDir(cfg))).digest('hex').slice(0,24);
+  return path.join(DATA_ROOT, 'data', 'asset_index_backups', key);
 }
 function writeAssetDb(db, cfg=readConfig()) {
-  db.updated_at = nowISO();
-  fs.writeFileSync(assetDbPath(cfg), JSON.stringify(db, null, 2), 'utf8');
-  return db;
+  return assetIndex.write(assetDbPath(cfg), db, {backupDir:assetIndexBackupDir(cfg), now:nowISO});
 }
 function ensureDefaultAssetGroups(db, ownerId) {
   // V14.10.37: 用户不需要任何强制默认库。保留旧数据，但不再自动创建默认资产库/角色/场景/智能分类。

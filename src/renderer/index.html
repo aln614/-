@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>TENYING_AI 1.0</title>
-  <link rel="stylesheet" href="/static/style.css?v=1.0.98" />
+  <link rel="stylesheet" href="/static/style.css?v=1.0.99" />
 </head>
 <body>
   <div class="app-shell">
@@ -773,6 +773,7 @@
           <div class="asset-main-head"><div><h2 id="assetCurrentGroupTitle">资产库</h2><p id="assetCurrentGroupMeta">0 个素材</p></div><div class="asset-main-actions"><div class="asset-drop-status" id="assetDropStatus">拖入文件到右侧任意位置即可上传</div></div></div>
           <div class="asset-bulk-bar hidden" id="assetBulkBar"><b id="assetBulkCount">已选择 0 个素材</b><button class="secondary" id="assetSelectAllBtn">全选</button><button class="secondary" id="assetInvertBtn">反选</button><button class="secondary" id="assetClearSelectionBtn">清空</button><button class="secondary" id="assetDownloadSelectedBtn">下载所选</button><button class="secondary" id="assetShareSelectedBtn">共享所选</button><button class="danger" id="assetDeleteSelectedBtn">删除所选</button></div>
           <div class="asset-drop-hint" id="assetDropZone"><span>支持拖拽文件到素材区上传，支持图片、视频、PDF、ZIP 等附件。</span></div>
+          <div id="assetLoadStatus" class="asset-load-status" role="status" hidden><span id="assetLoadMessage"></span><button id="assetLoadRetryBtn" type="button" class="secondary" hidden>重新加载</button></div>
           <div class="asset-grid" id="assetGrid"></div>
         </section>
       </div>
@@ -1022,6 +1023,6 @@
       </div>
     </div>
   </div>
-  <script src="/static/app.js?v=1.0.98"></script>
+  <script src="/static/app.js?v=1.0.99"></script>
 </body>
 </html>

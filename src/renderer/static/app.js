@@ -10973,15 +10973,42 @@ function assetApplyLoadedFilter(){
   const visibleIds=new Set(assetState.assets.map(asset=>asset.id));
   assetState.selected.forEach(id=>{ if(!visibleIds.has(id)) assetState.selected.delete(id); });
 }
+let assetLibraryLoadSequence = 0;
+function renderAssetLoadStatus(){
+  const status = $('#assetLoadStatus');
+  if(!status) return;
+  status.hidden = !assetState.loading && !assetState.loadError;
+  $('#assetLoadMessage').textContent = assetState.loadError || (assetState.loading ? '正在读取资产库...' : '');
+  status.classList.toggle('error', !!assetState.loadError);
+  $('#assetLoadRetryBtn').hidden = !assetState.loadError;
+  if(!assetState.ready){
+    if($('#assetCurrentGroupTitle')) $('#assetCurrentGroupTitle').textContent = assetState.loadError ? '资产库暂时无法读取' : '正在读取资产库';
+    if($('#assetCurrentGroupMeta')) $('#assetCurrentGroupMeta').textContent = assetState.loadError ? '读取失败不代表素材已删除' : '';
+    if($('#assetGroupTree')) $('#assetGroupTree').innerHTML = '';
+    if($('#assetGrid')) $('#assetGrid').innerHTML = '';
+  }
+}
 async function loadAssetLibrary(){
+  const sequence = ++assetLibraryLoadSequence;
+  assetState.loading = true;
+  assetState.loadError = '';
+  renderAssetLoadStatus();
   try{
     const ret = await api('/api/assets/init');
+    if(sequence !== assetLibraryLoadSequence) return;
+    if(!ret || !Array.isArray(ret.groups) || !Array.isArray(ret.assets)) throw new Error('资产库返回数据异常，原有内容未清空，请重试。');
     assetState.ready = true; assetState.groups = ret.groups || []; assetState.allAssets = ret.assets || []; assetState.assets = ret.assets || []; assetState.isHost = !!ret.is_host; assetState.clientId = ret.client_id || ''; assetState.settings = ret.settings || {};
     if(!assetState.currentGroup || !assetState.groups.some(g=>g.id===assetState.currentGroup)) assetState.currentGroup = assetState.groups[0]?.id || '';
     if($('#assetLibraryDir')) $('#assetLibraryDir').value = assetState.settings.dir || '';
     assetApplyLoadedFilter();
     renderAssetLibrary();
-  }catch(e){ toast(e.message || '资产库加载失败'); }
+  }catch(e){
+    if(sequence !== assetLibraryLoadSequence) return;
+    assetState.loadError = e.message || '资产库加载失败，请检查网络目录后重试。';
+    toast(assetState.loadError);
+  }finally{
+    if(sequence === assetLibraryLoadSequence){ assetState.loading = false; renderAssetLoadStatus(); }
+  }
 }
 async function loadAssetAssets({skipTree=true}={}){
   assetApplyLoadedFilter();
@@ -11170,6 +11197,7 @@ function renderAssetLibrary({skipTree=false}={}){
     assetHydrateCardMedia();
   }
   scheduleAssetTextFit(!skipTree);
+  renderAssetLoadStatus();
   requestAnimationFrame(()=>assetRefreshOverlayScrollbars(false));
 }
 async function assetCreateGroup(parentId=''){
@@ -11607,6 +11635,7 @@ function assetBeginRename(card){
 }
 function setupAssetLibrary(){
   $('#assetLibraryBtn')?.addEventListener('click', openAssetLibrary);
+  $('#assetLoadRetryBtn')?.addEventListener('click', loadAssetLibrary);
   $('#assetLibraryWindow')?.addEventListener('pointerdown', ()=>bringFloatingLayer('#assetLibraryLayer', '#assetLibraryWindow'), true);
   $('#promptLibraryWindow')?.addEventListener('pointerdown', ()=>bringFloatingLayer('#promptLibraryLayer', '#promptLibraryWindow'), true);
   $('#closeAssetLibraryWindow')?.addEventListener('click', closeAssetLibrary);
