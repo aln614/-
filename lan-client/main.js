@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { registerFolderExport } = require('./folderExport');
 const { app, BrowserWindow, Menu, Tray, clipboard, globalShortcut, ipcMain, nativeImage, shell } = require('electron');
 
 const DEFAULT_HOST_URL = 'http://192.168.110.30:7868';
@@ -328,6 +329,7 @@ function createWindow() {
   loadHostApp();
 }
 
+registerFolderExport({getWindow:() => mainWindow, isAllowedOrigin:isActiveHost});
 ipcMain.handle('lan-client:get-config', () => ({ ...readConnectionConfig(), default_host_url: DEFAULT_HOST_URL }));
 ipcMain.handle('lan-client:save-host', async (_event, hostUrl) => {
   const config = writeConnectionConfig(hostUrl);

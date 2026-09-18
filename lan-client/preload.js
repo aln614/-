@@ -1,6 +1,15 @@
 'use strict';
 
 const { contextBridge, ipcRenderer } = require('electron');
+contextBridge.exposeInMainWorld('folderExport', {
+  start: payload => ipcRenderer.invoke('folder-export:start', payload),
+  cancel: id => ipcRenderer.send('folder-export:cancel', id),
+  onProgress: callback => {
+    const listener = (_event, progress) => callback(progress);
+    ipcRenderer.on('folder-export:progress', listener);
+    return () => ipcRenderer.removeListener('folder-export:progress', listener);
+  }
+});
 
 let lastCtrlWheelZoomAt = 0;
 window.addEventListener('wheel', event => {

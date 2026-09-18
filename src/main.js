@@ -13,6 +13,8 @@ const { spawn } = require('child_process');
 const { initDB, getDB, addLog, listBatches, listImages, listLogs, nowISO, uuid, setNetworkTimeOffset, getNetworkTimeInfo } = require('./services/db');
 const { TaskQueue } = require('./services/taskQueue');
 const assetIndex = require('./services/assetIndex');
+const { buildExportManifest } = require('./services/exportManifest');
+const { registerFolderExport } = require('../lan-client/folderExport');
 const { chatCompletion, getApimartChatModels, refreshApimartChatModels, APIMART_IMAGE_MODELS } = require('./services/apiClient');
 const { safeName, ensureDir, makeDirs, createThumb, convertImageToUploadPng, removeTemporaryUploadFile, downloadToFile } = require('./services/cache');
 const { APIMART_PRICING_URL, createFallbackPricingCatalog, createLivePricingCatalog } = require('./services/apimartPricing');
@@ -2840,7 +2842,7 @@ registerApimartVideoRules([
   { model:'MiniMax-Hailuo-2.3', label:'MiniMax Hailuo 2.3', resolutions:['768p','1080p'], defaultResolution:'768p', aspectParam:false, durations:[6,10], defaultDuration:6, supportsImageUrls:false, imageParam:'first_frame_image', maxImageCount:1, resolutionDurationRules:{'1080p':[6]}, watermarkParam:'watermark', promptOptimizerParam:'prompt_optimizer' },
   { model:'MiniMax-Hailuo-2.3-Fast', label:'MiniMax Hailuo 2.3 Fast', resolutions:['768p','1080p'], defaultResolution:'768p', aspectParam:false, durations:[6,10], defaultDuration:6, supportsImageUrls:false, imageParam:'first_frame_image', minImageCount:1, maxImageCount:1, resolutionDurationRules:{'1080p':[6]}, watermarkParam:'watermark', promptOptimizerParam:'prompt_optimizer' },
   { model:'MiniMax-H3', label:'MiniMax H3', resolutions:['2K','768P'], defaultResolution:'2K', aspectRatios:['21:9','16:9','4:3','1:1','3:4','9:16'], defaultAspectRatio:'16:9', durationRange:[4,15], defaultDuration:5, supportsImageUrls:true, supportsVideoUrls:true, supportsImageWithRoles:true, supportsLastFrame:true, imageParam:'first_frame_image', videoParam:'video_urls', maxImageCount:9, maxVideoCount:3, referenceVideoDurationRange:[2,15], referenceVideoTotalDurationMax:15, durationWithVideo:true, omitAspectWithImageModes:['first_frame','first_last_frame'], disallowFrameReferenceMix:true, audioReferenceParam:'audio_urls', maxAudioCount:3, audioRequiresReference:true, audioMinDuration:2, audioMaxDuration:15, audioTotalDuration:15, audioReferenceMaxBytes:15*1024*1024, watermarkParam:'watermark' },
-  { model:'MiniMax-H3-Max', label:'MiniMax H3 Max', resolutions:['768P','480P'], defaultResolution:'768P', aspectRatios:['21:9','16:9','4:3','1:1','3:4','9:16'], defaultAspectRatio:'16:9', durationRange:[5,15], defaultDuration:5, supportsImageUrls:false, supportsVideoUrls:false, supportsImageWithRoles:false, supportsLastFrame:true, imageParam:'first_frame_image', allowedImageCounts:[0,1,2], maxImageCount:2, frameOnlyImages:true, omitAspectWithImages:true, supportsSeed:false },
+  { model:'MiniMax-H3-Max', label:'MiniMax H3 Max', resolutions:['768P','480P','1080P'], defaultResolution:'768P', aspectRatios:['21:9','16:9','4:3','1:1','3:4','9:16'], defaultAspectRatio:'16:9', durationRange:[5,15], defaultDuration:5, supportsImageUrls:true, supportsVideoUrls:true, supportsImageWithRoles:true, supportsLastFrame:true, imageParam:'first_frame_image', videoParam:'video_urls', maxImageCount:9, maxVideoCount:3, referenceVideoDurationRange:[2,15], referenceVideoTotalDurationMax:15, durationWithVideo:true, omitAspectWithImageModes:['first_frame','first_last_frame'], disallowFrameReferenceMix:true, audioReferenceParam:'audio_urls', maxAudioCount:3, audioRequiresReference:true, audioMinDuration:2, audioMaxDuration:15, audioTotalDuration:15, audioReferenceMaxBytes:15*1024*1024, watermarkParam:'watermark', watermarkOmitResolutions:['1080p'], promptMaxLength:7000, supportsSeed:false },
   { model:'skyreels-v4-fast', label:'SkyReels V4 Fast', resolutions:['480p','720p','1080p'], defaultResolution:'1080p', aspectRatios:['16:9','4:3','1:1','9:16','3:4'], durationRange:[3,15], supportsImageUrls:true, supportsVideoUrls:true, imageParam:'skyreels', videoParam:'ref_videos', maxImageCount:15, maxVideoCount:1, durationWithVideo:true, omitAspectWithImageModes:['first_frame','first_last_frame'], omitAspectWithVideo:true, disallowFrameReferenceMix:true, promptOptimizerParam:'prompt_optimizer', audioReferenceParam:'ref_image_audio_url', maxAudioCount:1, audioRequiresImage:true, audioMaxDuration:15, audioReferenceMaxBytes:15*1024*1024 },
   { model:'skyreels-v4-std', label:'SkyReels V4 Std', resolutions:['480p','720p','1080p'], defaultResolution:'1080p', aspectRatios:['16:9','4:3','1:1','9:16','3:4'], durationRange:[3,15], supportsImageUrls:true, supportsVideoUrls:true, imageParam:'skyreels', videoParam:'ref_videos', maxImageCount:15, maxVideoCount:1, durationWithVideo:true, omitAspectWithImageModes:['first_frame','first_last_frame'], omitAspectWithVideo:true, disallowFrameReferenceMix:true, promptOptimizerParam:'prompt_optimizer', audioReferenceParam:'ref_image_audio_url', maxAudioCount:1, audioRequiresImage:true, audioMaxDuration:15, audioReferenceMaxBytes:15*1024*1024 },
   { model:'happyhorse-1.0', label:'HappyHorse 1.0', resolutions:['720P','1080P'], defaultResolution:'1080P', aspectRatios:['16:9','9:16','1:1','4:3','3:4'], aspectParam:'size', durationRange:[3,15], supportsImageUrls:true, supportsVideoUrls:true, imageParam:'first_frame_image', videoParam:'video_url', maxImageCount:9, videoMaxImageCount:5, referenceVideoDurationRange:[3,60], omitAspectWithVideo:true, watermarkParam:'watermark', audioSettingParam:'audio_setting', audioSettingValues:['auto','origin'], promptOptionalModes:['first_frame'] },
@@ -2883,6 +2885,9 @@ const APIMART_VIDEO_MODEL_ALIASES = Object.freeze({
   'veo3.1-lite-ext': 'veo3.1-lite',
   'grok-imagine-1.5-video-ext': 'grok-imagine-1.5-video-apimart'
 });
+registerApimartVideoRules([
+  { ...APIMART_VIDEO_MODEL_RULES['wan3.0-video'], model:'wan3.0-video-prime', label:'Wan3.0 Video Prime', durationRange:[2,30] }
+]);
 function canonicalApimartVideoModel(model = 'Omni-Flash-Ext') {
   const raw = String(model || 'Omni-Flash-Ext').trim();
   if (!raw || raw.toLowerCase() === 'omni-flash-ext') return 'Omni-Flash-Ext';
@@ -4482,7 +4487,7 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
       const requestedAudioSetting = String(body.audio_setting || allowedAudioSettings[0] || 'auto').toLowerCase();
       payload.metadata = { ...(payload.metadata || {}), [rule.audioSettingParam]: allowedAudioSettings.includes(requestedAudioSetting) ? requestedAudioSetting : allowedAudioSettings[0] };
     }
-    if (rule.watermarkParam) payload[rule.watermarkParam] = body.watermark === true;
+    if (rule.watermarkParam && !(rule.watermarkOmitResolutions || []).includes(String(normalizedResolution).toLowerCase())) payload[rule.watermarkParam] = body.watermark === true;
     if (rule.cameraFixedParam) payload[rule.cameraFixedParam] = body.camera_fixed === true;
     if (rule.returnLastFrameParam) payload[rule.returnLastFrameParam] = body.return_last_frame === true;
     if (rule.outputFormatParam) {
@@ -6973,6 +6978,46 @@ function exportZip(batchId, owner, ids = null) {
   zipFiles(images.map(i => i.file_path), zipPath, name);
   return zipPath;
 }
+function selectedExportRows(body, local, cfg, deviceOwner, owner) {
+  const store = getDB()._store;
+  const scopedOwner = local && body.all_owners === true ? '' : owner;
+  const canAccess = row => !scopedOwner || row.owner_id === scopedOwner;
+  const ids = field => {
+    const value = body[field] || [];
+    if (!Array.isArray(value) || value.length > 50000 || value.some(id => typeof id !== 'string')) throw new Error('无效下载选择');
+    return [...new Set(value)];
+  };
+  const batchIds = ids('batch_ids'), imageIds = ids('image_ids'), videoIds = ids('video_ids'), assetIds = ids('asset_ids');
+  const rows = [];
+  const batchesById = new Map((store.batches || []).filter(canAccess).map(row => [row.id, row]));
+  const selectedBatches = new Set(batchIds);
+  if (batchIds.some(id => !batchesById.has(id))) throw new Error('批次不存在或无权限');
+  const images = new Map((store.images || []).filter(canAccess).map(row => [row.id, row]));
+  if (imageIds.some(id => !images.has(id))) throw new Error('图片不存在或无权限');
+  const selectedImages = new Set(imageIds);
+  for (const image of images.values()) {
+    if (!selectedBatches.has(image.batch_id) && !selectedImages.has(image.id)) continue;
+    if (image.is_input || image.is_reference || image.input_source || image.reference_source || /input|reference|upload/i.test(image.mj_source || image.source || '')) continue;
+    const batch = batchesById.get(image.batch_id);
+    rows.push({kind:'image', id:image.id, file:image.file_path, name:path.basename(image.file_path || image.id + '.png'), folderId:'image:' + image.batch_id, folder:batch?.note || batch?.name || image.batch_id || 'Images'});
+  }
+  const videos = new Map((store.video_tasks || []).filter(canAccess).map(row => [row.id, row]));
+  for (const id of videoIds) {
+    const video = videos.get(id);
+    if (!video) throw new Error('视频不存在或无权限');
+    rows.push({kind:'video', id, file:video.file_path, name:path.basename(video.file_path || id + '.mp4'), folderId:'video:' + (video.video_batch_id || id), folder:video.video_batch_name || video.video_batch_id || 'Videos'});
+  }
+  if (assetIds.length) {
+    const db = readAssetDb(cfg), groups = new Map(db.groups.map(row => [row.id, row]));
+    const assets = new Map(visibleAssets(db, local, assetClientId(local, deviceOwner)).map(row => [row.id, row]));
+    for (const id of assetIds) {
+      const asset = assets.get(id);
+      if (!asset) throw new Error('资产不存在或无权限');
+      rows.push({kind:'asset', id, file:asset.local_path, name:asset.name, folderId:'asset:' + asset.group_id, folder:groups.get(asset.group_id)?.name || 'Assets'});
+    }
+  }
+  return rows;
+}
 function isExportableGeneratedImage(img) {
   if(!img || !img.file_path || !fs.existsSync(img.file_path)) return false;
   if(img.is_input || img.is_reference || img.input_source || img.reference_source) return false;
@@ -9033,6 +9078,19 @@ async function apiHandler(req, res, parsed) {
       const pageSize = Math.max(20, Math.min(300, Number(parsed.query.limit || parsed.query.page_size || 120)));
       return send(res, listLogs({ownerId:dataOwner, page:1, pageSize}));
     }
+    if (method === 'POST' && p === '/api/export_manifest') {
+      const body = await readBody(req);
+      const result = await buildExportManifest(selectedExportRows(body, local, cfg, deviceOwner, owner));
+      if (local && body.all_owners === true) result.entries.forEach(entry => { entry.url += '&all_owners=1'; });
+      return send(res, result);
+    }
+    if (method === 'GET' && p === '/api/export_file') {
+      const field = {image:'image_ids', video:'video_ids', asset:'asset_ids'}[parsed.query.kind];
+      if (!field) return send(res, {ok:false, error:'无效文件类型'}, 400);
+      const rows = selectedExportRows({[field]:[String(parsed.query.id || '')], all_owners:parsed.query.all_owners === '1'}, local, cfg, deviceOwner, owner);
+      if (!rows[0]?.file) return send(res, {ok:false,error:'原文件尚未保存或无权限'}, 404);
+      return await sendDiskFile(req, res, rows[0].file, {download:true, filename:rows[0].name, cacheControl:'private, no-store'});
+    }
     if (method === 'GET' && p === '/api/export_zip') { const zipPath=exportZip(parsed.query.batch_id, owner); return send(res,{ok:true,url:`/download?path=${encodeURIComponent(zipPath)}`}); }
     if (method === 'POST' && p === '/api/export_selected_zip') { const body=await readBody(req); const zipPath=exportZip(body.batch_id, owner, body.image_ids||[]); return send(res,{ok:true,url:`/download?path=${encodeURIComponent(zipPath)}`}); }
     if (method === 'POST' && p === '/api/export_batches_zip') { const body=await readBody(req); const zipPath=exportBatchesZip(body.batch_ids||[], owner); return send(res,{ok:true,url:`/download?path=${encodeURIComponent(zipPath)}`}); }
@@ -9359,12 +9417,15 @@ async function sendDiskFile(req, res, file, opts = {}) {
     'Content-Type': opts.type || contentType(file),
     'Content-Length': stat.size,
     'Access-Control-Allow-Origin':'*',
-    'Cache-Control':'public, max-age=86400'
+    'Cache-Control':opts.cacheControl || 'public, max-age=86400'
   };
   if (opts.download) headers['Content-Disposition'] = `attachment; filename*=UTF-8''${encodeURIComponent(opts.filename || path.basename(file))}`;
   if (req.method === 'HEAD') { res.writeHead(200, headers); return res.end(); }
   res.writeHead(200, headers);
-  return fs.createReadStream(file).pipe(res);
+  const stream = fs.createReadStream(file);
+  stream.on('error', () => res.destroy());
+  res.once('close', () => stream.destroy());
+  return stream.pipe(res);
 }
 async function serveFileRequest(req, res, parsed) {
   const cfg = readConfig();
@@ -9477,6 +9538,9 @@ function setupImageContextMenu(win) {
 }
 
 
+registerFolderExport({getWindow:() => mainWindow, isAllowedOrigin:address => {
+  try { return new URL(address).origin === `http://127.0.0.1:${readConfig().port || DEFAULT_CONFIG.port}`; } catch { return false; }
+}});
 ipcMain.handle('start-image-drag', async (event, payload = {}) => {
   try {
     const info = resolveImageInfoFromSrc(payload.fullUrl || payload.url || '');

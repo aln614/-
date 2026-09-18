@@ -4438,3 +4438,19 @@ body.theme-dark *::-webkit-scrollbar-thumb:hover{
 .asset-load-status span { flex:1; min-width:0; overflow-wrap:anywhere; }
 .asset-load-status.error { color:#c43844; }
 .asset-load-status button { flex-shrink:0; }
+.folder-download-status {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100000;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  padding: 12px 16px;
+  border-radius: 8px;
+}
+.folder-download-status span { overflow-wrap: anywhere; min-width: 0; }
+.folder-download-status button { flex-shrink: 0; }

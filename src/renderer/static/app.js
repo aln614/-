@@ -1221,7 +1221,7 @@ function withPublicAccess(url){
   if(!url || /^data:/i.test(url) || /^blob:/i.test(url)) return url;
   try{
     const u = new URL(url, location.href);
-    const needsLocalParams = (u.pathname === '/file' || u.pathname === '/download' || u.pathname === '/preview-image' || u.pathname === '/video-file' || u.pathname === '/api/assets/source');
+    const needsLocalParams = (u.pathname === '/file' || u.pathname === '/download' || u.pathname === '/preview-image' || u.pathname === '/video-file' || u.pathname === '/api/assets/source' || u.pathname === '/api/export_file');
     if(needsLocalParams){
       // V12.9：公网/局域网都和 API 请求一样携带设备ID，保证图片/视频数据隔离下也能正确预览。
       if(!u.searchParams.get('client_id')) u.searchParams.set('client_id', getClientId());
@@ -5682,7 +5682,7 @@ function batchCard(b){
     <div class="batch-top"><div><div class="batch-name batch-edit-note" data-id="${b.id}" title="双击修改备注">${escapeHtml(b.name)}</div><div class="batch-meta">创建：${formatBeijingTime(b.created_at)}</div><div class="batch-note batch-edit-note" data-id="${b.id}" title="双击修改备注">备注：${escapeHtml(note || '双击这里添加备注名')}</div></div><div class="batch-top-status">${batchDurationMarkup(b)}<span class="status ${statusClass(b.status)}">${b.status}</span></div></div>
     <div class="progress"><div class="bar" style="width:${p}%"></div></div>
     <div class="batch-meta"><span>模型：${escapeHtml(b.model)}</span><span>尺寸：${b.size}</span><span>并发：${b.concurrency}</span><span>任务：${b.task_count}</span><span>成功：${b.success_count}</span><span>失败：${b.fail_count}</span><span>进度：${p}%</span></div>
-    <div class="actions"><button class="secondary act-images" data-id="${b.id}">查看图片</button><button class="secondary act-repeat" data-id="${b.id}">重复批次</button><button class="primary act-zip" data-id="${b.id}">导出全部ZIP</button><button class="danger act-delete" data-id="${b.id}">删除</button></div>
+    <div class="actions"><button class="secondary act-images" data-id="${b.id}">查看图片</button><button class="secondary act-repeat" data-id="${b.id}">重复批次</button><button class="primary act-zip" data-id="${b.id}">保存全部到文件夹</button><button class="danger act-delete" data-id="${b.id}">删除</button></div>
   </div>`;
 }
 $$('.filters:not(.history-filters) .chip').forEach(c=>c.addEventListener('click',()=>{ $$('.filters:not(.history-filters) .chip').forEach(x=>x.classList.remove('active')); c.classList.add('active'); currentBatchFilter = c.dataset.filter; renderBatches(); }));
@@ -5709,7 +5709,7 @@ async function deleteBatch(id, btn){
 }
 async function stopBatch(id){ return deleteBatch(id); }
 async function repeatBatch(id){ const r = await api('/api/repeat_batch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({batch_id:id, api_key:$('#apiKey')?.value?.trim() || ''})}); await refreshAll(); toast('已重复创建新批次'); }
-async function exportZip(id){ const r = await api('/api/export_zip?batch_id='+id); if(r.url) window.open(withPublicAccess(r.url),'_blank'); }
+async function exportZip(id){ return downloadToFolder({batch_ids:[id]}); }
 async function exportDescribeXlsx(id){
   const r = await api('/api/export_describe_xlsx',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({batch_id:id})});
   if(r.url) window.open(withPublicAccess(r.url),'_blank');
@@ -5782,20 +5782,11 @@ async function exportSelectedBatchesZip(){
   const ids = Array.from(selectedHistoryBatches);
   if(!ids.length){ toast('请先选择批次'); return; }
   const btn = $('#downloadSelectedBatchesBtn');
-  if(btn){ btn.disabled = true; btn.textContent = '正在打包...'; }
+  if(btn){ btn.disabled = true; btn.textContent = '正在保存...'; }
   try{
     const videoIds = ids.flatMap(id=>videoHistoryBatchById(id)?.video_ids || []);
     const imageIds = ids.filter(id=>!videoHistoryBatchById(id));
-    if(videoIds.length && imageIds.length) toast('已选择图片批次和视频批次，将分别打包下载');
-    if(imageIds.length){
-      const r = await api('/api/export_batches_zip',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({batch_ids:imageIds})});
-      if(r.url) window.open(withPublicAccess(r.url),'_blank');
-    }
-    if(videoIds.length){
-      const r = await api('/api/video_export_selected',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:videoIds})});
-      if(r.url) window.open(withPublicAccess(r.url),'_blank');
-    }
-    toast(ids.length === 1 ? '选中批次已生成下载文件' : `已打包 ${ids.length} 个批次`);
+    await downloadToFolder({batch_ids:imageIds, video_ids:videoIds});
   }catch(e){
     toast(e.message || '下载选中批次失败');
   }finally{
@@ -5834,7 +5825,7 @@ function beginInlineNoteEdit(el, id){
   const input = document.createElement('input');
   input.className = 'inline-note-input';
   input.value = currentBatchNote(id);
-  input.placeholder = '输入备注名，导出ZIP会使用这个名字';
+  input.placeholder = '输入备注名，下载文件夹会使用这个名字';
   el.innerHTML = '';
   el.appendChild(input);
   input.focus();
@@ -5928,8 +5919,7 @@ async function exportVideoHistoryBatch(id){
   const b = videoHistoryBatchById(id);
   const ids = b?.video_ids || [];
   if(!ids.length) return toast('该视频批次没有可导出的视频任务');
-  const r = await api('/api/video_export_selected',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids})});
-  if(r.url) window.open(withPublicAccess(r.url),'_blank');
+  return downloadToFolder({video_ids:ids});
 }
 async function deleteVideoHistoryBatch(id, btn){
   const b = videoHistoryBatchById(id);
@@ -6294,8 +6284,7 @@ $('#clearSelectBtn').addEventListener('click',()=>{ selectedImages.clear(); sync
 $('#invertSelectBtn').addEventListener('click',()=>{ imageRowsCache.forEach(i=> selectedImages.has(i.id) ? selectedImages.delete(i.id) : selectedImages.add(i.id)); syncImageSelectionUI(); });
 $('#exportSelectedBtn').addEventListener('click',async()=>{
   if(!selectedImages.size) return alert('先选择图片');
-  const r = await api('/api/export_selected_zip',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({batch_id:currentImageBatch || '',image_ids:[...selectedImages]})});
-  if(r.url) window.open(withPublicAccess(r.url),'_blank');
+  return downloadToFolder({image_ids:[...selectedImages]});
 });
 $('#deleteSelectedBtn').addEventListener('click',async()=>{
   if(!selectedImages.size) return alert('先选择图片');
@@ -7966,7 +7955,7 @@ registerApimartVideoUiRules([
   { model:'flux-3-video', label:'FLUX 3 Video', resolutions:['hd','fhd'], defaultResolution:'hd', aspects:['auto','21:9','2:1','16:9','4:3','3:4','9:16'], defaultAspect:'auto', durationMin:5, durationMax:20, defaultDuration:5, supportsVideo:true, durationWithVideo:true, maxImageCount:10, maxVideoCount:1, note:'Supports text, 1-10 ordered keyframes, and one video continuation.' },
   { model:'ltx-2.3-text-video', label:'LTX 2.3 Text to Video', resolutions:['auto'], defaultResolution:'auto', aspects:['auto'], defaultAspect:'auto', supportsAspect:false, supportsDuration:false, supportsImages:false, note:'APIMart 实时目录已开放；输出规格由模型自动决定。' },
   { model:'ltx-2.3-image-video', label:'LTX 2.3 Image to Video', resolutions:['auto'], defaultResolution:'auto', aspects:['auto'], defaultAspect:'auto', supportsAspect:false, supportsDuration:false, minImageCount:1, maxImageCount:1, note:'需要 1 张参考图；输出规格由模型自动决定。' },
-  { model:'MiniMax-H3-Max', label:'MiniMax H3 Max', resolutions:['768P','480P'], defaultResolution:'768P', aspects:['21:9','16:9','4:3','1:1','3:4','9:16'], defaultAspect:'16:9', durationMin:5, durationMax:15, defaultDuration:5, allowedImageCounts:[0,1,2], maxImageCount:2, frameOnlyImages:true, note:'极速版：支持文生、首帧与首尾帧；不支持参考图、多模态素材、2K 或 4 秒输出。' },
+  { model:'MiniMax-H3-Max', label:'MiniMax H3 Max', resolutions:['768P','480P','1080P'], defaultResolution:'768P', aspects:['21:9','16:9','4:3','1:1','3:4','9:16'], defaultAspect:'16:9', durationMin:5, durationMax:15, defaultDuration:5, supportsVideo:true, durationWithVideo:true, maxImageCount:9, maxVideoCount:3, referenceVideoDurationRange:[2,15], referenceVideoTotalDurationMax:15, disallowFrameReferenceMix:true, supportsAudioReference:true, maxAudioCount:3, audioReferenceParam:'audio_urls', audioRequiresReference:true, audioMinDuration:2, audioMaxDuration:15, audioTotalDuration:15, promptMaxLength:7000, note:'支持 480P / 768P / 1080P、5-15 秒；首尾帧与多模态参考互斥，音频不能单独使用。' },
   { model:'happyhorse-1.0', label:'HappyHorse 1.0', resolutions:['720P','1080P'], defaultResolution:'1080P', aspects:['16:9','9:16','1:1','4:3','3:4'], durationMin:3, durationMax:15, defaultDuration:5, supportsVideo:true, maxImageCount:9, videoMaxImageCount:5, promptOptionalWithMedia:true },
   { model:'wan3.0-video', label:'Wan3.0 Video', resolutions:['480P','720P','1080P'], defaultResolution:'1080P', aspects:['adaptive','16:9','4:3','1:1','3:4','9:16'], defaultAspect:'adaptive', durationMin:2, durationMax:30, defaultDuration:5, supportsAutoDuration:true, supportsVideo:true, durationWithVideo:true, maxImageCount:10, maxVideoCount:5, referenceVideoDurationRange:[1,15], referenceVideoTotalDurationMax:15, referenceVideoDurationPlusOutputMax:30, supportsAudioReference:true, maxAudioCount:5, audioReferenceParam:'audio_urls', audioMinDuration:1, audioMaxDuration:15, audioTotalDuration:15, promptOptionalWithMedia:true, supportsDocumentReference:true, supportsLinkReference:true, supportsGeneratedAudio:true, defaultGeneratedAudio:true, note:'支持首帧/首尾帧、多图/视频/音频参考，以及单个文档或公开网页参考；文档与网页不能同时使用。' },
   { model:'wan2.5-preview', label:'Wan2.5 Preview', resolutions:['480p','720p','1080p'], defaultResolution:'720p', aspects:['16:9','9:16','1:1','4:3','3:4'], resolutionAspectRatios:{'480p':['16:9','9:16','1:1']}, durations:[5,10], defaultDuration:5, maxImageCount:1, supportsAudioReference:true, maxAudioCount:1, audioReferenceParam:'audio_url', audioMinDuration:3, audioMaxDuration:30, promptOptionalWithMedia:true },
@@ -8027,11 +8016,14 @@ applyApimartVideoUiDocumentDeltas([
   {model:'viduq3-turbo', supportsGeneratedAudio:true, defaultGeneratedAudio:true},
   {model:'pixverse-v6', supportsGeneratedAudio:true, defaultGeneratedAudio:false}
 ]);
+registerApimartVideoUiRules([
+  { ...APIMART_VIDEO_MODEL_RULES_UI['wan3.0-video'], model:'wan3.0-video-prime', label:'Wan3.0 Video Prime', durationMin:2, durationMax:30 }
+]);
 const APIMART_VIDEO_MODEL_GROUPS_UI = [
   ['Omni / Google / FLUX / LTX', ['gemini-omni-1.1-flash','omni-flash-ext','gemini-omni-flash-preview','veo3.1-fast','veo3.1-quality','veo3.1-lite','veo3.1-fast-official','veo3.1-quality-official','flux-3-video','ltx-2.3-text-video','ltx-2.3-image-video']],
   ['Seedance', ['doubao-seedance-1-0-pro-fast','doubao-seedance-1-0-pro-quality','doubao-seedance-1-5-pro','doubao-seedance-2.0','doubao-seedance-2.0-fast','doubao-seedance-2.0-mini','doubao-seedance-2.5']],
   ['Sora / MiniMax / SkyReels', ['sora-2','sora-2-pro','MiniMax-Hailuo-02','MiniMax-Hailuo-2.3','MiniMax-Hailuo-2.3-Fast','MiniMax-H3','MiniMax-H3-Max','skyreels-v4-fast','skyreels-v4-std']],
-  ['HappyHorse / Wan', ['happyhorse-1.0','happyhorse-1.1','wan3.0-video','wan2.5-preview','wan2.6','wan2.6-i2v','wan2.6-i2v-flash','wan2.7','wan2.7-r2v','wan2.7-videoedit']],
+  ['HappyHorse / Wan', ['happyhorse-1.0','happyhorse-1.1','wan3.0-video','wan3.0-video-prime','wan2.5-preview','wan2.6','wan2.6-i2v','wan2.6-i2v-flash','wan2.7','wan2.7-r2v','wan2.7-videoedit']],
   ['Kling', ['kling-v2-6','kling-v2-6-motion-control','kling-v3','kling-v3-motion-control','kling-v3-omni','kling-video-o1','kling-3.0-turbo']],
   ['Vidu / Grok / Pixverse', ['viduq3','viduq3-mix','viduq3-pro','viduq3-turbo','grok-imagine-1.5-video-apimart','grok-imagine-video','grok-imagine-video-1.5','pixverse-v6']]
 ];
@@ -8087,7 +8079,7 @@ function seedance25UsesAutomaticDuration(){
   return isSeedance25VideoModel() && (seedance25VideoEditIsActive() || $('#seedance25AutoDuration')?.checked === true);
 }
 function isWan3VideoModel(model = $('#videoModel')?.value){
-  return currentVideoPlatform() === 'apimart' && String(model || '').toLowerCase() === 'wan3.0-video';
+  return currentVideoPlatform() === 'apimart' && ['wan3.0-video','wan3.0-video-prime'].includes(String(model || '').toLowerCase());
 }
 function wan3UsesAutomaticDuration(){
   return isWan3VideoModel() && $('#wan3AutoDuration')?.checked === true;
@@ -9883,7 +9875,7 @@ function setupVideoPage(){
   $('#selectAllVideosBtn')?.addEventListener('click', ()=>{ videoTasksCache.forEach(v=>videoSelectedIds.add(v.id)); renderVideoLibrary(); });
   $('#invertVideoSelectBtn')?.addEventListener('click', ()=>{ videoTasksCache.forEach(v=> videoSelectedIds.has(v.id) ? videoSelectedIds.delete(v.id) : videoSelectedIds.add(v.id)); renderVideoLibrary(); });
   $('#clearVideoSelectBtn')?.addEventListener('click', ()=>{ videoSelectedIds.clear(); renderVideoLibrary(); });
-  $('#exportSelectedVideosBtn')?.addEventListener('click', async()=>{ const ids=[...videoSelectedIds]; if(!ids.length) return toast('请先选择要导出的视频'); try{ const r=await api('/api/video_export_selected',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids, all_owners:isVideoAllOwnersScope()})}); if(r.url) window.open(withPublicAccess(r.url),'_blank'); }catch(e){ toast(e.message||'导出视频失败'); } });
+  $('#exportSelectedVideosBtn')?.addEventListener('click', async()=>{ const ids=[...videoSelectedIds]; if(!ids.length) return toast('请先选择要导出的视频'); return downloadToFolder({video_ids:ids, all_owners:isVideoAllOwnersScope()}); });
   $('#deleteSelectedVideosBtn')?.addEventListener('click', async()=>{ const ids=[...videoSelectedIds]; if(!ids.length) return toast('请先选择要删除的视频'); if(!confirm(`确定删除选中的 ${ids.length} 个视频吗？本地视频文件也会删除。`)) return; try{ await api('/api/video_delete_selected',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids, all_owners:isVideoAllOwnersScope()})}); videoSelectedIds.clear(); await loadVideoTasks(); toast('已删除选中视频'); }catch(e){ toast(e.message||'删除视频失败'); } });
   $('#copySelectedVideoLinksBtn')?.addEventListener('click', async()=>{
     if(!videoSelectedIds.size) return toast('请先勾选要复制链接的视频');
@@ -11234,7 +11226,7 @@ async function assetUploadFiles(files){
 function assetSelectedIds(){ return [...assetState.selected]; }
 async function assetDeleteIds(ids){ if(!ids.length) return toast('请先选择素材'); if(!confirm(`确定删除 ${ids.length} 个素材吗？`)) return; await api('/api/assets/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids})}); ids.forEach(id=>assetState.selected.delete(id)); await loadAssetLibrary(); toast('素材已删除'); }
 async function assetShareIds(ids, shared=true){ if(!ids.length) return toast('请先选择素材'); await api(shared?'/api/assets/share':'/api/assets/unshare',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids})}); await loadAssetLibrary(); toast(shared?'素材已共享':'已取消共享'); }
-async function assetDownloadIds(ids){ if(!ids.length) return toast('请先选择素材'); const r=await api('/api/assets/export_zip',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids})}); if(r.url) window.open(withPublicAccess(r.url),'_blank'); }
+async function assetDownloadIds(ids){ if(!ids.length) return toast('请先选择素材'); return downloadToFolder({asset_ids:ids}); }
 async function assetSaveDir(migrate=false){ const dir=($('#assetLibraryDir')?.value||'').trim(); const ret=await api('/api/assets/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dir,migrate})}); if(ret.dir && $('#assetLibraryDir')) $('#assetLibraryDir').value=ret.dir; toast(migrate?'资产库目录已迁移':'资产库目录已保存'); }
 async function assetToggleCurrentGroupShared(){
   const g = assetGroupById(assetState.currentGroup);

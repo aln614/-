@@ -59,7 +59,9 @@ assert.strictEqual(APP_VIDEO_PRICE_MODEL_MAP['gemini-omni-1.1-flash-ext'], 'Omni
 assert.strictEqual(fallback.models['qwen-image-3.0-pro'].variants.find(row => row.spec === '2K').credits, 0.571432);
 assert.strictEqual(fallback.models['gpt-image-2-official'].metered, true);
 assert.strictEqual(fallback.models['Omni-Flash-Ext'].variants.find(row => row.spec === '1080P-VIDREF').credits, 0.8);
-assert.strictEqual(fallback.models['MiniMax-H3-Max'].variants.find(row => row.spec === '768P').credits, 0.75);
+assert.strictEqual(fallback.models['MiniMax-H3-Max'].variants.find(row => row.spec === '768P').credits, 0.5712);
+assert.strictEqual(fallback.models['MiniMax-H3-Max'].variants.find(row => row.spec === '1080P').credits, 1.28);
+assert.strictEqual(fallback.models['wan3.0-video-prime'].variants.find(row => row.spec === '720P').credits, 1.028568);
 assert.strictEqual(fallback.models['seedance-2.5'].variants.find(row => row.spec === '720P').unit, '秒');
 
 const main = read('src/main.js');

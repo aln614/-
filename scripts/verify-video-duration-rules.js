@@ -45,7 +45,7 @@ for (const group of pickerBlock.matchAll(/\['[^']+',\s*\[([^\]]+)\]\]/g)) {
   for (const model of group[1].matchAll(/'([^']+)'/g)) picker.add(model[1].toLowerCase());
 }
 
-assert(backend.size === 52, `Expected 52 official backend models, found ${backend.size}`);
+assert(backend.size === 53, `Expected 53 official backend models, found ${backend.size}`);
 assert(picker.size === backend.size, `Model picker/backend count mismatch: picker=${picker.size}, backend=${backend.size}`);
 for (const model of picker) assert(backend.has(model), `Model picker has no backend rule: ${model}`);
 for (const model of backend.keys()) assert(picker.has(model), `Backend model is missing from picker: ${model}`);
@@ -92,8 +92,9 @@ assert(/model:'MiniMax-Hailuo-02'[^\n]*resolutions:\['512p','768p','1080p'\][^\n
 assert(/model:'MiniMax-Hailuo-2\.3'[^\n]*durations:\[6,10\][^\n]*resolutionDurationRules:\{'1080p':\[6\]\}/.test(main), 'Hailuo 2.3 1080p must be fixed to 6 seconds');
 assert(/model:'MiniMax-H3'[^\n]*resolutions:\['2K','768P'\][^\n]*durationRange:\[4,15\][^\n]*maxImageCount:9[^\n]*maxVideoCount:3[^\n]*referenceVideoDurationRange:\[2,15\][^\n]*referenceVideoTotalDurationMax:15[^\n]*audioMinDuration:2[^\n]*audioTotalDuration:15/.test(main), 'MiniMax H3 must use official 2K/768P and the documented multimodal duration limits');
 assert(/model:'MiniMax-H3'[^\n]*durationMin:4,\s*durationMax:15[^\n]*supportsVideo:true/.test(app), 'MiniMax H3 slider and video-reference UI rule must be registered');
-assert(/model:'MiniMax-H3-Max'[^\n]*resolutions:\['768P','480P'\][^\n]*durationRange:\[5,15\][^\n]*allowedImageCounts:\[0,1,2\][^\n]*frameOnlyImages:true[^\n]*omitAspectWithImages:true/.test(main), 'MiniMax H3 Max must use 768P/480P, 5-15 seconds, and frame-only image controls');
-assert(/model:'MiniMax-H3-Max'[^\n]*durationMin:5,\s*durationMax:15[^\n]*frameOnlyImages:true/.test(app), 'MiniMax H3 Max slider and frame-only UI rule must be registered');
+assert(/model:'MiniMax-H3-Max'[^\n]*resolutions:\['768P','480P','1080P'\][^\n]*durationRange:\[5,15\][^\n]*supportsVideoUrls:true[^\n]*maxImageCount:9[^\n]*maxVideoCount:3[^\n]*watermarkOmitResolutions:\['1080p'\]/.test(main), 'H3 Max must allow 1080P and multimodal references without watermark at 1080P');
+assert(/model:'MiniMax-H3-Max'[^\n]*durationMin:5,\s*durationMax:15[^\n]*supportsVideo:true[^\n]*supportsAudioReference:true/.test(app), 'H3 Max must expose its new multimodal controls');
+assert(backend.has('wan3.0-video-prime') && frontend.has('wan3.0-video-prime'), 'Wan3 Prime must be available in both processes');
 assert(/model:'skyreels-v4-fast'[^\n]*durationRange:\[3,15\][^\n]*videoParam:'ref_videos'/.test(main), 'SkyReels V4 must support 3-15 seconds and tagged video references');
 assert(/model:'skyreels-v4-fast'[^\n]*omitAspectWithImageModes:\['first_frame','first_last_frame'\][^\n]*omitAspectWithVideo:true/.test(main), 'SkyReels must only omit aspect ratio for I2V or video reference modes');
 assert(/videoReferenceType[^\n]*extend/.test(app) && /video_reference_type:currentVideoReferenceType\(\)/.test(app), 'SkyReels reference and extension mode must reach the backend');
@@ -165,4 +166,34 @@ assert(/getAudioDurationSeconds/.test(app), 'Reference audio must read local met
 assert(/type\.startsWith\('audio\/'\)/.test(app) && /audioPattern/.test(app), 'The unrestricted main-file input must still classify audio separately');
 assert(/多模态参考/.test(html) && !/多视频参考/.test(html), 'The multi-video control must be renamed to 多模态参考');
 
-console.log(`Video duration validation passed (${backend.size} backend models, ${frontend.size} frontend models).`);
+// Exercise registered inheritance and the actual request-field assembly.
+const vm = require('vm');
+const strict = require('assert/strict');
+const context = vm.createContext({});
+vm.runInContext(main.slice(main.indexOf('const APIMART_VIDEO_MODEL_RULES ='), main.indexOf('function canonicalApimartVideoModel')) + '\nthis.rules = APIMART_VIDEO_MODEL_RULES;', context);
+const prime = context.rules['wan3.0-video-prime'], wan = context.rules['wan3.0-video'];
+for (const key of Object.keys(wan)) {
+  if (!['model','label'].includes(key)) strict.equal(JSON.stringify(prime[key]), JSON.stringify(wan[key]), 'Prime must inherit '+key);
+}
+const payloadStart = main.indexOf('    const payload = { model: rule.apiModel || rule.model || videoModel };');
+const payloadEnd = main.indexOf('\n    if (videoUrls.length) {', payloadStart);
+strict.ok(payloadStart > 0 && payloadEnd > payloadStart);
+const watermarkLine = main.split(/\r?\n/).find(line=>line.includes('if (rule.watermarkParam &&'));
+context.normalizeVideoAspectRatio = value=>value || '16:9';
+context.addLog = ()=>{};
+vm.runInContext('this.payloadFor = function(rule, mode, imageUrls, audioUrls, normalizedResolution) { const body={watermark:true},videoModel=rule.model,prompt="test",documentFileUrl="",linkUrl="",videoUrls=[],hasReferenceFamilyInputs=!!audioUrls.length;'
+  + main.slice(payloadStart,payloadEnd) + '\n' + watermarkLine + '\nreturn payload;};',context);
+const max = context.rules['minimax-h3-max'];
+strict.equal(context.payloadFor(max,'first_frame',['image1'],[],'1080P').first_frame_image,'image1');
+const frames = context.payloadFor(max,'first_last_frame',['image1','image2'],[],'1080P');
+strict.equal(frames.last_frame_image,'image2');
+strict.ok(!('watermark' in frames) && !('aspect_ratio' in frames));
+const refs = context.payloadFor(max,'multi_reference',['image1','image2','image3'],['audio1'],'1080P');
+strict.equal(refs.image_urls.length,3);
+strict.equal(refs.audio_urls[0],'audio1');
+strict.ok(!('first_frame_image' in refs) && !('watermark' in refs));
+strict.equal(context.payloadFor(max,'multi_reference',['image1'],[],'768P').watermark,true);
+strict.equal(context.payloadFor(prime,'multi_reference',['image1'],['audio1'],'1080P').model,'wan3.0-video-prime');
+strict.equal(context.payloadFor(prime,'multi_reference',['image1'],['audio1'],'1080P').generation_type,'reference');
+
+console.log('Video duration validation passed (' + backend.size + ' backend models, ' + frontend.size + ' frontend models).');

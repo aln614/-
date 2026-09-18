@@ -68,7 +68,7 @@ const FIXED_IMAGE_PRICES = Object.freeze({
 // page; this table keeps estimates available while the network is offline.
 const FIXED_VIDEO_PRICES = Object.freeze({
   'MiniMax-H3': { unit:'秒', rows:[['default',0.9144],['2K',0.9144],['768P',0.5712]] },
-  'MiniMax-H3-Max': { unit:'秒', rows:[['default',0.75],['768P',0.75],['480P',0.495]] },
+  'MiniMax-H3-Max': { unit:'秒', rows:[['default',0.5712],['768P',0.5712],['480P',0.3768],['1080P',1.28]] },
   'MiniMax-Hailuo-02': { unit:'秒', rows:[['1080P',0.8],['512P',0.104],['768P',0.4]] },
   'MiniMax-Hailuo-2.3': { unit:'秒', rows:[['default',0.488],['1080P',0.72]] },
   'MiniMax-Hailuo-2.3-Fast': { unit:'秒', rows:[['default',0.248],['1080P',0.424]] },
@@ -115,7 +115,8 @@ const FIXED_VIDEO_PRICES = Object.freeze({
   'wan2.7': { unit:'秒', rows:[['default',0.664],['1080P',1.096]] },
   'wan2.7-r2v': { unit:'秒', rows:[['default',0.664],['1080P',1.096]] },
   'wan2.7-videoedit': { unit:'秒', rows:[['default',0.664],['1080P',1.096]] },
-  'wan3.0-video': { unit:'秒', rows:[['default',1.37144],['480P',0.34288],['720P',0.68568],['1080P',1.37144]] }
+  'wan3.0-video': { unit:'秒', rows:[['default',1.31504],['480P',0.3288],['720P',0.65752],['1080P',1.31504]] },
+  'wan3.0-video-prime': { unit:'秒', rows:[['default',2.057144],['480P',0.514288],['720P',1.028568],['1080P',2.057144]] }
 });
 
 const TOKEN_METERED_IMAGE_MODELS = Object.freeze([
