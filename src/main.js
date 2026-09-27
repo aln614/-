@@ -7566,11 +7566,14 @@ function applyChatStreamOptions(payload, options = {}, model = '') {
 }
 function pickChatDeltaFromStreamJson(j) {
   const root = j?.data || j || {};
-  return root?.choices?.[0]?.delta?.content
+  const value = root?.choices?.[0]?.delta?.content
     || root?.choices?.[0]?.message?.content
     || root?.delta?.content
     || root?.content
     || '';
+  if(typeof value === 'string') return value;
+  if(Array.isArray(value)) return value.filter(part=>['text','output_text'].includes(part?.type)).map(part=>String(part.text || '')).join('');
+  return '';
 }
 async function streamChatCompletionsToClient(res, {baseUrl, apiKey, model, messages, options, proxyUrl}) {
   res.writeHead(200, {
@@ -7579,6 +7582,16 @@ async function streamChatCompletionsToClient(res, {baseUrl, apiKey, model, messa
     'Connection':'keep-alive',
     'X-Accel-Buffering':'no'
   });
+  res.flushHeaders?.();
+  let disconnected = false;
+  let activeChild = null;
+  let delivered = false;
+  const onClose = ()=>{
+    disconnected = true;
+    try{ activeChild?.kill(); }catch{}
+  };
+  res.once('close', onClose);
+  const heartbeat = setInterval(()=>{ if(!disconnected) try{ res.write(': keep-alive\n\n'); }catch{} }, 10000);
   const sendEvent = (obj) => {
     try { res.write(`data: ${JSON.stringify(obj)}\n\n`); } catch {}
   };
@@ -7600,11 +7613,14 @@ async function streamChatCompletionsToClient(res, {baseUrl, apiKey, model, messa
       if (proxy) args.push('--proxy', String(proxy));
       args.push('-X','POST', target, '-H','Accept: text/event-stream', '-H',`Authorization: Bearer ${apiKey || ''}`, '-H','Content-Type: application/json', '--data-binary','@-');
       const child = spawn(exe, args, { windowsHide:true });
+      activeChild = child;
+      child.stdout.setEncoding('utf8');
       let stderr = '';
       let raw = '';
       let lineBuf = '';
       let content = '';
       let gotAny = false;
+      let upstreamError = '';
       const timer = setTimeout(()=>{ try{ child.kill(); }catch{}; reject(new Error('Stream 请求超时')); }, 245000);
       const processLine = (line) => {
         const m = String(line || '').match(/^\s*data:\s*(.*)\s*$/);
@@ -7613,9 +7629,15 @@ async function streamChatCompletionsToClient(res, {baseUrl, apiKey, model, messa
         if (!data || data === '[DONE]') return;
         try {
           const j = JSON.parse(data);
+          if(j?.error || j?.data?.error){
+            const error = j.error || j.data.error;
+            upstreamError = String(error.message || error);
+            return;
+          }
           const delta = pickChatDeltaFromStreamJson(j);
           if (delta) {
             gotAny = true;
+            delivered = true;
             content += String(delta);
             sendEvent({delta:String(delta), elapsed:(Date.now()-start)/1000});
           }
@@ -7634,14 +7656,23 @@ async function streamChatCompletionsToClient(res, {baseUrl, apiKey, model, messa
       child.on('close', code => {
         clearTimeout(timer);
         if (lineBuf) processLine(lineBuf);
+        if(disconnected) return reject(new Error('客户端已断开'));
         if (code !== 0) return reject(new Error((stderr || raw || `curl code=${code}`).slice(0, 1200)));
+        if(upstreamError) return reject(new Error(upstreamError));
         if (!gotAny) {
           try {
             const j = JSON.parse(String(raw || '').trim());
             const msg = j?.error?.message || j?.message || j?.data?.message || '';
             if (msg || (j.code && Number(j.code) !== 200)) return reject(new Error(msg || JSON.stringify(j).slice(0, 800)));
+            content = pickChatDeltaFromStreamJson(j);
+            if(content){
+              gotAny = true;
+              delivered = true;
+              sendEvent({delta:content, elapsed:(Date.now()-start)/1000});
+            }
           } catch {}
         }
+        if(!gotAny) return reject(new Error('模型未返回可用的文字内容'));
         if (proxy) markGoodApimartProxy(proxy);
         resolve({content});
       });
@@ -7649,18 +7680,28 @@ async function streamChatCompletionsToClient(res, {baseUrl, apiKey, model, messa
     });
   }
 
-  for (const proxy of candidates) {
-    try {
-      const ret = await tryProxy(proxy);
-      sendEvent({done:true, content:ret.content || '', elapsed:(Date.now()-start)/1000});
-      try { res.end(); } catch {}
-      return;
-    } catch (e) {
-      errors.push(`[${proxy || 'direct'}] ${e.message || e}`);
+  try{
+    for (const proxy of candidates) {
+      if(disconnected) return;
+      try {
+        const ret = await tryProxy(proxy);
+        sendEvent({done:true, content:ret.content || '', elapsed:(Date.now()-start)/1000});
+        try { res.end(); } catch {}
+        return;
+      } catch (e) {
+        errors.push(`[${proxy || 'direct'}] ${e.message || e}`);
+        // Replaying after visible output can duplicate tool directives.
+        if(delivered || disconnected) break;
+      }
     }
+    if(disconnected) return;
+    sendEvent({error:'APIMart Stream 请求失败：' + errors.join(' | '), elapsed:(Date.now()-start)/1000});
+    try { res.end(); } catch {}
+  }finally{
+    clearInterval(heartbeat);
+    res.removeListener('close', onClose);
+    try{ activeChild?.kill(); }catch{}
   }
-  sendEvent({error:'APIMart Stream 请求失败：' + errors.join(' | '), elapsed:(Date.now()-start)/1000});
-  try { res.end(); } catch {}
 }
 
 

@@ -3862,6 +3862,9 @@ body.theme-dark .agent-pill{color:#99f6e4!important;border-color:rgba(45,212,191
 .agent-message.user{margin-left:auto;align-items:flex-end}
 .agent-message-role{font-size:10px;color:var(--muted);font-weight:900;padding:0 4px}
 .agent-message-bubble{min-width:0;max-width:100%;padding:10px 13px;border-radius:16px 16px 16px 5px;border:1px solid rgba(148,163,184,.20);background:rgba(255,255,255,.50);color:var(--text);font-size:13px;line-height:1.65;overflow-wrap:anywhere;word-break:break-word;white-space:pre-wrap;box-shadow:0 8px 24px rgba(15,23,42,.06)}
+.agent-message-text:empty{display:none}
+.agent-message-status{font-size:12px;line-height:1.5;color:var(--muted);overflow-wrap:anywhere}
+.agent-message-text:not(:empty) + .agent-message-status:not([hidden]){margin-top:6px}
 .agent-message.user .agent-message-bubble{border-radius:16px 16px 5px 16px;background:linear-gradient(135deg,rgba(45,212,191,.78),rgba(56,189,248,.72));border-color:rgba(255,255,255,.34);color:#042f2e}
 .theme-dark .agent-message-bubble{background:rgba(15,23,42,.62);border-color:rgba(255,255,255,.10)}
 .theme-dark .agent-message.user .agent-message-bubble{background:linear-gradient(135deg,rgba(13,148,136,.86),rgba(2,132,199,.82));color:#ecfeff}

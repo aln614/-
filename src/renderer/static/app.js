@@ -2672,36 +2672,47 @@ async function streamChatCompletionRequest(payload, onEvent){
   let content = '';
   let finalElapsed = 0;
   let errorText = '';
+  let completed = false;
   const handleLine = (line) => {
     const m = String(line || '').match(/^\s*data:\s*(.*)\s*$/);
     if(!m) return;
     const raw = m[1].trim();
     if(!raw || raw === '[DONE]') return;
-    try{
-      const ev = JSON.parse(raw);
-      if(ev.error){ errorText = ev.error; return; }
-      if(ev.delta){
-        content += ev.delta;
-        onEvent && onEvent({delta:ev.delta, content, elapsed:Number(ev.elapsed || 0)});
-      }
-      if(ev.elapsed) finalElapsed = Number(ev.elapsed || finalElapsed);
-      if(ev.done){
-        if(ev.content && !content) content = ev.content;
-        onEvent && onEvent({done:true, content, elapsed:Number(ev.elapsed || finalElapsed || 0)});
-      }
-    }catch(e){}
+    let ev;
+    try{ ev = JSON.parse(raw); }catch(e){ return; }
+    if(!ev || typeof ev !== 'object') return;
+    if(ev.error){ errorText = ev.error; return; }
+    if(ev.delta){
+      content += ev.delta;
+      onEvent && onEvent({delta:ev.delta, content, elapsed:Number(ev.elapsed || 0)});
+    }
+    if(ev.elapsed) finalElapsed = Number(ev.elapsed || finalElapsed);
+    if(ev.done){
+      completed = true;
+      if(typeof ev.content === 'string' && ev.content) content = ev.content;
+      onEvent && onEvent({done:true, content, elapsed:Number(ev.elapsed || finalElapsed || 0)});
+    }
   };
-  while(true){
-    const {value, done} = await reader.read();
-    if(done) break;
-    buf += decoder.decode(value, {stream:true});
-    const lines = buf.split(/\r?\n/);
-    buf = lines.pop() || '';
-    for(const line of lines) handleLine(line);
+  try{
+    while(true){
+      const {value, done} = await reader.read();
+      if(done) break;
+      buf += decoder.decode(value, {stream:true});
+      const lines = buf.split(/\r?\n/);
+      buf = lines.pop() || '';
+      for(const line of lines) handleLine(line);
+      if(errorText) break;
+    }
+    buf += decoder.decode();
+    if(buf) handleLine(buf);
+    if(errorText) throw new Error(errorText);
+    if(!completed) throw new Error('回复连接已中断，已保留收到的文字，请重试');
+    if(!content.trim()) throw new Error('模型没有返回可用的文字内容');
+    return {content, elapsed:finalElapsed};
+  }finally{
+    await reader.cancel().catch(()=>{});
+    reader.releaseLock();
   }
-  if(buf) handleLine(buf);
-  if(errorText) throw new Error(errorText);
-  return {content, elapsed:finalElapsed};
 }
 
 async function sendChat(){
@@ -2978,10 +2989,11 @@ function renderAgentMessages(){
     box.innerHTML = '<div class="agent-empty"><b>Agent 已就绪</b><span>选择一个 AI聊天模型，告诉我你要完成的任务。</span></div>';
     return;
   }
-  box.innerHTML = agentMessages.map(message=>{
+  box.innerHTML = agentMessages.map((message, index)=>{
     const role = message.role === 'user' ? '你' : 'Agent';
     const text = escapeHtml(message.text || '').replace(/\n/g,'<br>');
-    return `<div class="agent-message ${message.role === 'user' ? 'user' : 'assistant'}"><div class="agent-message-role">${role}</div><div class="agent-message-bubble">${text || '<span class="agent-cursor">▋</span>'}${agentMessageMediaHtml(message)}</div></div>`;
+    const status = message.streaming ? escapeHtml(message.stream_status || '等待模型回复') : '';
+    return `<div class="agent-message ${message.role === 'user' ? 'user' : 'assistant'}" data-agent-message-index="${index}"><div class="agent-message-role">${role}</div><div class="agent-message-bubble"><div class="agent-message-text">${text}</div><div class="agent-message-status" role="status" ${status ? '' : 'hidden'}>${status}</div>${agentMessageMediaHtml(message)}</div></div>`;
   }).join('');
   $$('#agentMessages [data-agent-preview]').forEach(button=>button.addEventListener('click',()=>showPreview(button.dataset.agentPreview)));
   $$('#agentMessages [data-agent-video-preview]').forEach(button=>button.addEventListener('click',()=>showVideoPreview({url:button.dataset.agentVideoPreview,stream_url:button.dataset.agentVideoPreview,remote_url:button.dataset.agentVideoPreview})));
@@ -3305,7 +3317,7 @@ function buildAgentSystemPrompt(){
     `生成模型偏好：图片=${imageModel}；视频=${videoModel}。当用户在 Agent 窗口指定图片或视频模型时，调用 set_current_*_model、create_*_batch 时必须使用该模型，不得自行替换。图片“自由选择”仅是界面状态，绝不是 APIMart 模型 ID；禁止把“自由选择”、“Agent 自由选择”或“auto”写入 model 参数。未指定图片模型时请省略 model，让程序回退到首页当前有效 APIMart 模型或 GPT-Image-2。`,
     '你可以真正调用 TENYING AI 程序工具，不要只给操作建议。',
     '每次只能输出一个纯 JSON 对象，不要使用 Markdown 代码块。',
-    '需要操作时输出：{"type":"tool_call","tool":"工具名","args":{}}。',
+    '需要操作时输出：{"type":"tool_call","message":"给用户看的简短行动说明","tool":"工具名","args":{}}。message 放在 args 之前，描述将要做的操作，不要输出内部思考过程。',
     '操作完成或无需操作时输出：{"type":"final","message":"给用户的最终答复"}。',
     '工具失败时不要编造成功，读取 tool_result 后继续处理或说明失败原因。',
     `可用工具：${JSON.stringify(AGENT_TOOL_CATALOG)}`
@@ -3343,7 +3355,7 @@ function parseAgentDirective(raw=''){
   if(candidate && candidate.startsWith('{') && candidate.endsWith('}')){
     try{
       const parsed = JSON.parse(candidate);
-      if(parsed.type === 'tool_call' || parsed.tool || parsed.action === 'tool_call') return {type:'tool_call', tool:String(parsed.tool || '').trim(), args:parsed.args && typeof parsed.args === 'object' ? parsed.args : {}};
+      if(parsed.type === 'tool_call' || parsed.tool || parsed.action === 'tool_call') return {type:'tool_call', message:String(parsed.message || '').trim(), tool:String(parsed.tool || '').trim(), args:parsed.args && typeof parsed.args === 'object' ? parsed.args : {}};
       if(parsed.type === 'final') return {type:'final', message:String(parsed.message || parsed.content || '').trim() || 'Agent 已完成。'};
     }catch(e){}
   }
@@ -3721,7 +3733,37 @@ function attachAgentGenerationResult(message, tool, result, args = {}){
 async function runAgentLoop(userText, assistantMessage, badge, started, attachments = []){
   const working = buildAgentMessages('', agentMessages.filter(message=>message !== assistantMessage));
   const maxSteps = 8;
+  let phase = '等待模型回复';
+  let lastPaint = -Infinity;
+  let paintTimer = 0;
+  const paint = (force = false)=>{
+    const now = performance.now();
+    if(!force && now - lastPaint < 50){
+      if(!paintTimer) paintTimer = setTimeout(()=>{paintTimer = 0; paint(true);}, 50 - (now-lastPaint));
+      return;
+    }
+    clearTimeout(paintTimer);
+    paintTimer = 0;
+    lastPaint = now;
+    assistantMessage.stream_status = `${phase} · ${Math.floor((now-started)/1000)} 秒`;
+    if(badge) badge.textContent = assistantMessage.stream_status;
+    updateAgentStreamingMessage(assistantMessage);
+  };
+  const timer = setInterval(()=>paint(), 500);
+  try{
   for(let step=0; step<maxSteps; step++){
+    phase = step ? '操作已返回，等待 Agent 回复' : '等待模型回复';
+    const previousText = assistantMessage.text.trimEnd();
+    const showReply = raw=>{
+      const progress = AgentReplyStream.read(raw);
+      if(progress.text){
+        assistantMessage.text = [previousText, progress.text].filter(Boolean).join('\n\n');
+        phase = progress.type === 'tool_call' ? '正在准备操作' : '正在回复';
+      }else if(progress.structured){
+        phase = '正在准备操作或回复';
+      }
+    };
+    paint(true);
     const credentials = agentApimartCredentials();
     const model = String($('#agentModelPreset')?.value || agentConfig.model || $('#chatModel')?.value || 'gpt-5.5').trim();
     const ret = await streamChatCompletionRequest({
@@ -3733,15 +3775,22 @@ async function runAgentLoop(userText, assistantMessage, badge, started, attachme
       stream:true,
       options:{}
     }, event=>{
-      if(badge) badge.textContent = `Agent 思考中 ${(Number(event.elapsed || ((performance.now()-started)/1000))).toFixed(1)}s`;
+      if(typeof event.content === 'string') showReply(event.content);
+      paint(!!event.done);
     });
     const rawReply = String(ret.content || ret?.response?.content || '').trim();
+    if(!rawReply) throw new Error('模型没有返回可用内容，请重试或切换对话模型');
+    showReply(rawReply);
     const directive = parseAgentDirective(rawReply);
     if(directive.type !== 'tool_call' || !directive.tool){
-      assistantMessage.text = directive.message || rawReply || 'Agent 已完成。';
+      assistantMessage.text = [previousText, directive.message || rawReply].filter(Boolean).join('\n\n');
+      paint(true);
       return;
     }
-    if(badge) badge.textContent = `调用工具：${directive.tool} (${step + 1}/${maxSteps})`;
+    const label = AGENT_TOOL_CATALOG.find(tool=>tool.name === directive.tool)?.description.split(/[。；]/)[0] || directive.tool;
+    phase = `正在执行：${label}（${step + 1}/${maxSteps}）`;
+    paint(true);
+    persistAgentHistory();
     working.push({role:'assistant',content:rawReply});
     try{
       const result = await runAgentTool(directive.tool, directive.args || {});
@@ -3749,16 +3798,30 @@ async function runAgentLoop(userText, assistantMessage, badge, started, attachme
       working.push({role:'user',content:JSON.stringify({type:'tool_result',tool:directive.tool,ok:true,result})});
     }catch(error){
       working.push({role:'user',content:JSON.stringify({type:'tool_result',tool:directive.tool,ok:false,error:String(error.message || error)})});
+      assistantMessage.text = [assistantMessage.text, `操作失败：${error.message || error}`].filter(Boolean).join('\n\n');
+      paint(true);
     }
   }
-  assistantMessage.text = 'Agent 已达到本次最多 8 步操作，请查看已完成的操作后继续下达下一步任务。';
+  assistantMessage.text = [assistantMessage.text, 'Agent 已达到本次最多 8 步操作，请查看已完成的操作后继续下达下一步任务。'].filter(Boolean).join('\n\n');
+  }finally{
+    clearInterval(timer);
+    clearTimeout(paintTimer);
+    delete assistantMessage.stream_status;
+  }
 }
 function updateAgentStreamingMessage(message){
   const box = $('#agentMessages');
-  const row = box?.querySelector('.agent-message.assistant:last-of-type .agent-message-bubble');
-  if(!row) return renderAgentMessages();
-  row.innerHTML = escapeHtml(message?.text || '').replace(/\n/g,'<br>') || '<span class="agent-cursor">▋</span>';
-  box.scrollTop = box.scrollHeight;
+  const index = agentMessages.indexOf(message);
+  if(!box || index < 0) return;
+  const row = box.querySelector(`[data-agent-message-index="${index}"]`);
+  const text = row?.querySelector('.agent-message-text');
+  const status = row?.querySelector('.agent-message-status');
+  if(!text || !status) return renderAgentMessages();
+  const follow = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+  text.textContent = message.text || '';
+  status.textContent = message.streaming ? message.stream_status || '等待模型回复' : '';
+  status.hidden = !status.textContent;
+  if(follow) box.scrollTop = box.scrollHeight;
 }
 function renderAgentAttachments(){
   const box = $('#agentAttachmentStrip');
@@ -3788,6 +3851,8 @@ async function addAgentFiles(files){
 function agentPersistableMessages(messages = []){
   return (messages || []).map(message => {
     const next = {...message};
+    delete next.stream_status;
+    next.streaming = false;
     if(Array.isArray(next.attachments)){
       next.attachments = next.attachments.map(file => ({
         name:file.name || '',
@@ -3809,11 +3874,14 @@ async function sendAgentMessage(){
   agentSending = true;
   const sendBtn = $('#sendAgentBtn');
   if(sendBtn){ sendBtn.disabled = true; sendBtn.textContent = '执行中...'; }
+  // Finish history hydration before creating a live reply, or it can replace its object.
+  await hydrateAgentHistoryFromOutput();
   const started = performance.now();
   const attachments = agentAttachments.slice();
   const userMessage = {role:'user', text, attachments, created_at:Date.now()};
   const assistantMessage = {role:'assistant', text:'', streaming:true, created_at:Date.now()};
   agentMessages.push(userMessage, assistantMessage);
+  persistAgentHistory();
   input.value = '';
   renderAgentMessages();
   const badge = $('#agentThinkingBadge');
@@ -3833,7 +3901,7 @@ async function sendAgentMessage(){
     setTimeout(()=>{ if($('#agentThinkingBadge')) $('#agentThinkingBadge').textContent = ''; }, 2600);
   }catch(error){
     assistantMessage.streaming = false;
-    assistantMessage.text = '请求失败：' + (error.message || error);
+    assistantMessage.text = [assistantMessage.text, '请求失败：' + (error.message || error)].filter(Boolean).join('\n\n');
     persistAgentHistory();
     renderAgentMessages();
     agentAttachments = [];
@@ -3853,7 +3921,7 @@ async function openAgentWindow(){
   agentConfig = readAgentConfig();
   renderAgentModelOptions();
   renderAgentGenerationModelOptions();
-  loadAgentHistory();
+  if(!agentSending) loadAgentHistory();
   updateAgentApiStatus();
   modal.classList.add('active');
   $('#agentOrb')?.classList.remove('show');
