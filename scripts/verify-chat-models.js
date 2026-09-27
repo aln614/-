@@ -14,6 +14,10 @@ const required = [
   'qwen3.8-max',
   'qwen3.8-max-0902',
   'gpt-6-astra',
+  'gpt-6-sol',
+  'gpt-6-luna',
+  'claude-opus-5-5',
+  'grok-4.7',
   'gemini-3.8-flash',
   'claude-fable-5.1',
   'glm-5.3',
@@ -35,4 +39,4 @@ if (missing.length || duplicates.length) {
   process.exit(1);
 }
 
-console.log(`[verify-chat-models] OK: ${ids.length} built-in chat models; Claude 5 fallback is present.`);
+console.log(`[verify-chat-models] OK: ${ids.length} built-in chat models; September 27 additions are present.`);

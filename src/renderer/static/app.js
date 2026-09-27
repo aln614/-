@@ -535,8 +535,8 @@ function renderModelUsageEstimate(){
     title = `${context.label} 按实际 Token 用量结算，无法给出固定次数`;
     state = 'variable';
   }else if(!context.variant){
-    text = '暂无定价';
-    title = `${context.label} 暂无公开固定单价，点击查看详情`;
+    text = context.entry?.unverifiedPricing ? '价格待核实' : '暂无定价';
+    title = context.entry?.note || `${context.label} 暂无公开固定单价，点击查看详情`;
     state = 'variable';
   }else if(noBalance){
     text = '需余额';
@@ -590,7 +590,10 @@ function renderModelUsageDetails(){
     source.textContent = `${sourceName} · ${fetched}`;
   }
   const warning = $('#modelUsageWarning');
-  if(warning){ warning.textContent = apimartPricingState.warning || ''; warning.classList.toggle('show', !!apimartPricingState.warning); }
+  if(warning){
+    warning.textContent = [apimartPricingState.warning, context.entry?.note].filter(Boolean).join('；');
+    warning.classList.toggle('show', !!warning.textContent);
+  }
   const search = String($('#modelUsageSearch')?.value || '').trim().toLowerCase();
   const list = $('#modelUsageList');
   if(!list) return;
@@ -606,7 +609,7 @@ function renderModelUsageDetails(){
       return;
     }
     if(!variants.length){
-      rows.push(`<div class="model-usage-row ${modelId === context.modelId ? 'current' : ''}"><div class="model-usage-name"><strong>${escapeHtml(label)}</strong><small>${escapeHtml(modelId)}</small></div><span>--</span><span>暂无公开固定单价</span><b>--</b></div>`);
+      rows.push(`<div class="model-usage-row ${modelId === context.modelId ? 'current' : ''}"><div class="model-usage-name"><strong>${escapeHtml(label)}</strong><small>${escapeHtml(modelId)}</small></div><span>--</span><span title="${escapeHtml(entry?.note || '')}">${entry?.unverifiedPricing ? '价格待核实' : '暂无公开固定单价'}</span><b>--</b></div>`);
       return;
     }
     variants.forEach((variant, index)=>{
@@ -1583,6 +1586,7 @@ const APIMART_MODEL_OPTIONS = [
   ['seedream-4.5','Seedream-4.5'],
   ['seedream-5-0-lite','Seedream-5.0 Lite'],
   ['seedream-5-0-pro','Seedream-5.0 Pro'],
+  ['seedream-5-0-flash','Seedream-5.0 Flash'],
   ['flux-kontext-pro','Flux Kontext Pro'],
   ['flux-kontext-max','Flux Kontext Max'],
   ['flux-2-flex','Flux 2.0 Flex'],
@@ -1916,7 +1920,10 @@ function isSeedream5ProModel(model){
   return ['seedream-5-0-pro','doubao-seedream-5-0-pro','doubao-seedream-5.0-pro','seedream-5.0-pro'].includes(imageModelKey(model));
 }
 function isSeedream5OutputFormatModel(model){
-  return isSeedream5LiteModel(model) || isSeedream5ProModel(model);
+  return isSeedream5LiteModel(model) || isSeedream5SingleImageModel(model);
+}
+function isSeedream5SingleImageModel(model){
+  return isSeedream5ProModel(model) || imageModelKey(model) === 'seedream-5-0-flash';
 }
 function isFluxKontextModel(model){
   return ['flux-kontext-pro','flux-kontext-max'].includes(imageModelKey(model));
@@ -2008,7 +2015,8 @@ function applyFluxImageUiGuard(model){
   const size = $('#size');
   const clarity = $('#clarity');
   if(!size || !clarity) return;
-  const profile = isFluxKontextModel(model) ? 'flux-kontext' : (isFlux2Model(model) ? 'flux-2' : (isGptImage25ExtModel(model) ? 'gpt-image-25-ext' : 'default'));
+  const profile = imageModelKey(model) === 'seedream-5-0-flash' ? 'seedream-5-flash'
+    : isFluxKontextModel(model) ? 'flux-kontext' : (isFlux2Model(model) ? 'flux-2' : (isGptImage25ExtModel(model) ? 'gpt-image-25-ext' : 'default'));
   if(size.dataset.modelProfile === profile){
     if(profile === 'flux-kontext'){
       clarity.value = '1MP';
@@ -2030,6 +2038,13 @@ function applyFluxImageUiGuard(model){
     clarity.disabled = false;
     size.value = [...size.options].some(option=>option.value === oldSize) ? oldSize : 'auto';
     clarity.value = [...clarity.options].some(option=>option.value === oldClarity) ? oldClarity : '2K';
+  }else if(profile === 'seedream-5-flash'){
+    const sizes = ['auto','custom','1:1','4:3','3:4','16:9','9:16','3:2','2:3','2:1','1:2','21:9'];
+    size.innerHTML = sizes.map(value=>`<option value="${value}">${value === 'auto' ? 'auto 自动' : value === 'custom' ? '自定义宽高' : value}</option>`).join('');
+    size.value = sizes.includes(oldSize) ? oldSize : /^\d+x\d+$/i.test(oldSize) ? 'custom' : 'auto';
+    clarity.innerHTML = ['1K','1.5K','2K'].map(value=>`<option value="${value}">${value}</option>`).join('');
+    clarity.value = ['1K','1.5K','2K'].includes(oldClarity) ? oldClarity : '1K';
+    clarity.disabled = false;
   }else if(profile === 'gpt-image-25-ext'){
     size.innerHTML = ['auto','1:1','16:9','9:16','4:3','3:4','3:2','2:3','5:4','4:5','21:9'].map(value=>`<option value="${value}">${value === 'auto' ? 'auto 自动' : value}</option>`).join('');
     size.value = [...size.options].some(option=>option.value === oldSize) ? oldSize : 'auto';
@@ -2087,10 +2102,11 @@ function applyQwenImage3UiGuard(model){
     imageN.value = String(Math.max(1, Math.min(6, Number.isFinite(requested) ? requested : 1)));
   }
 }
-function applySeedream5ProUiGuard(model){
-  if(currentImagePlatform() !== 'apimart' || !isSeedream5ProModel(model)) return;
-  if($('#clarity') && !['1K','1.5K','2K'].includes(String($('#clarity').value || '').toUpperCase())) $('#clarity').value = '1.5K';
-  if($('#claritySettings')) $('#claritySettings').value = $('#clarity')?.value || '1.5K';
+function applySeedream5SingleImageUiGuard(model){
+  if(currentImagePlatform() !== 'apimart' || !isSeedream5SingleImageModel(model)) return;
+  const defaultResolution = isSeedream5ProModel(model) ? '1.5K' : '1K';
+  if($('#clarity') && !['1K','1.5K','2K'].includes(String($('#clarity').value || '').toUpperCase())) $('#clarity').value = defaultResolution;
+  if($('#claritySettings')) $('#claritySettings').value = $('#clarity')?.value || defaultResolution;
   if($('#outputFormat') && !['jpeg','png'].includes(String($('#outputFormat').value || '').toLowerCase())) $('#outputFormat').value = 'jpeg';
   if($('#imageN')) $('#imageN').value = '1';
 }
@@ -2100,13 +2116,14 @@ function updateOfficialImageOptions(){
   applyFluxImageUiGuard(model);
   applyGptImage25UiGuard(model);
   applyQwenImage3UiGuard(model);
-  applySeedream5ProUiGuard(model);
+  applySeedream5SingleImageUiGuard(model);
   applyDocumentedImageUiGuard(model);
   const grsai = platform === 'grsai';
   const official = !grsai && isOfficialImageModel(model);
   const gptImage25 = !grsai && isGptImage25Model(model);
   const grokImage20 = !grsai && imageModelKey(model) === 'grok-imagine-image-2.0';
   const flux = !grsai && isFluxImageModel(model);
+  const seedreamFlash = !grsai && imageModelKey(model) === 'seedream-5-0-flash';
   const showOutput = !grsai && (official || gptImage25 || isSeedream5OutputFormatModel(model) || flux);
   const showN = !grsai && isMultiNImageModel(model);
   const showQuality = !grsai && (official || gptImage25 || grokImage20);
@@ -2124,12 +2141,17 @@ function updateOfficialImageOptions(){
   const row2 = $('#officialImageOptions2'); if(row2) row2.style.display = showN ? '' : 'none';
   const row3 = $('#officialImageOptions3'); if(row3) row3.style.display = showQuality ? '' : 'none';
   const backgroundWrap = $('#imageBackground')?.closest('div');
-  if(backgroundWrap) backgroundWrap.style.display = flux ? 'none' : '';
+  if(backgroundWrap) backgroundWrap.style.display = flux || seedreamFlash ? 'none' : '';
+  if($('#outputFormat')) [...$('#outputFormat').options].forEach(option=>{
+    const supported = !seedreamFlash || ['png','jpeg'].includes(option.value);
+    option.hidden = !supported;
+    option.disabled = !supported;
+  });
   const moderationWrap = $('#moderation')?.closest('div');
   if(moderationWrap) moderationWrap.style.display = official || gptImage25 ? '' : 'none';
   const fmt = String($('#outputFormat')?.value || 'png').toLowerCase();
   const compWrap = $('#outputCompression')?.closest('div');
-  if(compWrap) compWrap.style.display = grokImage20 ? 'none' : '';
+  if(compWrap) compWrap.style.display = grokImage20 || seedreamFlash ? 'none' : '';
   if(compWrap) compWrap.style.opacity = (fmt === 'jpeg' || fmt === 'webp') ? '1' : '.45';
 }
 function applyModelToUI(model){
@@ -2222,7 +2244,7 @@ function updateSizeHint(){
   const model = $('#model')?.value || $('#modelPreset')?.value || 'gemini-3.1-flash-image-preview';
   applyFluxImageUiGuard(model);
   applyQwenImage3UiGuard(model);
-  applySeedream5ProUiGuard(model);
+  applySeedream5SingleImageUiGuard(model);
   applyDocumentedImageUiGuard(model);
   const v = getSizeValue();
   const clarity = $('#clarity')?.value || $('#claritySettings')?.value || '1K';
@@ -2250,6 +2272,7 @@ function updateSizeHint(){
   else if(isQwenImage2Model(model)) supportNote = '（Qwen Image 2.0 / Pro 支持 1K/2K、1-6 张输出）';
   else if(isQwenImage3Model(model)) supportNote = '（Qwen Image 3.0 支持 1-3 张参考图、1K/2K、1-6 张输出；自定义尺寸为 512-2048px，比例 1:8-8:1）';
   else if(isSeedream5ProModel(model)) supportNote = '（Seedream-5.0-Pro 支持 1K/1.5K/2K 与精确像素尺寸，最多 10 张参考图）';
+  else if(imageModelKey(model) === 'seedream-5-0-flash') supportNote = '（Seedream-5.0-Flash 支持 1K/1.5K/2K，单次输出 1 张，最多 10 张参考图；自定义像素总量 921600-4624220，比例 1:16-16:1）';
   else if(isZImageTurboModel(model)) supportNote = '（Z-Image-Turbo 仅支持文生图、1K/2K，固定 1 张输出）';
   else if(isWan27ImageModel(model)) supportNote = `（Wan2.7 Image 最多 9 张参考图；${imageModelKey(model) === 'wan2.7-image-pro' ? 'Pro 文生图可选 4K' : '标准版最高 2K'}）`;
   else if(String(model||'').startsWith('imagen-4.0')) supportNote = '（Imagen-4.0 仅支持文生图，比例限 1:1 / 4:3 / 3:4 / 16:9 / 9:16）';

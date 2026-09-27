@@ -173,6 +173,11 @@ function fallbackModels() {
   TOKEN_METERED_IMAGE_MODELS.forEach(id => {
     models[id] = { id, aliases:[], metered:true, note:'按实际 Token 用量结算，无法给出固定次数', variants:[] };
   });
+  models['seedream-5-0-flash'] = {
+    id:'seedream-5-0-flash', aliases:[], metered:false, variants:[],
+    unverifiedPricing:true,
+    note:'平台默认展示价与文档分档说明不一致，暂不估算可用次数'
+  };
   return models;
 }
 
@@ -181,6 +186,8 @@ function mergePricingModels(liveModels = {}) {
   Object.entries(liveModels || {}).forEach(([id, value]) => {
     if (!id || !value || typeof value !== 'object') return;
     const current = merged[id] || { id, aliases:[], variants:[], metered:false, note:'' };
+    // Do not turn a conflicting default price into a precise per-resolution estimate.
+    if (current.unverifiedPricing) return;
     const variants = Array.isArray(value.variants) && value.variants.length ? value.variants : current.variants;
     merged[id] = {
       ...current,

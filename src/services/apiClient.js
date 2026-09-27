@@ -363,7 +363,7 @@ const APIMART_IMAGE_MODELS = [
   'gpt-image-1-official','gpt-image-1.5-official','gpt-image-2','gpt-image-2-official',
   'gpt-image-2.5-flare','gpt-image-2.5-sunburst',
   'gpt-image-2.5-ext','gpt-image-2.5-ext-sunburst',
-  'seedream-4.0','seedream-4-0','seedream-4.5','seedream-5-0-lite','seedream-5.0-lite','seedream-5-0-pro','seedream-5.0-pro',
+  'seedream-4.0','seedream-4-0','seedream-4.5','seedream-5-0-lite','seedream-5.0-lite','seedream-5-0-pro','seedream-5.0-pro','seedream-5-0-flash',
   'doubao-seedance-4-0','doubao-seedream-4.0','doubao-seedream-4-0',
   'doubao-seedream-5-0-lite','doubao-seedream-5.0-lite',
   'doubao-seedream-5-0-pro','doubao-seedream-5.0-pro',
@@ -435,6 +435,13 @@ const SEEDREAM5_PRO_RULE = {
   outputFormats: ['jpeg','png'], defaultOutputFormat: 'jpeg', allowOutputFormat: true,
   allowWatermark: true
 };
+const SEEDREAM5_FLASH_RULE = {
+  ...SEEDREAM5_PRO_RULE,
+  sizes: ['auto','1:1','4:3','3:4','16:9','9:16','3:2','2:3','2:1','1:2','21:9'],
+  defaultResolution: '1K', allowOutputCompression: false,
+  allowOptimizePrompt: true, optimizePromptObject: true,
+  optimizePromptOptions: ['standard'], defaultOptimizePrompt: 'standard'
+};
 const FLUX_KONTEXT_RULE = {
   endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 4,
   nMin: 1, nMax: 1, defaultN: 1,
@@ -483,6 +490,7 @@ const GPT_IMAGE_25_RULE = {
   backgrounds: ['auto','opaque','transparent'], moderations: ['auto','low'],
   outputFormats: ['png','jpeg','webp'], defaultOutputFormat: 'png',
   allowQuality: true, allowOutputFormat: true, allowBackground: true, allowModeration: true,
+  allowMask: true, maskRequiresImage: true,
   customSizeMultiple: 16, customSizeMax: 3840,
   customPixelMin: 655360, customPixelMax: 8294400,
   minAspectRatio: 1 / 3, maxAspectRatio: 3
@@ -589,6 +597,7 @@ const APIMART_MODEL_RULES = {
   'doubao-seedream-5-0-lite': SEEDREAM5_LITE_RULE,
   'doubao-seedream-5.0-lite': SEEDREAM5_LITE_RULE,
   'seedream-5-0-pro': SEEDREAM5_PRO_RULE,
+  'seedream-5-0-flash': SEEDREAM5_FLASH_RULE,
   'seedream-5.0-pro': SEEDREAM5_PRO_RULE,
   'doubao-seedream-5-0-pro': SEEDREAM5_PRO_RULE,
   'doubao-seedream-5.0-pro': SEEDREAM5_PRO_RULE,
@@ -700,9 +709,9 @@ function sanitizeApimartImagePayload(rawPayload = {}, model = '') {
   if (rule.allowOutputFormat && outputFormatRaw && (rule.outputFormats || ['png','jpeg','webp']).includes(outputFormatRaw)) payload.output_format = outputFormatRaw;
   if (payload.background === 'transparent' && payload.output_format === 'jpeg') payload.background = 'auto';
   const outputCompression = parseInt(rawPayload.output_compression ?? rawPayload.outputCompression, 10);
-  if (rule.allowOutputFormat && Number.isFinite(outputCompression) && ['jpeg','webp'].includes(payload.output_format)) payload.output_compression = Math.max(0, Math.min(100, outputCompression));
+  if (rule.allowOutputFormat && rule.allowOutputCompression !== false && Number.isFinite(outputCompression) && ['jpeg','webp'].includes(payload.output_format)) payload.output_compression = Math.max(0, Math.min(100, outputCompression));
   const maskUrl = String(rawPayload.mask_url || rawPayload.maskUrl || '').trim();
-  if (rule.allowMask && maskUrl) payload.mask_url = maskUrl;
+  if (rule.allowMask && maskUrl && (!rule.maskRequiresImage || hasRefs)) payload.mask_url = maskUrl;
   const negativePrompt = String(rawPayload.negative_prompt || rawPayload.negativePrompt || '').trim();
   if (rule.allowNegativePrompt && negativePrompt) payload.negative_prompt = negativePrompt;
   if (rule.allowPromptExtend) {
@@ -719,8 +728,13 @@ function sanitizeApimartImagePayload(rawPayload = {}, model = '') {
   }
 
   if (rule.allowOptimizePrompt) {
-    const opt = String(rawPayload.optimize_prompt_options || rawPayload.prompt_optimize || rule.defaultOptimizePrompt || 'standard').trim().toLowerCase();
-    if ((rule.optimizePromptOptions || ['standard','fast']).includes(opt)) payload.optimize_prompt_options = opt;
+    const input = rule.optimizePromptObject
+      ? rawPayload.optimize_prompt_options?.mode
+      : rawPayload.optimize_prompt_options;
+    const opt = String(input || rawPayload.prompt_optimize || rule.defaultOptimizePrompt || 'standard').trim().toLowerCase();
+    if ((rule.optimizePromptOptions || ['standard','fast']).includes(opt)) {
+      payload.optimize_prompt_options = rule.optimizePromptObject ? { mode: opt } : opt;
+    }
   }
   if (rule.allowSequential) {
     const seq = String(rawPayload.sequential_image_generation || (payload.n > 1 ? 'auto' : 'disabled')).trim().toLowerCase();
@@ -1510,6 +1524,8 @@ async function generateFlow2ApiImage({ cfg, prompt, mainImagePath, refImages = [
 const APIMART_RESPONSE_CHAT_MODELS = [
   // GPT first
   { id: 'gpt-6-astra', name: 'GPT · gpt-6-astra' },
+  { id: 'gpt-6-sol', name: 'GPT · gpt-6-sol' },
+  { id: 'gpt-6-luna', name: 'GPT · gpt-6-luna' },
   { id: 'gpt-5.6-terra', name: 'GPT · gpt-5.6-terra' },
   { id: 'gpt-5.6-luna', name: 'GPT · gpt-5.6-luna' },
   { id: 'gpt-5.6-sol', name: 'GPT · gpt-5.6-sol' },
@@ -1565,6 +1581,7 @@ const APIMART_RESPONSE_CHAT_MODELS = [
 
   // Claude
   { id: 'claude-fable-5.1', name: 'Claude · claude-fable-5.1' },
+  { id: 'claude-opus-5-5', name: 'Claude · claude-opus-5-5' },
   { id: 'claude-opus-5', name: 'Claude · claude-opus-5' },
   { id: 'claude-sonnet-5', name: 'Claude · claude-sonnet-5' },
   { id: 'claude-fable-5', name: 'Claude · claude-fable-5' },
@@ -1662,6 +1679,7 @@ const APIMART_RESPONSE_CHAT_MODELS = [
 
   // Grok
   { id: 'grok-4.6', name: 'Grok · grok-4.6' },
+  { id: 'grok-4.7', name: 'Grok · grok-4.7' },
   { id: 'grok-4.5', name: 'Grok · grok-4.5' },
   { id: 'grok-4.3', name: 'Grok · grok-4.3' },
   { id: 'grok-build-0.1', name: 'Grok · grok-build-0.1' },

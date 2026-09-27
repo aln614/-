@@ -52,6 +52,14 @@ assert.strictEqual(live.source, 'live');
 assert.ok(live.models['demo-image']);
 
 const fallback = createFallbackPricingCatalog();
+const flashId = 'seedream-5-0-flash';
+assert.equal(fallback.models[flashId].unverifiedPricing, true);
+assert.deepStrictEqual(fallback.models[flashId].variants, []);
+const conflictingFlash = '<h3 title="seedream-5-0-flash">seedream-5-0-flash</h3><table><tbody><tr><th title="default">default</th><td>0.137144 Credits/张</td></tr></tbody></table>';
+const fullFixture = Array.from({length:16}, (_,i)=>fixture.replaceAll('demo-image', 'demo-image-' + i)).join('');
+const guardedLive = createLivePricingCatalog(fullFixture + conflictingFlash);
+assert.deepStrictEqual(guardedLive.models[flashId].variants, [], 'Conflicting live price must not silently override the warning');
+assert.equal(guardedLive.models[flashId].note, fallback.models[flashId].note);
 assert.strictEqual(APIMART_PRICING_URL, 'https://apimart.ai/zh/pricing');
 assert.strictEqual(APP_IMAGE_PRICE_MODEL_MAP['gemini-3.1-flash-image-preview'], 'nano-banana-2-ext');
 assert.strictEqual(APP_VIDEO_PRICE_MODEL_MAP['doubao-seedance-2.5'], 'seedance-2.5');

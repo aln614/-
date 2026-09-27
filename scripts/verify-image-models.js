@@ -83,6 +83,7 @@ function main() {
   if (missingRuntime.length) fail(`index.html APIMart options missing in runtime APIMART_MODEL_OPTIONS: ${missingRuntime.join(', ')}`);
 
   const required = [
+    'seedream-5-0-flash',
     'seedream-5-0-pro',
     'flux-kontext-pro',
     'flux-kontext-max',
