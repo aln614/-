@@ -15,6 +15,7 @@ const { TaskQueue } = require('./services/taskQueue');
 const assetIndex = require('./services/assetIndex');
 const { buildExportManifest } = require('./services/exportManifest');
 const { registerFolderExport } = require('../lan-client/folderExport');
+const { seedanceDraftSettings, validateSeedanceDraftRequest, buildSeedanceFinalPayload } = require('./services/seedanceDraft');
 const { chatCompletion, getApimartChatModels, refreshApimartChatModels, APIMART_IMAGE_MODELS } = require('./services/apiClient');
 const { safeName, ensureDir, makeDirs, createThumb, convertImageToUploadPng, removeTemporaryUploadFile, downloadToFile } = require('./services/cache');
 const { APIMART_PRICING_URL, createFallbackPricingCatalog, createLivePricingCatalog } = require('./services/apimartPricing');
@@ -4178,6 +4179,7 @@ function isPermanentApimartVideoError(error) {
 }
 
 async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = null) {
+  const draftSettings = seedanceDraftSettings(body);
   const apiKey = String(body.api_key || '').trim();
   if (!apiKey) throw new Error('请填写 APIMart API Key');
   const prompt = String(body.prompt || '').trim();
@@ -4312,7 +4314,7 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
     if (rule.videoParam === 'ref_videos' && videoUrl && videoReferenceType === 'extend' && imageUrls.length) {
       throw new Error(`${rule.label || videoModel} 视频扩展不能与参考图同时使用。`);
     }
-    const normalizedResolution = normalizeVideoResolution(body.resolution, videoModel);
+    const normalizedResolution = draftSettings.resolution || normalizeVideoResolution(body.resolution, videoModel);
     if (rule.lastFrameRequiresResolution && mode === 'first_last_frame' && String(normalizedResolution).toLowerCase() !== String(rule.lastFrameRequiresResolution).toLowerCase()) {
       throw new Error(`${rule.label || videoModel} 的首尾帧模式仅支持 ${rule.lastFrameRequiresResolution} 专业模式。`);
     }
@@ -4345,7 +4347,7 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
       });
     }
     const promptOptionalForMode = Array.isArray(rule.promptOptionalModes) && rule.promptOptionalModes.includes(mode);
-    if (!prompt && !(rule.promptOptionalWithMedia && (imageUrls.length || videoUrls.length || audioUrls.length || documentFileUrl || linkUrl)) && !promptOptionalForMode) {
+    if (!prompt && !draftSettings.taskId && !(rule.promptOptionalWithMedia && (imageUrls.length || videoUrls.length || audioUrls.length || documentFileUrl || linkUrl)) && !promptOptionalForMode) {
       throw new Error('请输入视频提示词；当前模型只有在已上传参考素材时才能省略提示词。');
     }
     if (prompt && Number(rule.promptMaxLength || 0) > 0 && Array.from(prompt).length > Number(rule.promptMaxLength)) {
@@ -4520,6 +4522,13 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
     }
     const seed = optionalInt(body.seed);
     if (seed !== undefined && rule.supportsSeed !== false && !suppressSeed) payload.seed = seed;
+    if (draftSettings.taskId) {
+      // The final request must not resend even defaulted inherited fields.
+      for (const key of Object.keys(payload)) delete payload[key];
+      Object.assign(payload, buildSeedanceFinalPayload(body));
+    } else if (draftSettings.draft) payload.draft = true;
+    row.draft = draftSettings.draft;
+    row.draft_task_id = draftSettings.taskId;
     row.resolution = normalizedResolution;
     row.aspect_ratio = normalizedAspectRatio;
     row.duration = payload.duration ?? '';
@@ -4528,6 +4537,8 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
     if (documentFileUrl) row.mode = '文档参考生成';
     else if (linkUrl) row.mode = '网页参考生成';
     if (mode === 'veo_remix') row.mode = '任务续写';
+    if (draftSettings.draft) row.mode = '480p 样片';
+    if (draftSettings.taskId) { row.mode = '样片转正式片'; row.aspect_ratio = ''; }
     row.image_urls = imageUrls;
     row.video_url = videoUrl;
     row.video_urls = videoUrls;
@@ -4620,6 +4631,7 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
   }
 }
 async function createApimartVideoBatch(body, ownerId, req, cfg) {
+  const draftSettings = validateSeedanceDraftRequest(body);
   const apiKey = String(body.api_key || '').trim();
   if (!apiKey) throw new Error('请填写 APIMart API Key');
   let prompts = splitVideoPrompts(body.prompts || body.prompt || '', body.prompt_multiline_tasks === true);
@@ -4708,7 +4720,7 @@ async function createApimartVideoBatch(body, ownerId, req, cfg) {
     const hasReferenceMedia = refImageUrls.length > 0 || localAudioPaths.length > 0
       || sourceVideos.some(item => item.local_video_path || item.video_url)
       || Boolean(documentFile || documentUrl || linkUrl);
-    if (!videoRule.promptOptionalWithMedia || !hasReferenceMedia) throw new Error('请输入视频提示词');
+    if (!draftSettings.taskId && (!videoRule.promptOptionalWithMedia || !hasReferenceMedia)) throw new Error('请输入视频提示词');
     prompts = [''];
   }
 
@@ -9188,7 +9200,7 @@ async function apiHandler(req, res, parsed) {
       // 不把 raw JSON 返回给前端，避免聊天气泡显示整段接口响应。调试请看实时日志。
       return send(res, {ok:true, response:{content: ret.content || '', endpoint: ret.endpoint, model: ret.model}, content: ret.content || '接口已返回，但没有解析到文本回复。请查看实时日志中的 APIMart Chat Completions 原始结构。'});
     }
-    if (method === 'POST' && p === '/api/video_submit') { const body=await readBody(req); const row = await createApimartVideoTask({...body,video_platform:'apimart'}, deviceOwner, req, cfg); return send(res,{ok:true, task:formatVideoTask(row)}); }
+    if (method === 'POST' && p === '/api/video_submit') { const body=await readBody(req); validateSeedanceDraftRequest(body); const row = await createApimartVideoTask({...body,video_platform:'apimart'}, deviceOwner, req, cfg); return send(res,{ok:true, task:formatVideoTask(row)}); }
     if (method === 'POST' && p === '/api/video_batch_submit') { const body=await readBody(req); return send(res, await createApimartVideoBatch({...body,video_platform:'apimart'}, deviceOwner, req, cfg)); }
     if (method === 'POST' && p === '/api/video_resume_pending') {
       const body = await readBody(req);

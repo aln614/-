@@ -17,6 +17,7 @@ const required = [
   'gpt-6-sol',
   'gpt-6-luna',
   'claude-opus-5-5',
+  'claude-sonnet-5-5',
   'grok-4.7',
   'gemini-3.8-flash',
   'claude-fable-5.1',
@@ -39,4 +40,4 @@ if (missing.length || duplicates.length) {
   process.exit(1);
 }
 
-console.log(`[verify-chat-models] OK: ${ids.length} built-in chat models; September 27 additions are present.`);
+console.log(`[verify-chat-models] OK: ${ids.length} built-in chat models; September 29 additions are present.`);

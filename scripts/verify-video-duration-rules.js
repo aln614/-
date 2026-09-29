@@ -46,9 +46,10 @@ for (const group of pickerBlock.matchAll(/\['[^']+',\s*\[([^\]]+)\]\]/g)) {
 }
 
 assert(backend.size === 53, `Expected 53 official backend models, found ${backend.size}`);
-assert(picker.size === backend.size, `Model picker/backend count mismatch: picker=${picker.size}, backend=${backend.size}`);
+const catalogRemoved = new Set(['sora-2','sora-2-pro']);
+assert(picker.size === backend.size - catalogRemoved.size, `Active model picker count mismatch: picker=${picker.size}, backend=${backend.size}`);
 for (const model of picker) assert(backend.has(model), `Model picker has no backend rule: ${model}`);
-for (const model of backend.keys()) assert(picker.has(model), `Backend model is missing from picker: ${model}`);
+for (const model of backend.keys()) assert(picker.has(model) !== catalogRemoved.has(model), `Unexpected picker availability: ${model}`);
 
 for (const [model, backendLine] of backend) {
   if (model === 'omni-flash-ext') continue;

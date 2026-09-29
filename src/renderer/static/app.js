@@ -2866,7 +2866,10 @@ function resolveAgentImageModel(requestedModel=''){
   const homepageModel = String($('#model')?.value || $('#modelPreset')?.value || '').trim();
   return isApimartImageModel(homepageModel) ? homepageModel : 'gpt-image-2';
 }
-function agentSelectedVideoModel(){ return String($('#agentVideoModelPreset')?.value || agentConfig.video_model || '').trim(); }
+function agentSelectedVideoModel(){
+  const model = String($('#agentVideoModelPreset')?.value || agentConfig.video_model || '').trim();
+  return APIMART_VIDEO_MODEL_RULES_UI[model.toLowerCase()]?.catalogRemoved ? '' : model;
+}
 function setAgentSelectValue(select, value){
   if(!select) return;
   const next = String(value || '').trim();
@@ -2884,7 +2887,7 @@ function agentVideoModelOptionsHtml(){
     return options ? `<optgroup label="${escapeHtml(label)}">${options}</optgroup>` : '';
   }).join('');
   const remaining = Object.entries(APIMART_VIDEO_MODEL_RULES_UI)
-    .filter(([model])=>!grouped.has(String(model).toLowerCase()))
+    .filter(([model, rule])=>!rule.catalogRemoved && !grouped.has(String(model).toLowerCase()))
     .map(([model, rule])=>`<option value="${escapeHtml(model)}">${escapeHtml(rule.label || model)}</option>`)
     .join('');
   return groups + (remaining ? `<optgroup label="其他 APIMart 视频模型">${remaining}</optgroup>` : '');
@@ -3430,6 +3433,7 @@ async function runAgentTool(tool='', args={}){
   if(name === 'set_current_video_model'){
     const model = agentSelectedVideoModel() || String(args.model || '').trim();
     if(!model || !$('#videoModel')) throw new Error('视频模型输入框不可用');
+    if(APIMART_VIDEO_MODEL_RULES_UI[model.toLowerCase()]?.catalogRemoved) throw new Error('该模型已从 APIMart 当前目录移除，请选择其他模型。');
     $('#videoModel').value = model; updateVideoResolutionOptions(); updateVideoDurationOptions(); updateVideoModeUI(); updateVideoTaskEstimate();
     return {ok:true,model};
   }
@@ -3442,6 +3446,7 @@ async function runAgentTool(tool='', args={}){
       body.video_model = videoModel;
       body.api_endpoint = agentApimartCredentials().api_endpoint;
     }
+    if(APIMART_VIDEO_MODEL_RULES_UI[String(body.video_model || '').toLowerCase()]?.catalogRemoved) throw new Error('该模型已从 APIMart 当前目录移除，请选择其他模型。');
     if(!body.api_key) body.api_key = String($('#videoApiKey')?.value || $('#apiKey')?.value || agentApimartCredentials().api_key || '').trim();
     return api('/api/video_batch_submit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   }
@@ -8110,10 +8115,13 @@ applyApimartVideoUiDocumentDeltas([
 registerApimartVideoUiRules([
   { ...APIMART_VIDEO_MODEL_RULES_UI['wan3.0-video'], model:'wan3.0-video-prime', label:'Wan3.0 Video Prime', durationMin:2, durationMax:30 }
 ]);
+// Keep historical rules, but do not offer models removed from the live catalog.
+APIMART_VIDEO_MODEL_RULES_UI['sora-2'].catalogRemoved = true;
+APIMART_VIDEO_MODEL_RULES_UI['sora-2-pro'].catalogRemoved = true;
 const APIMART_VIDEO_MODEL_GROUPS_UI = [
   ['Omni / Google / FLUX / LTX', ['gemini-omni-1.1-flash','omni-flash-ext','gemini-omni-flash-preview','veo3.1-fast','veo3.1-quality','veo3.1-lite','veo3.1-fast-official','veo3.1-quality-official','flux-3-video','ltx-2.3-text-video','ltx-2.3-image-video']],
   ['Seedance', ['doubao-seedance-1-0-pro-fast','doubao-seedance-1-0-pro-quality','doubao-seedance-1-5-pro','doubao-seedance-2.0','doubao-seedance-2.0-fast','doubao-seedance-2.0-mini','doubao-seedance-2.5']],
-  ['Sora / MiniMax / SkyReels', ['sora-2','sora-2-pro','MiniMax-Hailuo-02','MiniMax-Hailuo-2.3','MiniMax-Hailuo-2.3-Fast','MiniMax-H3','MiniMax-H3-Max','skyreels-v4-fast','skyreels-v4-std']],
+  ['MiniMax / SkyReels', ['MiniMax-Hailuo-02','MiniMax-Hailuo-2.3','MiniMax-Hailuo-2.3-Fast','MiniMax-H3','MiniMax-H3-Max','skyreels-v4-fast','skyreels-v4-std']],
   ['HappyHorse / Wan', ['happyhorse-1.0','happyhorse-1.1','wan3.0-video','wan3.0-video-prime','wan2.5-preview','wan2.6','wan2.6-i2v','wan2.6-i2v-flash','wan2.7','wan2.7-r2v','wan2.7-videoedit']],
   ['Kling', ['kling-v2-6','kling-v2-6-motion-control','kling-v3','kling-v3-motion-control','kling-v3-omni','kling-video-o1','kling-3.0-turbo']],
   ['Vidu / Grok / Pixverse', ['viduq3','viduq3-mix','viduq3-pro','viduq3-turbo','grok-imagine-1.5-video-apimart','grok-imagine-video','grok-imagine-video-1.5','pixverse-v6']]
@@ -8154,6 +8162,9 @@ function currentVideoModeValue(){
 }
 function isSeedance25VideoModel(model = $('#videoModel')?.value){
   return currentVideoPlatform() === 'apimart' && String(model || '').toLowerCase() === 'doubao-seedance-2.5';
+}
+function seedance25DraftEnabled(){
+  return isSeedance25VideoModel() && $('#seedance25Draft')?.checked === true;
 }
 function seedance25VideoEditIsActive(){
   if(!isSeedance25VideoModel()) return false;
@@ -8425,8 +8436,11 @@ function updateVideoResolutionOptions(){
   const old = resolution.value;
   if(currentVideoPlatform() === 'apimart'){
     const rule = currentApimartVideoRule();
-    resolution.innerHTML = rule.resolutions.map(v=>`<option value="${v}">${v.toUpperCase()}</option>`).join('');
-    resolution.value = [...resolution.options].some(o=>o.value===old) ? old : rule.defaultResolution;
+    const draft = seedance25DraftEnabled();
+    const resolutions = draft ? ['480p'] : rule.resolutions;
+    resolution.innerHTML = resolutions.map(v=>`<option value="${v}">${v.toUpperCase()}</option>`).join('');
+    resolution.value = draft ? '480p' : ([...resolution.options].some(o=>o.value===old) ? old : rule.defaultResolution);
+    resolution.disabled = draft;
     const aspect = $('#videoAspect');
     if(aspect){
       aspect.closest('div')?.classList.toggle('hidden', rule.supportsAspect === false);
@@ -8439,6 +8453,7 @@ function updateVideoResolutionOptions(){
     return;
   }
   const flowQuality = currentVideoPlatform() === 'flow2api' && $('#videoModel')?.value === 'quality';
+  resolution.disabled = false;
   $('#videoAspect')?.closest('div')?.classList.remove('hidden');
   resolution.innerHTML = currentVideoPlatform() === 'apimart' || flowQuality
     ? '<option value="720p">720p</option><option value="1080p">1080p</option><option value="4k">4K</option>'
@@ -8939,6 +8954,7 @@ async function submitVideoTask(opts = {}){
     body.generate_audio = apimartRule.forceGeneratedAudio === true || $('#videoGenerateAudio')?.checked === true;
   }
   if(seedance25){
+    if(seedance25DraftEnabled()) { body.draft = true; body.resolution = '480p'; }
     body.generate_audio = $('#seedance25GenerateAudio')?.checked !== false;
     body.watermark = $('#seedance25Watermark')?.checked === true;
     body.return_last_frame = $('#seedance25ReturnLastFrame')?.checked === true;
@@ -9145,6 +9161,34 @@ function showVideoPreview(meta = {}){
   $('#videoPreviewModal')?.classList.add('active');
 }
 function closeVideoPreview(){ const p=$('#videoPreviewPlayer'); if(p){p.pause?.(); p.removeAttribute('src'); p.load?.();} $('#videoPreviewModal')?.classList.remove('active', 'asset-file-preview'); }
+const seedanceFinalSubmissions = new Set();
+function canFinalizeSeedanceDraft(row = {}){
+  return row.status === '已完成' && Boolean(row.task_id)
+    && ['seedance-2.5','doubao-seedance-2.5'].includes(String(row.model || '').toLowerCase())
+    && (row.draft === true || row.submission_payload?.draft === true);
+}
+async function finalizeSeedanceDraft(row, button){
+  if(!canFinalizeSeedanceDraft(row) || seedanceFinalSubmissions.has(row.id)) return;
+  const apiKey = videoPlatformApiKey('apimart');
+  if(!apiKey) return toast('请先填写 APIMart API Key');
+  if(!confirm('将此样片生成 1080p 正式片，会单独计费。样片须在创建后 7 天内，且属于当前 API Key 的账户。是否继续？')) return;
+  seedanceFinalSubmissions.add(row.id);
+  if(button) button.disabled = true;
+  try{
+    const body = {
+      video_model:'doubao-seedance-2.5', api_key:apiKey,
+      draft_task_id:row.task_id, resolution:'1080p', copies:1, retry_times:0,
+      output_format:row.submission_payload?.output_format || 'mp4'
+    };
+    const result = await api('/api/video_batch_submit', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+    if(!result.success) throw new Error(result.errors?.[0] || '正式片提交失败，请查看任务日志');
+    const failure = result.rows?.find(item=>String(item.status || '').includes('失败'));
+    if(failure) throw new Error(failure.error_message || '正式片提交失败');
+    toast('1080p 正式片已提交');
+    await loadVideoTasks();
+  }catch(error){ toast(error.message || '正式片提交失败'); }
+  finally{ seedanceFinalSubmissions.delete(row.id); if(button) button.disabled = false; }
+}
 function renderVideoCard(v, opts = {}){
   const selectable = !!opts.selectable;
   const compact = !!opts.compact;
@@ -9165,6 +9209,7 @@ function renderVideoCard(v, opts = {}){
     <div class="video-progress-wrap"><div class="video-progress-head"><span>${escapeHtml(progressText || '等待进度')}</span><b>${progress}%</b></div><div class="video-progress-bar"><i style="width:${progress}%"></i></div></div>
     <div class="video-prompt" title="${escapeHtml(v.prompt||'')}">${escapeHtml(v.prompt||'')}</div>
     <div class="actions no-margin">
+      ${canFinalizeSeedanceDraft(v)?`<button type="button" class="secondary" data-video-act="finalize-draft" data-video-id="${escapeHtml(v.id)}" ${seedanceFinalSubmissions.has(v.id)?'disabled':''}>生成 1080p 正式片</button>`:''}
       ${(v.remote_url||v.url||v.stream_url)?`<button type="button" class="secondary" data-video-act="copyvideo" data-video-id="${escapeHtml(v.id)}">复制视频</button>`:''}
       ${v.download_url?`<button type="button" class="secondary" data-video-act="download" data-video-id="${escapeHtml(v.id)}">下载</button>`:''}
       ${(v.remote_url||v.url)?`<button type="button" class="secondary" data-video-act="copy" data-video-id="${escapeHtml(v.id)}" title="复制可直接打开的完整视频链接">复制链接</button>`:''}
@@ -9788,6 +9833,9 @@ function setupVideoPage(){
   if($('#videoAdvancedRuleRow') && !$('#seedance25Options')){
     $('#videoAdvancedRuleRow').insertAdjacentHTML('afterend', '<div class="row hidden" id="seedance25Options"><div><label>输出格式</label><select id="seedance25OutputFormat"><option value="mp4">MP4</option><option value="mov">MOV（适合编辑 / 延长）</option></select><div class="field-help">Seedance 2.5 仅支持 MP4 或 MOV。</div></div><div class="seedance25-switches"><label class="switch-line"><input id="seedance25AutoDuration" type="checkbox" /> 自动时长</label><label class="switch-line"><input id="seedance25GenerateAudio" type="checkbox" checked /> 生成音频</label><label class="switch-line"><input id="seedance25Watermark" type="checkbox" /> 添加 AI 水印</label><label class="switch-line"><input id="seedance25ReturnLastFrame" type="checkbox" /> 返回尾帧</label></div></div>');
   }
+  if($('#seedance25Options .seedance25-switches') && !$('#seedance25Draft')){
+    $('#seedance25Options .seedance25-switches').insertAdjacentHTML('afterbegin', '<label class="switch-line"><input id="seedance25Draft" type="checkbox" /> 480p 样片</label>');
+  }
   setVideoApiPlatform(localStorage.getItem(VIDEO_PLATFORM_KEY) || 'apimart', true);
   setupVideoModelUsageEstimate();
   $('#apiKey')?.addEventListener('input', syncVideoApiKeyFromHome);
@@ -9808,6 +9856,7 @@ function setupVideoPage(){
   $('#videoSeed')?.addEventListener('input', updateVideoTaskEstimate);
   $('#videoGenerateAudio')?.addEventListener('change', updateVideoTaskEstimate);
   $('#seedance25AutoDuration')?.addEventListener('change', ()=>{ updateVideoDurationOptions(); updateVideoTaskEstimate(); });
+  $('#seedance25Draft')?.addEventListener('change', ()=>{ updateVideoResolutionOptions(); updateVideoDurationOptions(); updateVideoModeUI(); updateVideoTaskEstimate(); });
   ['#seedance25GenerateAudio','#seedance25Watermark','#seedance25ReturnLastFrame','#seedance25OutputFormat'].forEach(selector=>$(selector)?.addEventListener('change', updateVideoTaskEstimate));
   $('#wan3AutoDuration')?.addEventListener('change', ()=>{ updateVideoDurationOptions(); updateVideoDurationVisibility(); updateVideoModeUI(); updateVideoTaskEstimate(); });
   $('#wan3DocumentFile')?.addEventListener('change', e=>handleWan3DocumentFile(e.target.files));
@@ -9867,6 +9916,7 @@ function setupVideoPage(){
     e.preventDefault();
     if(btn) e.stopPropagation();
     const act=btn?.dataset?.videoAct || 'preview';
+    if(act==='finalize-draft') return finalizeSeedanceDraft(v, btn);
     if((e.shiftKey || e.ctrlKey || e.metaKey) && card && card.closest('#videoManageGrid')){ toggleVideoSelection(v.id); return; }
     if(act==='copyvideo'){
       return copyVideoFileOrLink(v);

@@ -1580,6 +1580,7 @@ const APIMART_RESPONSE_CHAT_MODELS = [
   { id: 'gemini-3-pro-preview', name: 'Gemini · gemini-3-pro-preview' },
 
   // Claude
+  { id: 'claude-sonnet-5-5', name: 'Claude · claude-sonnet-5-5' },
   { id: 'claude-fable-5.1', name: 'Claude · claude-fable-5.1' },
   { id: 'claude-opus-5-5', name: 'Claude · claude-opus-5-5' },
   { id: 'claude-opus-5', name: 'Claude · claude-opus-5' },
