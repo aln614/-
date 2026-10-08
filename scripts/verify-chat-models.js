@@ -11,6 +11,7 @@ if (!catalogBlock) {
 }
 const ids = [...catalogBlock[1].matchAll(/\{\s*id:\s*'([^']+)'/g)].map(match => match[1]);
 const required = [
+  'gpt-6.1-sol',
   'qwen3.8-max',
   'qwen3.8-max-0902',
   'gpt-6-astra',
@@ -40,4 +41,4 @@ if (missing.length || duplicates.length) {
   process.exit(1);
 }
 
-console.log(`[verify-chat-models] OK: ${ids.length} built-in chat models; September 29 additions are present.`);
+console.log(`[verify-chat-models] OK: ${ids.length} built-in chat models; October 8 additions are present.`);

@@ -1523,6 +1523,7 @@ async function generateFlow2ApiImage({ cfg, prompt, mainImagePath, refImages = [
 
 const APIMART_RESPONSE_CHAT_MODELS = [
   // GPT first
+  { id: 'gpt-6.1-sol', name: 'GPT · gpt-6.1-sol' },
   { id: 'gpt-6-astra', name: 'GPT · gpt-6-astra' },
   { id: 'gpt-6-sol', name: 'GPT · gpt-6-sol' },
   { id: 'gpt-6-luna', name: 'GPT · gpt-6-luna' },
