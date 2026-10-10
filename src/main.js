@@ -2863,6 +2863,7 @@ registerApimartVideoRules([
   { model:'kling-v3-omni', label:'Kling v3 Omni', resolutions:['720p','1080p','4k'], aspectRatios:['16:9','9:16','1:1'], durationRange:[3,15], supportsImageUrls:true, supportsVideoUrls:true, supportsImageWithRoles:true, supportsLastFrame:true, videoParam:'video_list', maxVideoCount:1, referenceVideoDurationRange:[3,10], modeFromResolution:true, durationWithVideo:false, audioParam:'audio', defaultAudio:false, audioDisallowsVideo:true, watermarkParam:'watermark' },
   { model:'kling-video-o1', label:'Kling Video O1', resolutions:['720p','1080p'], aspectRatios:['16:9','9:16','1:1'], durations:[5,10], defaultDuration:5, supportsImageUrls:true, supportsVideoUrls:true, supportsImageWithRoles:true, supportsLastFrame:true, videoParam:'video_list', maxImageCount:2, maxVideoCount:1, referenceVideoDurationRange:[3,10], modeFromResolution:true, durationWithVideo:false },
   { model:'kling-3.0-turbo', label:'Kling 3.0 Turbo', resolutions:['720p','1080p'], aspectRatios:['16:9','9:16','1:1'], durationRange:[3,15], supportsImageUrls:false, imageParam:'first_frame_image', maxImageCount:1, omitAspectWithImages:true, watermarkParam:'watermark' },
+  { model:'viduq4-preview', label:'Vidu Q4 Preview', resolutions:['540p','720p','1080p','2K','4K'], aspectRatios:['16:9','9:16','4:3','3:4','1:1'], durationRange:[3,16], defaultDuration:5, supportsImageUrls:true, supportsImageWithRoles:true, minImageCount:1, maxImageCount:15, omitAspectWithImageModes:['first_frame'], promptOptionalModes:['first_frame'], promptMaxLength:20000, audioParam:'audio', defaultAudio:true, audioReferenceParam:'audio_urls', maxAudioCount:3, audioRequiresImage:true, audioMinDuration:3, audioMaxDuration:12, audioReferenceExtensions:['.mp3'], audioReferenceMaxBytes:50*1024*1024 },
   { model:'viduq3', label:'Vidu Q3', resolutions:['540p','720p','1080p'], aspectRatios:['16:9','9:16','4:3','3:4','1:1'], durationRange:[3,16], supportsImageUrls:true, minImageCount:1, maxImageCount:7 },
   { model:'viduq3-mix', label:'Vidu Q3 Mix', resolutions:['720p','1080p'], aspectRatios:['16:9','9:16','4:3','3:4','1:1'], durationRange:[1,16], supportsImageUrls:true, minImageCount:1, maxImageCount:7 },
   { model:'viduq3-pro', label:'Vidu Q3 Pro', resolutions:['540p','720p','1080p'], aspectRatios:['16:9','9:16','4:3','3:4','1:1'], durationRange:[1,16], supportsImageUrls:true, maxImageCount:2, supportsLastFrame:true, omitAspectWithImages:true, audioParam:'audio', defaultAudio:true, promptOptionalWithMedia:true },
@@ -3023,6 +3024,23 @@ function validateApimartJsonResponse(json = {}, context = 'APIMart') {
     throw new Error(`${context} 返回错误：${extractApimartErrorMessage(json)}；实际响应：${compactJsonForLog(json)}`);
   }
   return json;
+}
+function validateViduQ4Input({ mode = 'auto', imageCount = 0, audioCount = 0, audioItems = [], hasVideo = false, hasOtherReferences = false, prompt = '' } = {}) {
+  if (hasVideo || hasOtherReferences) throw new Error('Vidu Q4 Preview 仅支持参考图片和 MP3 音频，不支持视频或文档参考。');
+  if (imageCount < 1 || imageCount > 15) throw new Error('Vidu Q4 Preview 每个任务需要 1-15 张参考图。');
+  if (audioCount > 3) throw new Error('Vidu Q4 Preview 最多支持 3 段参考音频。');
+  const resolved = mode === 'auto' ? (imageCount > 1 || audioCount ? 'multi_reference' : 'first_frame') : mode;
+  if (!['first_frame','multi_reference'].includes(resolved)) throw new Error('Vidu Q4 Preview 仅支持首帧或多素材生成，不支持文生视频、首尾帧或视频编辑。');
+  if (resolved === 'first_frame' && (imageCount !== 1 || audioCount)) throw new Error('Vidu Q4 Preview 首帧模式只能使用 1 张图片，不能混合参考音频。');
+  if (resolved === 'multi_reference' && !String(prompt).trim()) throw new Error('Vidu Q4 Preview 多素材生成必须填写提示词。');
+  if (Array.from(String(prompt)).length > 20000) throw new Error('Vidu Q4 Preview 提示词最多支持 20000 个字符。');
+  for (const item of audioItems) {
+    if (item.name && !/\.mp3$/i.test(item.name)) throw new Error('Vidu Q4 Preview 参考音频仅支持 MP3。');
+    const duration = Number(item.duration_seconds);
+    if (duration > 0 && (duration < 3 || duration > 12)) throw new Error('Vidu Q4 Preview 参考音频时长需为 3-12 秒。');
+    if (Number(item.size || 0) > 50 * 1024 * 1024) throw new Error('Vidu Q4 Preview 单段参考音频不能超过 50MB。');
+  }
+  return resolved;
 }
 function powershellJsonRequest(targetUrl, apiKey, payload = null, method = 'GET', timeoutSec = 120, proxyUrl = '') {
   return new Promise((resolve, reject) => {
@@ -4236,6 +4254,13 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
   getDB()._save();
   try {
     row.status = '提交中'; row.progress = 2; row.progress_text = '正在提交到 APIMart'; row.updated_at = nowISO(); getDB()._save();
+    const viduMode = videoModel === 'viduq4-preview' ? validateViduQ4Input({
+      mode: normalizeVideoMode(body.video_mode), imageCount: initialImageCount,
+      audioCount: Math.max(audioItems.length, prebuiltLocalAudioPaths.length) + directAudioUrls.length,
+      audioItems: audioDurationItems, prompt,
+      hasVideo: !!(videoItem || videoUrlInput || prebuiltLocalVideoPath || prebuiltLocalVideoPaths.length || directVideoUrls.length),
+      hasOtherReferences: !!(documentItem || documentUrlInput || linkUrlInput || body.local_document_path)
+    }) : '';
     const generatedLocalVideoPath = videoItem ? dataUrlToFile(videoItem, ownerId) : '';
     const localVideoPaths = [...new Set([...prebuiltLocalVideoPaths, prebuiltLocalVideoPath, row.local_video_path, generatedLocalVideoPath].filter(Boolean))];
     const localVideoPath = localVideoPaths[0] || '';
@@ -4278,7 +4303,7 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
     if (Number(rule.maxImageCount || 0) > 0 && imageUrls.length > Number(rule.maxImageCount)) {
       throw new Error(`${rule.label || videoModel} 参考图最多支持 ${rule.maxImageCount} 张，当前为 ${imageUrls.length} 张。`);
     }
-    let mode = resolveApimartVideoMode(body.video_mode, { imageCount: imageUrls.length, hasVideo: videoUrls.length > 0, hasAudio: audioUrls.length > 0 });
+    let mode = viduMode || resolveApimartVideoMode(body.video_mode, { imageCount: imageUrls.length, hasVideo: videoUrls.length > 0, hasAudio: audioUrls.length > 0 });
     const hasReferenceFamilyInputs = Boolean(videoUrls.length || audioUrls.length || documentFileUrl || linkUrl);
     if (rule.referenceFamilyInputsForceReferenceImages && hasReferenceFamilyInputs && imageUrls.length && ['first_frame', 'first_last_frame'].includes(mode)) {
       if (normalizeVideoMode(body.video_mode) !== 'auto') {
@@ -4387,7 +4412,9 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
     const omitAspect = (imageUrls.length && (rule.omitAspectWithImages || (Array.isArray(rule.omitAspectWithImageModes) && rule.omitAspectWithImageModes.includes(mode)))) || (videoUrls.length && rule.omitAspectWithVideo);
     if (!omitAspect && rule.aspectParam !== false) payload[rule.aspectParam || 'aspect_ratio'] = normalizedAspectRatio;
     if (imageUrls.length) {
-      if (rule.imageParam === 'skyreels') {
+      if (videoModel === 'viduq4-preview') {
+        payload.image_with_roles = imageUrls.map(url => ({ url, role:mode === 'first_frame' ? 'first_frame' : 'reference_image' }));
+      } else if (rule.imageParam === 'skyreels') {
         if (mode === 'multi_reference' || imageUrls.length > 2 || videoUrls.length > 0) {
           payload.ref_images = [];
           for (let i = 0; i < imageUrls.length; i += 5) {
@@ -4521,7 +4548,7 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
       }
     }
     const seed = optionalInt(body.seed);
-    if (seed !== undefined && rule.supportsSeed !== false && !suppressSeed) payload.seed = seed;
+    if (seed !== undefined && rule.supportsSeed !== false && !suppressSeed) payload.seed = videoModel === 'viduq4-preview' && seed < 0 ? 0 : seed;
     if (draftSettings.taskId) {
       // The final request must not resend even defaulted inherited fields.
       for (const key of Object.keys(payload)) delete payload[key];
@@ -4645,6 +4672,13 @@ async function createApimartVideoBatch(body, ownerId, req, cfg) {
   const documentUrl = multiFirstFrame ? '' : String(body.file_url || '').trim();
   const linkUrl = multiFirstFrame ? '' : String(body.link_url || '').trim();
   if (multiFirstFrame && !refImages.length) throw new Error('多首帧模式至少需要在“上传参考图”区域添加 1 张图片。');
+  const viduMode = canonicalApimartVideoModel(body.video_model) === 'viduq4-preview' ? validateViduQ4Input({
+    mode: multiFirstFrame ? 'first_frame' : normalizeVideoMode(body.video_mode),
+    imageCount: multiFirstFrame ? 1 : refImages.length,
+    audioCount: audioFiles.length, audioItems: audioFiles, prompt: prompts[0] || '',
+    hasVideo: !!(videoFiles.length || videoUrlInput),
+    hasOtherReferences: !!(documentFile || documentUrl || linkUrl)
+  }) : '';
 
   // V12.7 修复：批量上传多个参考视频时，先逐个落盘并生成各自独立的 public-video URL。
   // 避免并发提交时反复转换 dataURL / 复用同一个链接，导致提交到 APIMart 的参考视频看起来都一样。
@@ -4720,7 +4754,7 @@ async function createApimartVideoBatch(body, ownerId, req, cfg) {
     const hasReferenceMedia = refImageUrls.length > 0 || localAudioPaths.length > 0
       || sourceVideos.some(item => item.local_video_path || item.video_url)
       || Boolean(documentFile || documentUrl || linkUrl);
-    if (!draftSettings.taskId && (!videoRule.promptOptionalWithMedia || !hasReferenceMedia)) throw new Error('请输入视频提示词');
+    if (!draftSettings.taskId && viduMode !== 'first_frame' && (!videoRule.promptOptionalWithMedia || !hasReferenceMedia)) throw new Error('请输入视频提示词');
     prompts = [''];
   }
 
@@ -7472,7 +7506,8 @@ function assertApimartPublicReferenceUrl(value, label = '参考链接') {
 
 function assertReferenceAudioFile(filePath, rule = {}) {
   const ext = path.extname(String(filePath || '')).toLowerCase();
-  if (!['.mp3', '.wav'].includes(ext)) throw new Error('参考音频只支持 MP3 或 WAV 格式。');
+  const extensions = rule.audioReferenceExtensions || ['.mp3', '.wav'];
+  if (!extensions.includes(ext)) throw new Error(`参考音频只支持 ${extensions.join(' / ')} 格式。`);
   const stat = fs.statSync(filePath);
   const maxBytes = Number(rule.audioReferenceMaxBytes || 15 * 1024 * 1024);
   if (stat.size <= 0) throw new Error('参考音频文件为空。');

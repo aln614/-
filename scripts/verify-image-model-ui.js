@@ -17,6 +17,7 @@ const functions = [
   'isSeedream5SingleImageModel',
   'isFluxKontextModel','isFlux2Model','isFluxImageModel','isLtx23TextImageModel',
   'isQwenImage3Model','isQwenImage2Model','isNanoBananaLiteModel','isZImageTurboModel',
+  'isNanoBanana21Model','isMaiImage26Model',
   'isWan27ImageModel','isGrokAspectRatioImageModel','isGrokImagine2ExtModel',
   'clampImageOutputCount','applyDocumentedImageUiGuard','applyFluxImageUiGuard',
   'isMultiNImageModel','applyGptImage25UiGuard','applyQwenImage3UiGuard',
@@ -44,6 +45,27 @@ app.whenReady().then(async () => {
     ${functions}
     const check = (ok, message) => { if (!ok) throw new Error(message); };
     const selectModel = model => { $('#model').value = model; updateOfficialImageOptions(); };
+    selectModel('gemini-nano-banana-2.1');
+    check([...$('#clarity').options].map(x=>x.value).join(',') === '1K,2K,4K', 'Nano 2.1 resolutions');
+    $('#size').value = '1:8'; $('#clarity').value = '4K'; $('#imageN').value = '4';
+    selectModel('gemini-nano-banana-2.1');
+    check($('#size').value === '1:8' && $('#imageN').value === '4', 'Official supports 4K extreme ratios and multi-output');
+    selectModel('gemini-nano-banana-2.1-ext');
+    check($('#size').value === 'auto' && $('#imageN').value === '1', 'Ext disallows extreme 4K and multiple outputs');
+    check([...$('#size').options].find(x=>x.value === '1:8').disabled, 'Disable extreme ratio at 4K');
+    $('#clarity').value = '1K'; selectModel('gemini-nano-banana-2.1-ext');
+    check(![...$('#size').options].find(x=>x.value === '1:8').disabled, 'Restore extreme ratio at 1K');
+    selectModel('flux-3-image');
+    check([...$('#clarity').options].map(x=>x.value).join(',') === '768sq,1K,1.5K,2K,4K', 'FLUX 3 tiers');
+    check([...$('#size').options].some(x=>x.value === '7:5') && ![...$('#size').options].some(x=>x.value === 'custom'), 'FLUX 3 ratios only');
+    check($('#officialImageOptions').style.display === 'none', 'FLUX 3 must not inherit unsupported Flux 2 output fields');
+    selectModel('mai-image-2.6');
+    check([...$('#clarity').options].map(x=>x.value).join(',') === '1K,2K', 'MAI resolutions');
+    check([...$('#size').options].some(x=>x.value === 'custom'), 'MAI exact pixels');
+    selectModel('gpt-image-2-official');
+    check($('#imageBackground').closest('div').style.display === 'none', 'GPT Image 2 no longer documents background');
+    selectModel('gpt-image-1.5-official');
+    check($('#imageBackground').closest('div').style.display !== 'none', 'Other official models retain background');
     $('#imageN').value = '12';
     selectModel('gpt-image-2.5-ext');
     check($('#size').options.length === 11, 'Ext must offer auto and ten ratios');

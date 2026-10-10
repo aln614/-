@@ -45,7 +45,7 @@ for (const group of pickerBlock.matchAll(/\['[^']+',\s*\[([^\]]+)\]\]/g)) {
   for (const model of group[1].matchAll(/'([^']+)'/g)) picker.add(model[1].toLowerCase());
 }
 
-assert(backend.size === 53, `Expected 53 official backend models, found ${backend.size}`);
+assert(backend.size === 54, `Expected 54 backend models including compatibility entries, found ${backend.size}`);
 const catalogRemoved = new Set(['sora-2','sora-2-pro']);
 assert(picker.size === backend.size - catalogRemoved.size, `Active model picker count mismatch: picker=${picker.size}, backend=${backend.size}`);
 for (const model of picker) assert(backend.has(model), `Model picker has no backend rule: ${model}`);

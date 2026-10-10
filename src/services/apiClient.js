@@ -353,6 +353,8 @@ async function jsonRequestWithFallback(url, apiKey, payload = null, method = 'GE
   throw new Error('APIMart 请求失败或响应为空。' + errors.join(' | '));
 }
 const APIMART_IMAGE_MODELS = [
+  'gemini-nano-banana-2.1','gemini-nano-banana-2.1-ext',
+  'flux-3-image','mai-image-2.6','mai-image-2.6-flash',
   'gemini-3.1-flash-image-preview','gemini-3.1-flash-image-preview-official',
   'gemini-3.1-flash-lite-image','gemini-3.1-flash-lite-image-ext',
   'nano-banana-2-ext','nano-banana-2','nano-banana-2-lite','nano-banana-2-lite-ext',
@@ -377,7 +379,7 @@ const APIMART_IMAGE_MODELS = [
   'grok-imagine-2.0-ext','grok-imagine-image-2.0',
   'wan2.7-image','wan2.7-image-pro'
 ];
-const APIMART_RATIO_SET = new Set(['auto','1:1','3:2','2:3','4:3','3:4','16:9','9:16','5:4','4:5','21:9','9:21','1:4','4:1','1:8','8:1','2:1','1:2','3:1','1:3','9:19.5','19.5:9','9:20','20:9']);
+const APIMART_RATIO_SET = new Set(['auto','1:1','3:2','2:3','4:3','3:4','16:9','9:16','5:4','4:5','7:5','5:7','21:9','9:21','1:4','4:1','1:8','8:1','2:1','1:2','3:1','1:3','9:19.5','19.5:9','9:20','20:9']);
 
 // V14.4.6: APIMart 模型规则表。不要把所有图片模型都套同一套参数，按模型能力过滤/归一化。
 const GEMINI_31_RULE = {
@@ -385,6 +387,32 @@ const GEMINI_31_RULE = {
   nMin: 1, nMax: 1, defaultN: 1,
   sizes: ['auto','1:1','3:2','2:3','4:3','3:4','16:9','9:16','5:4','4:5','21:9','1:4','4:1','1:8','8:1'], defaultSize: 'auto',
   resolutions: ['0.5K','1K','2K','4K'], defaultResolution: '1K'
+};
+const NANO_BANANA_21_RULE = {
+  ...GEMINI_31_RULE, maxImageUrls: Infinity, maxImageBytes: 20 * 1024 * 1024,
+  nMax: 4, resolutions: ['1K','2K','4K'], noCustomSize: true
+};
+const NANO_BANANA_21_EXT_RULE = {
+  ...NANO_BANANA_21_RULE, nMax: 1, maxTotalImageBytes: 50 * 1024 * 1024,
+  resolutionRestrictedSizes: ['1:4','4:1','1:8','8:1'], restrictedSizeResolutions: ['1K'],
+  booleanParams: ['official_fallback']
+};
+const FLUX3_IMAGE_RULE = {
+  endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 10,
+  strictReferenceLimit: true, nMin: 1, nMax: 1, defaultN: 1,
+  sizes: ['auto','21:9','2:1','16:9','3:2','7:5','4:3','5:4','1:1','4:5','3:4','5:7','2:3','9:16','1:2','9:21'],
+  defaultSize: 'auto', sizeParam: 'aspect_ratio', noCustomSize: true,
+  resolutions: ['768sq','1k','1.5k','2k','4k'], defaultResolution: '1k',
+  allowSafetyTolerance: true, safetyToleranceMin: 0, safetyToleranceMax: 4,
+  booleanParams: ['grounding']
+};
+const MAI_IMAGE_26_RULE = {
+  endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 5,
+  strictReferenceLimit: true, nMin: 1, nMax: 1, defaultN: 1,
+  defaultSize: '1:1', arbitraryAspectRatios: true, minAspectRatio: 1 / 4, maxAspectRatio: 4,
+  customSizeMin: 768, customPixelMax: 2359296,
+  resolutions: ['1K','2K'], defaultResolution: '1K', dimensionsTextOnly: true,
+  booleanParams: ['auto_aspect_ratio','web_grounding']
 };
 const GEMINI_31_LITE_RULE = {
   endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 14,
@@ -550,6 +578,11 @@ const Z_IMAGE_TURBO_RULE = {
   textOnly: true, allowPromptExtend: true, promptExtendModes: ['direct'], defaultPromptExtendMode: 'direct'
 };
 const APIMART_MODEL_RULES = {
+  'gemini-nano-banana-2.1': NANO_BANANA_21_RULE,
+  'gemini-nano-banana-2.1-ext': NANO_BANANA_21_EXT_RULE,
+  'flux-3-image': FLUX3_IMAGE_RULE,
+  'mai-image-2.6': MAI_IMAGE_26_RULE,
+  'mai-image-2.6-flash': MAI_IMAGE_26_RULE,
   'gemini-3.1-flash-image-preview': GEMINI_31_RULE,
   'gemini-3.1-flash-image-preview-official': GEMINI_31_RULE,
   'nano-banana-2-ext': GEMINI_31_RULE,
@@ -577,7 +610,7 @@ const APIMART_MODEL_RULES = {
     sizes: ['auto','1:1','3:2','2:3','4:3','3:4','5:4','4:5','16:9','9:16','2:1','1:2','3:1','1:3','21:9','9:21'],
     qualities: ['auto','low','medium','high'], defaultQuality: 'auto',
     backgrounds: ['auto','opaque','transparent'], moderations: ['auto','low'], outputFormats: ['png','jpeg','webp'],
-    allowQuality: true, allowMask: true, allowOutputFormat: true, allowBackground: true, allowModeration: true
+    allowQuality: true, allowMask: true, allowOutputFormat: true, allowBackground: false, allowModeration: true
   },
   'gpt-image-2.5-flare': GPT_IMAGE_25_RULE,
   'gpt-image-2.5-sunburst': GPT_IMAGE_25_RULE,
@@ -656,10 +689,15 @@ function sanitizeApimartImagePayload(rawPayload = {}, model = '') {
     if (!rule.versions.includes(version)) throw new Error('Unsupported image model version');
     payload.version = version;
   }
-  if (!rule.noSize) {
+  if (!rule.noSize && !(hasRefs && rule.dimensionsTextOnly)) {
     let rawSize = String(rawPayload.size || rule.defaultSize || 'auto').replace('×','x').replace(/\s+/g,'').toLowerCase();
     if (rawSize === 'none') rawSize = rule.defaultSize || '1:1';
     const sizes = rule.sizes || null;
+    if (rule.arbitraryAspectRatios && rawSize !== 'auto' && !/^\d+x\d+$/i.test(rawSize)) {
+      const ratio = rawSize.match(/^(\d+):(\d+)$/);
+      const value = ratio && Number(ratio[2]) > 0 ? Number(ratio[1]) / Number(ratio[2]) : 0;
+      if (value < rule.minAspectRatio || value > rule.maxAspectRatio) rawSize = rule.defaultSize;
+    }
     if (sizes && !sizes.includes(rawSize) && !/^\d+x\d+$/i.test(rawSize)) rawSize = rule.defaultSize || sizes[0] || '1:1';
     if (sizes && rule.noCustomSize && /^\d+x\d+$/i.test(rawSize)) rawSize = rule.defaultSize || sizes[0] || '1:1';
     const customSize = rawSize.match(/^(\d+)x(\d+)$/i);
@@ -682,12 +720,19 @@ function sanitizeApimartImagePayload(rawPayload = {}, model = '') {
     if (rule.autoRequiresImage && rawSize === 'auto' && !hasRefs) rawSize = rule.defaultSize || '1:1';
     payload[rule.sizeParam || 'size'] = rawSize || rule.defaultSize || 'auto';
   }
-  if (!rule.noResolution) payload.resolution = normalizeRuleResolution(rawPayload.resolution, rule);
+  if (!rule.noResolution && !(hasRefs && rule.dimensionsTextOnly)) payload.resolution = normalizeRuleResolution(rawPayload.resolution, rule);
+  if (rule.resolutionRestrictedSizes?.includes(payload[rule.sizeParam || 'size'])
+    && !rule.restrictedSizeResolutions.includes(payload.resolution)) {
+    throw new Error('Nano Banana 2.1 Ext 的 1:4、4:1、1:8、8:1 比例仅支持 1K，请修改比例或分辨率。');
+  }
   if (hasRefs && rule.imageResolutions && !rule.imageResolutions.includes(payload.resolution)) {
     payload.resolution = rule.defaultResolution || rule.imageResolutions[0];
   }
 
   if (hasRefs) {
+    if (rule.strictReferenceLimit && rawPayload.image_urls.filter(Boolean).length > rule.maxImageUrls) {
+      throw new Error(`${payload.model} 最多支持 ${rule.maxImageUrls} 张参考图，请减少图片数量。`);
+    }
     if (rule.textOnly || Number(rule.maxImageUrls || 0) <= 0) throw new Error(`${payload.model} 仅支持文生图，不支持上传参考图`);
     let maxImages = Math.max(1, Number(rule.maxImageUrls || rawPayload.image_urls.length));
     if (Number.isFinite(Number(rule.maxReferencesAndOutputs))) {
@@ -742,6 +787,9 @@ function sanitizeApimartImagePayload(rawPayload = {}, model = '') {
     if (payload.sequential_image_generation === 'auto') payload.sequential_image_generation_options = { max_images: payload.n };
   }
   if (rule.allowWatermark && rawPayload.watermark !== undefined) payload.watermark = !!rawPayload.watermark;
+  for (const key of rule.booleanParams || []) {
+    if (typeof rawPayload[key] === 'boolean') payload[key] = rawPayload[key];
+  }
   const seed = Number(rawPayload.seed);
   if (rule.allowSeed && Number.isInteger(seed)) payload.seed = seed;
   if (rule.allowPromptUpsampling && rawPayload.prompt_upsampling !== undefined) {
@@ -919,7 +967,7 @@ function urlJoin(base, p) { return cleanBase(base) + p; }
 
 function sizeToAspect(size, model = '', clarity = '1K') {
   const raw = String(size || 'auto').replace('×','x').replace(/\s+/g,'').toLowerCase();
-  if(APIMART_IMAGE_MODELS.includes(String(model || '').toLowerCase())) return APIMART_RATIO_SET.has(raw) || /^\d+x\d+$/i.test(raw) ? raw : 'auto';
+  if(APIMART_IMAGE_MODELS.includes(String(model || '').toLowerCase())) return APIMART_RATIO_SET.has(raw) || /^\d+x\d+$/i.test(raw) || (getApimartImageRule(model).arbitraryAspectRatios && /^\d+:\d+$/.test(raw)) ? raw : 'auto';
   return resolveModelSize(model, size, clarity);
 }
 
@@ -1275,6 +1323,12 @@ async function generateOne({ cfg, prompt, mainImagePath, refImages = [], outputP
       maxImages = Math.min(maxImages, Math.max(0, Number(rule.maxReferencesAndOutputs) - requestedN));
     }
     if (rule.textOnly) throw new Error(`${model} 仅支持文生图，不支持上传参考图`);
+    if (rule.strictReferenceLimit && allImagePaths.length > maxImages) throw new Error(`${model} 最多支持 ${maxImages} 张参考图，请减少图片数量。`);
+    if (rule.maxImageBytes || rule.maxTotalImageBytes) {
+      const sizes = await Promise.all(allImagePaths.map(file => fs.promises.stat(file).then(stat => stat.size)));
+      if (sizes.some(size => size > rule.maxImageBytes)) throw new Error(`${model} 单张参考图不能超过 20MB。`);
+      if (rule.maxTotalImageBytes && sizes.reduce((sum, size) => sum + size, 0) > rule.maxTotalImageBytes) throw new Error(`${model} 参考图总大小不能超过 50MB。`);
+    }
     if (maxImages <= 0) throw new Error(`${model} 当前输出数量已占满参考图名额，请减少 n 后再上传参考图`);
     for (const [index, p] of allImagePaths.slice(0, maxImages).entries()) {
       try {
@@ -1310,6 +1364,10 @@ async function generateOne({ cfg, prompt, mainImagePath, refImages = [], outputP
     seed: cfg.seed,
     prompt_upsampling: cfg.prompt_upsampling,
     safety_tolerance: cfg.safety_tolerance,
+    grounding: cfg.grounding,
+    web_grounding: cfg.web_grounding,
+    auto_aspect_ratio: cfg.auto_aspect_ratio,
+    official_fallback: cfg.official_fallback,
     steps: cfg.steps,
     guidance: cfg.guidance
   };
@@ -1594,6 +1652,7 @@ const APIMART_RESPONSE_CHAT_MODELS = [
   { id: 'claude-opus-4-6-thinking', name: 'Claude · claude-opus-4-6-thinking' },
   { id: 'claude-opus-4-5-20251101', name: 'Claude · claude-opus-4-5-20251101' },
   { id: 'claude-opus-4-5-20251101-thinking', name: 'Claude · claude-opus-4-5-20251101-thinking' },
+  { id: 'claude-haiku-5-5', name: 'Claude · claude-haiku-5-5' },
   { id: 'claude-haiku-4-5-20251001', name: 'Claude · claude-haiku-4-5-20251001' },
   { id: 'claude-haiku-4-5-20251001-thinking', name: 'Claude · claude-haiku-4-5-20251001-thinking' },
   { id: 'claude-sonnet-4-5-20250929', name: 'Claude · claude-sonnet-4-5-20250929' },

@@ -33,6 +33,8 @@ const APP_VIDEO_PRICE_MODEL_MAP = Object.freeze({
 });
 
 const FIXED_IMAGE_PRICES = Object.freeze({
+  'flux-3-image': [['768SQ',0.328], ['1K',0.384], ['1.5K',0.56], ['2K',0.8], ['4K',4.856]],
+  'gemini-nano-banana-2.1-ext': [['1K',0.2], ['2K',0.25], ['4K',0.3]],
   'gpt-image-2.5-ext': [['flare@1K', 0.085], ['flare@2K', 0.14], ['flare@4K', 0.21], ['sunburst@1K', 0.085], ['sunburst@2K', 0.14], ['sunburst@4K', 0.21]],
   'gpt-image-2-ext': [['default', 0.085], ['1K', 0.085], ['2K', 0.14], ['4K', 0.21]],
   'z-image-turbo': [['default', 0.1], ['prompt_extend', 0.2]],
@@ -67,6 +69,7 @@ const FIXED_IMAGE_PRICES = Object.freeze({
 // APIMart public pricing snapshot. Live values are refreshed from the pricing
 // page; this table keeps estimates available while the network is offline.
 const FIXED_VIDEO_PRICES = Object.freeze({
+  'viduq4-preview': { unit:'秒', rows:[['540P',0.448],['720P',0.912],['1080P',1.024],['2K',1.624],['4K',3.328]] },
   'MiniMax-H3': { unit:'秒', rows:[['default',0.9144],['2K',0.9144],['768P',0.5712]] },
   'MiniMax-H3-Max': { unit:'秒', rows:[['default',0.5712],['768P',0.5712],['480P',0.3768],['1080P',1.28]] },
   'MiniMax-Hailuo-02': { unit:'秒', rows:[['1080P',0.8],['512P',0.104],['768P',0.4]] },
@@ -120,6 +123,9 @@ const FIXED_VIDEO_PRICES = Object.freeze({
 });
 
 const TOKEN_METERED_IMAGE_MODELS = Object.freeze([
+  'gemini-nano-banana-2.1',
+  'mai-image-2.6',
+  'mai-image-2.6-flash',
   'nano-banana-2-lite',
   'nano-banana',
   'nano-banana-2',
