@@ -394,7 +394,6 @@ const NANO_BANANA_21_RULE = {
 };
 const NANO_BANANA_21_EXT_RULE = {
   ...NANO_BANANA_21_RULE, nMax: 1, maxTotalImageBytes: 50 * 1024 * 1024,
-  resolutionRestrictedSizes: ['1:4','4:1','1:8','8:1'], restrictedSizeResolutions: ['1K'],
   booleanParams: ['official_fallback']
 };
 const FLUX3_IMAGE_RULE = {
@@ -721,10 +720,6 @@ function sanitizeApimartImagePayload(rawPayload = {}, model = '') {
     payload[rule.sizeParam || 'size'] = rawSize || rule.defaultSize || 'auto';
   }
   if (!rule.noResolution && !(hasRefs && rule.dimensionsTextOnly)) payload.resolution = normalizeRuleResolution(rawPayload.resolution, rule);
-  if (rule.resolutionRestrictedSizes?.includes(payload[rule.sizeParam || 'size'])
-    && !rule.restrictedSizeResolutions.includes(payload.resolution)) {
-    throw new Error('Nano Banana 2.1 Ext 的 1:4、4:1、1:8、8:1 比例仅支持 1K，请修改比例或分辨率。');
-  }
   if (hasRefs && rule.imageResolutions && !rule.imageResolutions.includes(payload.resolution)) {
     payload.resolution = rule.defaultResolution || rule.imageResolutions[0];
   }
@@ -1623,6 +1618,7 @@ const APIMART_RESPONSE_CHAT_MODELS = [
   { id: 'o1-mini', name: 'GPT · o1-mini' },
 
   // Gemini second
+  { id: 'gemini-4-argon', name: 'Gemini · gemini-4-argon' },
   { id: 'gemini-3.8-flash', name: 'Gemini · gemini-3.8-flash' },
   { id: 'gemini-3.7-flash', name: 'Gemini · gemini-3.7-flash' },
   { id: 'gemini-3.6-flash', name: 'Gemini · gemini-3.6-flash' },

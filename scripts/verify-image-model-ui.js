@@ -51,10 +51,15 @@ app.whenReady().then(async () => {
     selectModel('gemini-nano-banana-2.1');
     check($('#size').value === '1:8' && $('#imageN').value === '4', 'Official supports 4K extreme ratios and multi-output');
     selectModel('gemini-nano-banana-2.1-ext');
-    check($('#size').value === 'auto' && $('#imageN').value === '1', 'Ext disallows extreme 4K and multiple outputs');
-    check([...$('#size').options].find(x=>x.value === '1:8').disabled, 'Disable extreme ratio at 4K');
-    $('#clarity').value = '1K'; selectModel('gemini-nano-banana-2.1-ext');
-    check(![...$('#size').options].find(x=>x.value === '1:8').disabled, 'Restore extreme ratio at 1K');
+    check($('#size').value === '1:8' && $('#imageN').value === '1', 'Ext retains extreme 4K but remains single output');
+    for(const resolution of ['1K','2K','4K']){
+      for(const ratio of ['1:4','4:1','1:8','8:1']){
+        $('#clarity').value = resolution; $('#size').value = ratio;
+        selectModel('gemini-nano-banana-2.1-ext');
+        check($('#size').value === ratio && $('#clarity').value === resolution, 'Ext preserves selected ratio/resolution');
+        check(![...$('#size').options].find(x=>x.value === ratio).disabled, 'Ext ratio remains selectable');
+      }
+    }
     selectModel('flux-3-image');
     check([...$('#clarity').options].map(x=>x.value).join(',') === '768sq,1K,1.5K,2K,4K', 'FLUX 3 tiers');
     check([...$('#size').options].some(x=>x.value === '7:5') && ![...$('#size').options].some(x=>x.value === 'custom'), 'FLUX 3 ratios only');

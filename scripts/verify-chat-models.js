@@ -11,6 +11,7 @@ if (!catalogBlock) {
 }
 const ids = [...catalogBlock[1].matchAll(/\{\s*id:\s*'([^']+)'/g)].map(match => match[1]);
 const required = [
+  'gemini-4-argon',
   'claude-haiku-5-5',
   'gpt-6.1-sol',
   'qwen3.8-max',
@@ -42,4 +43,4 @@ if (missing.length || duplicates.length) {
   process.exit(1);
 }
 
-console.log(`[verify-chat-models] OK: ${ids.length} built-in chat models; October 10 additions are present.`);
+console.log(`[verify-chat-models] OK: ${ids.length} built-in chat models; October 19 additions are present.`);

@@ -1979,14 +1979,7 @@ function applyDocumentedImageUiGuard(model){
   };
 
   if(isNanoBanana21Model(m)){
-    const ext = m.endsWith('-ext');
-    const extreme = ['1:4','4:1','1:8','8:1'];
-    const resolution = $('#clarity')?.value || '1K';
-    for(const option of $('#size')?.options || []){
-      option.disabled = ext && resolution !== '1K' && extreme.includes(option.value);
-    }
-    if(ext && resolution !== '1K' && extreme.includes(sizeValue)) applySizeToUI('auto');
-    clampImageOutputCount(ext ? 1 : 4);
+    clampImageOutputCount(m.endsWith('-ext') ? 1 : 4);
   }else if(m === 'flux-3-image' || isMaiImage26Model(m)){
     clampImageOutputCount(1);
   }else if(isGptImage25ExtModel(m)){
@@ -2312,7 +2305,7 @@ function updateSizeHint(){
   }
   let supportNote = '';
   if(isNanoBanana21Model(model)) supportNote = imageModelKey(model).endsWith('-ext')
-    ? '（Ext 单次 1 张；极端比例仅 1K；参考图单张 20MB、总量 50MB）'
+    ? '（Ext 单次 1 张；14 种比例均支持 1K/2K/4K；参考图单张 20MB、总量 50MB）'
     : '（官方版支持 1-4 张输出；参考图单张 20MB；按实际 Token 用量结算）';
   if(isNanoBananaLiteModel(model)) supportNote = '（Nano Banana Lite 固定 1K，最多 14 张参考图、1-4 张输出）';
   else if(isQwenImage2Model(model)) supportNote = '（Qwen Image 2.0 / Pro 支持 1K/2K、1-6 张输出）';

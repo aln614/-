@@ -15,16 +15,12 @@ for (const model of ['gemini-nano-banana-2.1','gemini-nano-banana-2.1-ext']) {
   for (const resolution of rule.resolutions) {
     for (const size of rule.sizes) {
       const input = {prompt:'test',size,resolution,n:4,image_urls:refs};
-      if (ext && resolution !== '1K' && ['1:4','4:1','1:8','8:1'].includes(size)) {
-        assert.throws(()=>sanitize(input,model), /1K/);
-      } else {
-        const payload = sanitize(input,model);
-        assert.equal(payload.model,model);
-        assert.equal(payload.size,size);
-        assert.equal(payload.resolution,resolution);
-        assert.equal(payload.n,ext ? 1 : 4);
-        assert.equal(payload.image_urls.length,18,'No invented reference-count cap');
-      }
+      const payload = sanitize(input,model);
+      assert.equal(payload.model,model);
+      assert.equal(payload.size,size,'All documented ratios work at every resolution, including Ext');
+      assert.equal(payload.resolution,resolution);
+      assert.equal(payload.n,ext ? 1 : 4);
+      assert.equal(payload.image_urls.length,18,'No invented reference-count cap');
     }
   }
   assert.equal(sanitize({resolution:'0.5K'},model).resolution,'1K');
