@@ -47,7 +47,7 @@ fs.writeFileSync(path.join(data, 'config.json'), JSON.stringify({
     assert.equal(create.ok, true);
     await instance.evaluate(({BrowserWindow})=>{
       const original=BrowserWindow.prototype.setShape;
-      BrowserWindow.prototype.setShape=function(rectangles){this.__testShape=rectangles;return original.call(this,rectangles);};
+      BrowserWindow.prototype.setShape=function(rectangles){const result=original.call(this,rectangles);this.__testShape=rectangles;return result;};
     });
     const assetFixture = await main.evaluate(async()=>{
       const post = (url,body)=>fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json());
