@@ -842,11 +842,15 @@ function showLibraryWindow(kind, toggle = false) {
   }
   win = new BrowserWindow({
     width:kind === 'asset' ? 1200 : 1050, height:760, minWidth:720, minHeight:500,
-    title:kind === 'asset' ? '资产库' : '提示词库', show:false,
+    title:kind === 'asset' ? '资产库' : '提示词库', show:false, frame:false,
+    transparent:true, backgroundColor:'#00000000', thickFrame:true,
     icon:path.join(__dirname, '..', 'assets', 'rocket.ico'),
     webPreferences:{contextIsolation:true, nodeIntegration:false, sandbox:false, webSecurity:true, allowRunningInsecureContent:false, preload:path.join(__dirname,'preload.js')}
   });
   libraryWindows[kind] = win;
+  if (process.platform === 'win32') {
+    try { win.setBackgroundMaterial('acrylic'); } catch {}
+  }
   setupImageContextMenu(win);
   win.webContents.setWindowOpenHandler(({url:target})=>{
     if (/^https?:\/\//i.test(String(target || ''))) shell.openExternal(target).catch(()=>{});
@@ -9798,6 +9802,11 @@ ipcMain.handle('library:hide', event => {
   const win = Object.values(libraryWindows).find(item => item && !item.isDestroyed() && item.webContents === event.sender);
   if (!win) return false;
   win.hide(); return true;
+});
+ipcMain.on('library:resize', (event, size) => {
+  const win = Object.values(libraryWindows).find(item => item && !item.isDestroyed() && item.webContents === event.sender);
+  if (!win || !Number.isFinite(size?.width) || !Number.isFinite(size?.height)) return;
+  win.setSize(Math.max(720, Math.min(4096, Math.round(size.width))), Math.max(500, Math.min(4096, Math.round(size.height))));
 });
 ipcMain.handle('library:apply-prompt', (event, content) => {
   if (!libraryWindows.prompt || libraryWindows.prompt.isDestroyed() || libraryWindows.prompt.webContents !== event.sender || typeof content !== 'string') return false;

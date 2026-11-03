@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 contextBridge.exposeInMainWorld('libraryPanel', {
   open: kind => ipcRenderer.invoke('library:open', kind),
   hide: () => ipcRenderer.invoke('library:hide'),
+  resize: size => ipcRenderer.send('library:resize', size),
   applyPrompt: content => ipcRenderer.invoke('library:apply-prompt', content),
   suspendShortcuts: value => ipcRenderer.invoke('shortcuts:suspend', value),
   onRefresh: callback => ipcRenderer.on('library:refresh', () => callback()),

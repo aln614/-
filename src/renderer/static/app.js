@@ -10659,6 +10659,22 @@ function bringFloatingLayer(layerSelector, windowSelector){
 }
 function makeFloatingBox(boxId, headId, resizeId){
   const box=$('#'+boxId), head=$('#'+headId), resize=resizeId?$('#'+resizeId):null; if(!box||!head||box.dataset.floatReady) return; box.dataset.floatReady='1';
+  if(standaloneLibrary && (boxId === 'assetLibraryWindow' || boxId === 'promptLibraryWindow')){
+    if(resize){
+      let origin = null;
+      resize.addEventListener('pointerdown', event=>{
+        if(event.button !== 0) return;
+        origin = {x:event.screenX, y:event.screenY, width:window.outerWidth, height:window.outerHeight};
+        resize.setPointerCapture(event.pointerId); event.preventDefault(); event.stopPropagation();
+      });
+      resize.addEventListener('pointermove', event=>{
+        if(origin) window.libraryPanel.resize({width:origin.width + event.screenX - origin.x, height:origin.height + event.screenY - origin.y});
+      });
+      const finish = ()=>{origin = null;};
+      resize.addEventListener('pointerup', finish); resize.addEventListener('pointercancel', finish); resize.addEventListener('lostpointercapture', finish);
+    }
+    return;
+  }
   const bring = ()=>{ const layer = box.closest('.prompt-library-layer,.asset-library-layer,.chat-popout-modal'); if(layer){ floatingZIndex += 2; layer.style.zIndex = String(floatingZIndex); box.style.zIndex = String(floatingZIndex + 1); } };
   box.addEventListener('mousedown', bring, true);
   let dragging=false, sx=0, sy=0, sl=0, st=0; head.addEventListener('mousedown',e=>{ bring(); if(e.target.closest('button,input,select,textarea')) return; dragging=true; sx=e.clientX; sy=e.clientY; const r=box.getBoundingClientRect(); sl=r.left; st=r.top; e.preventDefault(); });

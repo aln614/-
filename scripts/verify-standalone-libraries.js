@@ -12,7 +12,7 @@ const data = path.join(temporary, 'runtime');
 fs.mkdirSync(data, {recursive:true});
 fs.writeFileSync(path.join(data, 'config.json'), JSON.stringify({
   port:18768, output_dir:path.join(temporary, 'output'), asset_library_dir:path.join(temporary, 'assets'),
-  shortcuts_enabled:true, update_auto_check:false, public_enabled:false,
+  shortcuts_enabled:true, update_auto_check:false, public_enabled:false, theme_mode:'light',
   shortcut_settings:{open_app:'Ctrl+Alt+F9',toggle_asset_library:'Ctrl+Alt+F10',toggle_prompt_library:'Ctrl+Alt+F11',toggle_agent:'Ctrl+Alt+F12'}
 }));
 
@@ -66,6 +66,30 @@ fs.writeFileSync(path.join(data, 'config.json'), JSON.stringify({
     assert.ok(asset, 'Asset library opens in a separate native window');
     await asset.waitForSelector('body.standalone-asset #assetLibraryLayer.active', {timeout:15000});
     await asset.getByText('fixture.png',{exact:true}).waitFor();
+    const appearance=await instance.evaluate(({BrowserWindow})=>{
+      const win=BrowserWindow.getAllWindows().find(item=>item.webContents.getURL().includes('library=asset'));
+      return {background:win.getBackgroundColor(), resizable:win.isResizable(),bounds:win.getBounds()};
+    });
+    assert.match(appearance.background,/^#00/i,'Independent panels must have a transparent native background');
+    assert.equal(appearance.resizable,true,'Independent panels must remain resizable');
+    assert.equal(await asset.evaluate(()=>getComputedStyle(document.body).backgroundColor),'rgba(0, 0, 0, 0)');
+    assert.equal(await asset.locator('#assetLibraryHead').evaluate(el=>getComputedStyle(el).webkitAppRegion),'drag','The header must drag the native window');
+    assert.equal(await asset.locator('#assetLibrarySearch').evaluate(el=>getComputedStyle(el).webkitAppRegion),'no-drag','Search stays interactive in the draggable header');
+    const glassAlpha=await instance.evaluate(async({BrowserWindow})=>{
+      const panel=BrowserWindow.getAllWindows().find(item=>item.webContents.getURL().includes('library=asset'));
+      const image=await panel.webContents.capturePage();
+      const bitmap=image.toBitmap(), size=image.getSize(), offset=(Math.floor(size.height*.55)*size.width+Math.floor(size.width*.7))*4;
+      return bitmap[offset+3];
+    });
+    assert.ok(glassAlpha < 245,`Panel background should remain translucent, alpha ${glassAlpha}`);
+    const handle=asset.locator('#assetLibraryResize');
+    await handle.waitFor({state:'visible'});
+    const grip=await handle.boundingBox();
+    await asset.mouse.move(grip.x+grip.width/2,grip.y+grip.height/2);
+    await asset.mouse.down(); await asset.mouse.move(grip.x+grip.width/2+80,grip.y+grip.height/2+50,{steps:4}); await asset.mouse.up();
+    await asset.waitForTimeout(150);
+    const resized=await instance.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().find(item=>item.webContents.getURL().includes('library=asset')).getBounds());
+    assert.ok(resized.width > appearance.bounds.width && resized.height > appearance.bounds.height,'The resize grip must change the native window size');
     fs.mkdirSync(path.join(root,'test-results'),{recursive:true});
     await asset.screenshot({path:path.join(root,'test-results','standalone-asset-library.png')});
     await asset.locator('.asset-card').first().click();
@@ -84,6 +108,10 @@ fs.writeFileSync(path.join(data, 'config.json'), JSON.stringify({
     assert.ok(prompt, 'Prompt library opens in a separate native window');
     await prompt.waitForSelector('body.standalone-prompt #promptLibraryLayer.active', {timeout:15000});
     await prompt.getByText('Test template', {exact:true}).waitFor();
+    assert.equal(await prompt.evaluate(()=>getComputedStyle(document.body).backgroundColor),'rgba(0, 0, 0, 0)');
+    assert.equal(await prompt.locator('#promptLibraryHead').evaluate(el=>getComputedStyle(el).webkitAppRegion),'drag');
+    assert.equal(await prompt.locator('#promptLibrarySearch').evaluate(el=>getComputedStyle(el).webkitAppRegion),'no-drag');
+    await prompt.locator('#promptLibraryResize').waitFor({state:'visible'});
     await prompt.screenshot({path:path.join(root,'test-results','standalone-prompt-library.png')});
     await prompt.locator('.pl-card').filter({hasText:'Test template'}).getByText('应用',{exact:true}).click();
     await main.waitForFunction(()=>document.querySelector('#prompts').value === 'Sample prompt');
