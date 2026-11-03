@@ -45,6 +45,10 @@ fs.writeFileSync(path.join(data, 'config.json'), JSON.stringify({
     assert.equal(swap.ok,true,'Existing bindings can be exchanged in one save');
     const create = await main.evaluate(async()=>fetch('/api/prompt_library/template',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:'Test template',content:'Sample prompt',group_id:'uncategorized',type:'通用'})}).then(r=>r.json()));
     assert.equal(create.ok, true);
+    await instance.evaluate(({BrowserWindow})=>{
+      const original=BrowserWindow.prototype.setShape;
+      BrowserWindow.prototype.setShape=function(rectangles){this.__testShape=rectangles;return original.call(this,rectangles);};
+    });
     const assetFixture = await main.evaluate(async()=>{
       const post = (url,body)=>fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json());
       const group=await post('/api/assets/groups/create',{name:'Test assets'});
@@ -68,10 +72,17 @@ fs.writeFileSync(path.join(data, 'config.json'), JSON.stringify({
     await asset.getByText('fixture.png',{exact:true}).waitFor();
     const appearance=await instance.evaluate(({BrowserWindow})=>{
       const win=BrowserWindow.getAllWindows().find(item=>item.webContents.getURL().includes('library=asset'));
-      return {background:win.getBackgroundColor(), resizable:win.isResizable(),bounds:win.getBounds()};
+      return {background:win.getBackgroundColor(), resizable:win.isResizable(),bounds:win.getBounds(),shape:win.__testShape};
     });
     assert.match(appearance.background,/^#00/i,'Independent panels must have a transparent native background');
     assert.equal(appearance.resizable,true,'Independent panels must remain resizable');
+    const inside=(shape,x,y)=>shape.some(rect=>x>=rect.x && y>=rect.y && x<rect.x+rect.width && y<rect.y+rect.height);
+    assert.ok(appearance.shape?.length > 1,'A rounded native window shape is applied');
+    assert.equal(inside(appearance.shape,0,0),false,'The upper-left corner must not draw a square background');
+    assert.equal(inside(appearance.shape,appearance.bounds.width-1,0),false,'The upper-right corner must not draw a square background');
+    assert.equal(inside(appearance.shape,0,appearance.bounds.height-1),false,'The lower-left corner must not draw a square background');
+    assert.equal(inside(appearance.shape,appearance.bounds.width-1,appearance.bounds.height-1),false,'The lower-right corner must not draw a square background');
+    assert.equal(inside(appearance.shape,appearance.bounds.width/2,appearance.bounds.height/2),true);
     assert.equal(await asset.evaluate(()=>getComputedStyle(document.body).backgroundColor),'rgba(0, 0, 0, 0)');
     assert.equal(await asset.locator('#assetLibraryHead').evaluate(el=>getComputedStyle(el).webkitAppRegion),'drag','The header must drag the native window');
     assert.equal(await asset.locator('#assetLibrarySearch').evaluate(el=>getComputedStyle(el).webkitAppRegion),'no-drag','Search stays interactive in the draggable header');
@@ -90,6 +101,9 @@ fs.writeFileSync(path.join(data, 'config.json'), JSON.stringify({
     await asset.waitForTimeout(150);
     const resized=await instance.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().find(item=>item.webContents.getURL().includes('library=asset')).getBounds());
     assert.ok(resized.width > appearance.bounds.width && resized.height > appearance.bounds.height,'The resize grip must change the native window size');
+    const resizedShape=await instance.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().find(item=>item.webContents.getURL().includes('library=asset')).__testShape);
+    assert.equal(inside(resizedShape,resized.width-1,resized.height-1),false,'Rounded clipping must follow the resized window');
+    assert.equal(inside(resizedShape,resized.width/2,resized.height/2),true);
     fs.mkdirSync(path.join(root,'test-results'),{recursive:true});
     await asset.screenshot({path:path.join(root,'test-results','standalone-asset-library.png')});
     await asset.locator('.asset-card').first().click();
@@ -109,6 +123,13 @@ fs.writeFileSync(path.join(data, 'config.json'), JSON.stringify({
     await prompt.waitForSelector('body.standalone-prompt #promptLibraryLayer.active', {timeout:15000});
     await prompt.getByText('Test template', {exact:true}).waitFor();
     assert.equal(await prompt.evaluate(()=>getComputedStyle(document.body).backgroundColor),'rgba(0, 0, 0, 0)');
+    const promptShape=await instance.evaluate(({BrowserWindow})=>{
+      const win=BrowserWindow.getAllWindows().find(item=>item.webContents.getURL().includes('library=prompt'));
+      return {bounds:win.getBounds(),shape:win.__testShape};
+    });
+    assert.ok(promptShape.shape?.length > 1,'The prompt window also has rounded native clipping');
+    assert.equal(inside(promptShape.shape,0,0),false);
+    assert.equal(inside(promptShape.shape,promptShape.bounds.width-1,promptShape.bounds.height-1),false);
     assert.equal(await prompt.locator('#promptLibraryHead').evaluate(el=>getComputedStyle(el).webkitAppRegion),'drag');
     assert.equal(await prompt.locator('#promptLibrarySearch').evaluate(el=>getComputedStyle(el).webkitAppRegion),'no-drag');
     await prompt.locator('#promptLibraryResize').waitFor({state:'visible'});

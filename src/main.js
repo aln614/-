@@ -830,6 +830,19 @@ function createTray() {
   tray.on('double-click', bringMainWindowToFront);
 }
 
+function applyLibraryWindowShape(win) {
+  if (process.platform !== 'win32' || !win || win.isDestroyed()) return;
+  const [width, height] = win.getSize();
+  const radius = Math.min(16, Math.floor(width / 2), Math.floor(height / 2));
+  const rectangles = [{x:0, y:radius, width, height:height - radius * 2}];
+  for (let y = 0; y < radius; y++) {
+    const inset = Math.ceil(radius - Math.sqrt(radius * radius - (radius - y - 0.5) ** 2));
+    const row = {x:inset, width:width - inset * 2, height:1};
+    rectangles.push({...row, y}, {...row, y:height - y - 1});
+  }
+  try { win.setShape(rectangles); } catch (error) { addLog(`独立窗口圆角设置失败：${error.message}`, {level:'warn'}); }
+}
+
 function showLibraryWindow(kind, toggle = false) {
   if (!['asset','prompt'].includes(kind) || !server?.listening) return false;
   let win = libraryWindows[kind];
@@ -850,6 +863,8 @@ function showLibraryWindow(kind, toggle = false) {
   libraryWindows[kind] = win;
   if (process.platform === 'win32') {
     try { win.setBackgroundMaterial('acrylic'); } catch {}
+    applyLibraryWindowShape(win);
+    win.on('resize', ()=>applyLibraryWindowShape(win));
   }
   setupImageContextMenu(win);
   win.webContents.setWindowOpenHandler(({url:target})=>{
