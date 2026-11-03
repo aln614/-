@@ -33,8 +33,10 @@ fs.writeFileSync(path.join(data, 'config.json'), JSON.stringify({
     assert.equal(secondExit,0,'A second launch must exit after notifying the background instance');
     await main.waitForFunction(()=>!document.hidden);
     assert.equal(await instance.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].isVisible()),true,'A second launch restores the original main window');
-    await main.waitForFunction(()=>document.body.classList.contains('desktop-shell') && document.body.classList.contains('liquid-refraction-ready'));
-    assert.match(await main.locator('.liquid-glass-warp').evaluate(el=>getComputedStyle(el).filter),/tenying-liquid-refraction/,'The glass layer must use the refraction filter');
+    await main.waitForFunction(()=>document.body.classList.contains('desktop-shell') && document.querySelector('.topbar .glass__warp'));
+    assert.match(await main.locator('.topbar .glass__warp').evaluate(el=>getComputedStyle(el).filter),/url\(/,'The installed glass component must use a refraction filter');
+    await main.evaluate(()=>{const slider=document.querySelector('#liquidDisplacement');slider.value='95';slider.dispatchEvent(new Event('input',{bubbles:true}));});
+    await main.waitForFunction(()=>document.querySelector('.topbar feDisplacementMap')?.getAttribute('scale')==='-95');
     assert.equal(await main.locator('.topbar').evaluate(el=>getComputedStyle(el).webkitAppRegion),'drag','The main glass header must drag the native window');
     assert.equal(await main.locator('#mainWindowClose').evaluate(el=>getComputedStyle(el).webkitAppRegion),'no-drag','Window controls must remain clickable');
     assert.equal(await instance.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].isMenuBarVisible()),false,'The native menu bar must be removed');
@@ -72,7 +74,7 @@ fs.writeFileSync(path.join(data, 'config.json'), JSON.stringify({
       if(!await instance.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].isVisible())) break;
       await new Promise(resolve=>setTimeout(resolve,100));
     }
-    assert.equal(await instance.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].isVisible()),false,'Close must keep the background tray running');
+    assert.equal(await instance.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].isVisible()),false,`Close must keep the background tray running; close control: ${await main.locator('#mainWindowClose').evaluate(el=>{const r=el.getBoundingClientRect();return document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)?.outerHTML.slice(0,180);})}`);
     const registrations = await instance.evaluate(({globalShortcut})=>['Ctrl+Alt+F9','Ctrl+Alt+F10','Ctrl+Alt+F11'].map(key=>globalShortcut.isRegistered(key)));
     assert.deepEqual(registrations, [true,true,true], 'Main and both library shortcuts are registered globally');
     assert.equal(await instance.evaluate(({globalShortcut})=>globalShortcut.register('Ctrl+Alt+F8',()=>{})),true);
@@ -108,6 +110,7 @@ fs.writeFileSync(path.join(data, 'config.json'), JSON.stringify({
     const asset = await waitForLibrary('asset');
     assert.ok(asset, 'Asset library opens in a separate native window');
     await asset.waitForSelector('body.standalone-asset #assetLibraryLayer.active', {timeout:15000});
+    await asset.waitForFunction(()=>document.querySelector('#assetLibraryHead feDisplacementMap')?.getAttribute('scale')==='-95');
     await asset.getByText('fixture.png',{exact:true}).waitFor();
     const appearance=await instance.evaluate(({BrowserWindow})=>{
       const win=BrowserWindow.getAllWindows().find(item=>item.webContents.getURL().includes('library=asset'));

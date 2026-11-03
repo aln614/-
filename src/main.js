@@ -645,6 +645,7 @@ const DEFAULT_CONFIG = {
   image_n: 1,
   mask_url: '',
   theme_mode: 'auto',
+  liquid_glass: {enabled:true, displacementScale:70, blurAmount:0.0625, saturation:140, aberrationIntensity:2},
   skin_id: 'classic',
   mascot_enabled: true,
   concurrency: 30,

@@ -4502,3 +4502,21 @@ body.desktop-shell .right-panel .stats>div{background:linear-gradient(145deg,rgb
 body.desktop-shell.theme-dark .right-panel .stats>div{background:linear-gradient(145deg,rgba(47,58,77,.75),rgba(24,33,47,.64))!important;border-color:rgba(255,255,255,.1);box-shadow:0 8px 22px rgba(0,0,0,.18),inset 0 1px 0 rgba(255,255,255,.1)}
 @media (max-width:1350px){body.desktop-shell #lanState{max-width:170px;overflow:hidden;text-overflow:ellipsis}body.desktop-shell .top-status{gap:4px}}
 @media (prefers-reduced-motion:reduce){body.desktop-shell .topbar button,body.desktop-shell .nav{transition:none!important}}
+
+/* The React component is an inert backdrop; existing controls stay above it. */
+.liquid-glass-mount{display:none;position:absolute;inset:0;pointer-events:none;overflow:hidden;border-radius:inherit;z-index:0}
+body.desktop-shell .liquid-glass-mount,body.standalone-library .liquid-glass-mount{display:block}
+.asset-library-head,.prompt-library-head{position:relative;isolation:isolate}
+.asset-library-head>*,.prompt-library-head>*{position:relative;z-index:1}
+.asset-library-head>.liquid-glass-mount,.prompt-library-head>.liquid-glass-mount{position:absolute;z-index:0;margin:0}
+.liquid-glass-mount>div{position:absolute!important}
+.liquid-glass-mount .glass{width:100%;height:100%;background:rgba(255,255,255,.05);border:0;box-shadow:none!important;backdrop-filter:none}
+.liquid-glass-mount .glass__warp{display:block!important;margin:0!important;background:rgba(255,255,255,.05)}
+body.desktop-shell .top-status{justify-content:center;flex:1;overflow:hidden}
+body.desktop-shell .skin-brand-shell{flex:none}
+.liquid-settings{margin:18px 0;padding:16px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.liquid-settings h2{margin:0 0 12px;font-size:16px}
+.liquid-settings-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 18px;margin-bottom:12px}
+.liquid-settings-grid label{min-width:0}.liquid-settings-grid output{float:right;font-variant-numeric:tabular-nums}
+.liquid-settings-grid input{display:block;padding:0;margin:8px 0;width:100%}
+@media(max-width:620px){.liquid-settings-grid{grid-template-columns:1fr}}

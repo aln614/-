@@ -4338,6 +4338,7 @@ async function loadConfig(){
   updateOfficialImageOptions();
   applySkinSettings(c.skin_id || 'classic', c.mascot_enabled !== false);
   applyThemeMode(c.theme_mode || 'auto');
+  window.liquidGlassSettings?.load(c.liquid_glass);
   $('#concurrency').value = c.concurrency || 30;
   $('#retryTimes').value = c.retry_times || 2;
   $('#repeatCount').value = c.repeat_count || 1;
@@ -5441,6 +5442,7 @@ function collectConfig(){
     output_compression: Number($('#outputCompression')?.value || 90),
     image_n: Math.max(1, Math.min(15, Number($('#imageN')?.value || 1))),
     theme_mode: $('#themeMode')?.value || $('#themeModeQuick')?.value || 'auto',
+    liquid_glass: window.liquidGlassSettings?.get(),
     skin_id: normalizeSkinId($('#skinIdSettings')?.value || document.body.dataset.skin || 'classic'),
     mascot_enabled: $('#mascotEnabledSettings') ? $('#mascotEnabledSettings').checked : document.body.dataset.mascotEnabled !== 'false',
     concurrency: Number($('#concurrency').value || 30),

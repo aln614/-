@@ -4,12 +4,12 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>TENYING_AI 1.0</title>
-  <link rel="stylesheet" href="/static/style.css?v=1.0.114" />
+  <link rel="stylesheet" href="/static/style.css?v=1.0.115" />
 </head>
 <body>
   <div class="app-shell">
     <header class="topbar glass">
-      <span class="liquid-glass-warp" aria-hidden="true"></span>
+      <span class="liquid-glass-mount" aria-hidden="true"></span>
       <div class="skin-brand-shell">
         <div class="skin-mascot-avatar" id="skinMascotAvatar" aria-label="当前皮肤助手"></div>
         <div>
@@ -631,6 +631,19 @@
         <div class="card">
           <div class="row"><div><label>API 地址</label><select id="apiEndpoint"><option value="https://api.apimart.ai">https://api.apimart.ai（APIMart）</option></select></div><div><label>软件名称</label><input id="appName" placeholder="例如：TENYING_AI 1.0" /></div></div>
           <div class="row"><div><label>显示模式</label><select id="themeMode"><option value="light">日间模式</option><option value="dark">深色模式</option><option value="auto">自动（按时间）</option></select></div><div><label>界面皮肤</label><select id="skinIdSettings"><option value="starlight">星穹 AI 助手</option><option value="cloud">云海终端</option><option value="sakura">樱雪画室</option><option value="academy">银河学院</option><option value="hangar">极光机库</option><option value="classic">经典毛玻璃</option></select></div></div>
+          <div class="liquid-settings">
+            <h2>液态玻璃</h2>
+            <label class="switch-line"><input id="liquidEnabled" type="checkbox" checked /> 启用液态玻璃</label>
+            <div class="liquid-settings-grid">
+              <label>折射强度 <output id="liquidDisplacementValue"></output><input id="liquidDisplacement" type="range" min="0" max="150" step="1" /></label>
+              <label>模糊程度 <output id="liquidBlurValue"></output><input id="liquidBlur" type="range" min="0" max="1" step="0.01" /></label>
+              <label>饱和度 <output id="liquidSaturationValue"></output><input id="liquidSaturation" type="range" min="50" max="250" step="1" /></label>
+              <label>色散强度 <output id="liquidAberrationValue"></output><input id="liquidAberration" type="range" min="0" max="10" step="0.1" /></label>
+            </div>
+            <button class="secondary" id="liquidReset" type="button">恢复默认</button>
+            <button class="primary" id="liquidSave" type="button">保存玻璃设置</button>
+            <span id="liquidSaveStatus" role="status"></span>
+          </div>
           <div class="row"><div><label>动漫助手</label><label class="switch-line"><input id="mascotEnabledSettings" type="checkbox" checked /> 显示皮肤角色与任务状态助手</label></div><div class="setting-note-box">API 地址已移动到本机设置中心，首页只保留 API Key 和生成参数。</div></div>
           <div class="row"><div><label>输出目录</label><input id="outputDir" /></div><div><label>默认清晰度</label><select id="claritySettings"><option value="0.5K">0.5K 预览</option><option value="1K">1K 标准清晰</option><option value="1.5K">1.5K</option><option value="2K">2K 高清</option><option value="3K">3K</option><option value="4K">4K 超清</option></select></div></div>
           <div class="row"><div><label>日志保留天数</label><input id="logKeepDays" type="number" value="3" /></div><div><label>轮询间隔 ms</label><input id="pollInterval" type="number" value="800" /></div></div><div class="row"><div><label>APIMart 代理地址（可选）</label><input id="apimartProxyUrl" placeholder="例如：http://127.0.0.1:7890；不使用代理请留空" /></div><div class="setting-note-box">如果日志出现 ETIMEDOUT / Connection timed out，说明当前网络无法直连 api.apimart.ai，可在这里填系统代理地址。</div></div>
@@ -1040,7 +1053,7 @@
   <script src="/static/agent-stream.js?v=1.0.107"></script>
   <script src="/static/prompt-mention-core.js?v=1.0.109"></script>
   <script src="/static/prompt-mentions.js?v=1.0.109"></script>
-  <script src="/static/liquid-glass.js?v=1.0.114"></script>
-  <script src="/static/app.js?v=1.0.114"></script>
+  <script src="/static/liquid-glass-bundle.js?v=1.0.115"></script>
+  <script src="/static/app.js?v=1.0.115"></script>
 </body>
 </html>
