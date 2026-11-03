@@ -4457,3 +4457,18 @@ body.theme-dark *::-webkit-scrollbar-thumb:hover{
 }
 .folder-download-status span { overflow-wrap: anywhere; min-width: 0; }
 .folder-download-status button { flex-shrink: 0; }
+.prompt-mention-menu{position:fixed;z-index:14000;overflow-y:auto;padding:6px;background:var(--card);color:var(--text);border:1px solid var(--line);border-radius:8px;box-shadow:0 10px 30px #0002;letter-spacing:0;overscroll-behavior:contain;scrollbar-width:thin}
+.prompt-mention-menu[hidden]{display:none}
+.prompt-mention-option{display:flex;align-items:center;gap:10px;width:100%;min-height:60px;padding:6px 8px;border:0;border-radius:6px;background:transparent;color:inherit;text-align:left;cursor:pointer;letter-spacing:0}
+.prompt-mention-option[aria-selected="true"],.prompt-mention-option:hover{background:color-mix(in srgb,var(--blue) 12%,var(--card))}
+.prompt-mention-option img{width:44px;height:44px;flex:none;object-fit:contain;border:1px solid var(--line);border-radius:4px;background:var(--card)}
+.prompt-mention-info{display:flex;flex-direction:column;gap:4px;min-width:0}
+.prompt-mention-info strong{font-size:13px;line-height:1.4;overflow-wrap:anywhere;font-weight:600}
+.prompt-mention-info small{font-size:11px;line-height:1.4;color:var(--muted);overflow-wrap:anywhere}
+.prompt-mention-status{padding:12px 8px;font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+.input-image-label{position:absolute;top:3px;left:3px;padding:1px 3px;border-radius:4px;background:#17202de8;color:#fff;font-size:9px;line-height:14px;white-space:nowrap;pointer-events:none;letter-spacing:0}
+
+body.standalone-library .app-shell,body.standalone-library .panel-restore{display:none!important}
+body.standalone-library .asset-library-window,body.standalone-library .prompt-library-window{position:fixed!important;left:0!important;top:0!important;width:100vw!important;height:100vh!important;max-width:none!important;max-height:none!important;border-radius:0!important}
+body.standalone-library .chat-floating-resize{display:none!important}
+body.standalone-library .asset-library-head,body.standalone-library .prompt-library-head{cursor:default}

@@ -13,6 +13,7 @@ const { spawn } = require('child_process');
 const { initDB, getDB, addLog, listBatches, listImages, listLogs, nowISO, uuid, setNetworkTimeOffset, getNetworkTimeInfo } = require('./services/db');
 const { TaskQueue } = require('./services/taskQueue');
 const assetIndex = require('./services/assetIndex');
+const { uploadDirectory, previewDirectory, relocatedUploadPath, expendableDragFiles } = require('./services/mediaStorage');
 const { buildExportManifest } = require('./services/exportManifest');
 const { registerFolderExport } = require('../lan-client/folderExport');
 const { seedanceDraftSettings, validateSeedanceDraftRequest, buildSeedanceFinalPayload } = require('./services/seedanceDraft');
@@ -26,6 +27,9 @@ let queue = null;
 let configPath = null;
 let currentPort = 7868;
 let activeOpenAppShortcut = '';
+const libraryWindows = { asset:null, prompt:null };
+let activeLibraryShortcuts = {};
+let shortcutsSuspended = false;
 let isAppQuitting = false;
 let tray = null;
 let lastMidjourneyImageRepairAt = 0;
@@ -78,6 +82,11 @@ const DATA_ROOT = process.env.LOCAL_API_IMAGE_GENERATOR_DATA_DIR || path.join(
   'LocalApiImageGenerator_RuntimeData_V1498'
 );
 try { app.setPath('userData', DATA_ROOT); } catch {}
+const hasInstanceLock = SERVER_ONLY || app.requestSingleInstanceLock();
+if (!hasInstanceLock) app.quit();
+if (!SERVER_ONLY && hasInstanceLock) app.on('second-instance', (_event, args) => {
+  if (!args.includes('--background')) bringMainWindowToFront();
+});
 
 
 const RESET_MARKER = path.join(os.tmpdir(), 'LocalApiImageGenerator_full_reset_v1498.json');
@@ -89,7 +98,7 @@ const LOCAL_HOT_CACHE_ROOT = process.env.TENYING_AI_LOCAL_HOT_CACHE_DIR || path.
   'TENYING_AI',
   'HotCache'
 );
-const LOCAL_HOT_CACHE_MAX_BYTES = Math.max(512, Number(process.env.TENYING_AI_LOCAL_HOT_CACHE_MB || 4096)) * 1024 * 1024;
+const LOCAL_HOT_CACHE_MAX_BYTES = Math.max(64, Number(process.env.TENYING_AI_LOCAL_HOT_CACHE_MB || 256)) * 1024 * 1024;
 const LOCAL_HOT_CACHE_FILE_MAX_BYTES = Math.max(8, Number(process.env.TENYING_AI_LOCAL_HOT_CACHE_FILE_MB || 80)) * 1024 * 1024;
 const LOCAL_HOT_CACHE_VIDEO_FILE_MAX_BYTES = Math.max(64, Number(process.env.TENYING_AI_LOCAL_HOT_CACHE_VIDEO_MB || 1024)) * 1024 * 1024;
 const LOCAL_HOT_CACHE_WORKERS = Math.max(1, Math.min(2, Number(process.env.TENYING_AI_LOCAL_HOT_CACHE_WORKERS || 1)));
@@ -111,10 +120,10 @@ function clampPreviewImageMaxDim(value) {
   return Math.max(600, Math.min(3600, Math.round(n)));
 }
 function previewImageCacheDir() {
-  return ensureDir(path.join(LOCAL_HOT_CACHE_ROOT, 'preview_images'));
+  return ensureDir(previewDirectory(readConfig(), DATA_ROOT));
 }
 function previewImageWorkerScriptPath() {
-  return path.join(LOCAL_HOT_CACHE_ROOT, 'preview_worker.ps1');
+  return path.join(previewImageCacheDir(), 'preview_worker.ps1');
 }
 function ensurePreviewImageWorkerScript() {
   const file = previewImageWorkerScriptPath();
@@ -228,6 +237,9 @@ function localHotMediaCachePath(filePath) {
   return path.join(localHotMediaCacheDir(), `${hotCacheKey(filePath)}${ext}`);
 }
 function shouldHotCacheMedia(filePath, stat, type) {
+  // Read original media directly from the configured output. Only external
+  // drag-and-drop needs a short-lived local copy for Windows applications.
+  if (String(readConfig().output_dir || '').trim()) return false;
   if (!filePath || !stat || !stat.isFile || !stat.isFile()) return false;
   const mime = type || contentType(filePath);
   const isImage = /^image\//i.test(mime);
@@ -284,6 +296,7 @@ function trimLocalHotCacheSoon() {
   hotCacheLastTrimAt = now;
   setTimeout(async () => {
     try {
+      if (nativeDragActiveSenders.size || nativeDragInflight.size) return;
       const files = [];
       const walk = async (dir) => {
         let entries = [];
@@ -300,12 +313,8 @@ function trimLocalHotCacheSoon() {
         }
       };
       await walk(LOCAL_HOT_CACHE_ROOT);
-      let total = files.reduce((sum, f) => sum + f.size, 0);
-      if (total <= LOCAL_HOT_CACHE_MAX_BYTES) return;
-      files.sort((a,b)=>a.time-b.time);
-      for (const f of files) {
-        if (total <= LOCAL_HOT_CACHE_MAX_BYTES * 0.82) break;
-        try { await fs.promises.unlink(f.path); total -= f.size; } catch {}
+      for (const file of expendableDragFiles(files, { maxBytes: LOCAL_HOT_CACHE_MAX_BYTES })) {
+        try { await fs.promises.unlink(file); } catch {}
       }
     } catch {}
   }, 1000).unref?.();
@@ -669,6 +678,7 @@ const DEFAULT_CONFIG = {
   asset_library_dir: '',
   legacy_output_dirs: [],
   shortcuts_enabled: true,
+  library_auto_start: true,
   shortcut_settings: { ...DEFAULT_SHORTCUT_SETTINGS },
   update_repo: DEFAULT_UPDATE_REPO,
   update_auto_check: true,
@@ -810,12 +820,90 @@ function createTray() {
   tray.setToolTip(readConfig().app_name || APP_DISPLAY_NAME);
   tray.setContextMenu(Menu.buildFromTemplate([
     { label:'打开主窗口', click:bringMainWindowToFront },
+    { label:'打开资产库', click:()=>showLibraryWindow('asset') },
+    { label:'打开提示词库', click:()=>showLibraryWindow('prompt') },
     { label:'隐藏到托盘', click:hideMainWindowToTray },
     { type:'separator' },
     { label:'退出程序', click:()=>{ isAppQuitting = true; app.quit(); } }
   ]));
   tray.on('click', bringMainWindowToFront);
   tray.on('double-click', bringMainWindowToFront);
+}
+
+function showLibraryWindow(kind, toggle = false) {
+  if (!['asset','prompt'].includes(kind) || !server?.listening) return false;
+  let win = libraryWindows[kind];
+  if (win && !win.isDestroyed()) {
+    if (toggle && win.isVisible() && win.isFocused()) { win.hide(); return true; }
+    if (win.isMinimized()) win.restore();
+    win.webContents.send('library:refresh');
+    win.show(); win.focus();
+    return true;
+  }
+  win = new BrowserWindow({
+    width:kind === 'asset' ? 1200 : 1050, height:760, minWidth:720, minHeight:500,
+    title:kind === 'asset' ? '资产库' : '提示词库', show:false,
+    icon:path.join(__dirname, '..', 'assets', 'rocket.ico'),
+    webPreferences:{contextIsolation:true, nodeIntegration:false, sandbox:false, webSecurity:true, allowRunningInsecureContent:false, preload:path.join(__dirname,'preload.js')}
+  });
+  libraryWindows[kind] = win;
+  setupImageContextMenu(win);
+  win.webContents.setWindowOpenHandler(({url:target})=>{
+    if (/^https?:\/\//i.test(String(target || ''))) shell.openExternal(target).catch(()=>{});
+    return {action:'deny'};
+  });
+  win.webContents.on('will-navigate', (event, target)=>{
+    try { if(new URL(target).origin !== `http://127.0.0.1:${currentPort}`) event.preventDefault(); }
+    catch { event.preventDefault(); }
+  });
+  win.on('close', event=>{ if(!isAppQuitting){event.preventDefault(); win.hide();} });
+  win.on('closed', ()=>{ if(libraryWindows[kind] === win) libraryWindows[kind] = null; });
+  win.once('ready-to-show', ()=>{if(!win.isDestroyed()){win.show();win.focus();}});
+  win.loadURL(`http://127.0.0.1:${currentPort}/?library=${kind}`).catch(error=>addLog(`独立窗口打开失败：${error.message}`, {level:'warn'}));
+  return true;
+}
+
+function replaceLibraryShortcuts(settings = {}) {
+  if (SERVER_ONLY || !app.isReady()) return true;
+  const previous = {...activeLibraryShortcuts};
+  const actions = {toggle_asset_library:()=>showLibraryWindow('asset', true), toggle_prompt_library:()=>showLibraryWindow('prompt', true)};
+  for (const value of Object.values(activeLibraryShortcuts)) globalShortcut.unregister(value);
+  activeLibraryShortcuts = {};
+  try {
+    for (const [action, callback] of Object.entries(actions)) {
+      const accelerator = settings[action];
+      if (accelerator && !globalShortcut.register(accelerator, callback)) throw new Error(accelerator);
+      if (accelerator) activeLibraryShortcuts[action] = accelerator;
+    }
+    return true;
+  } catch {
+    for (const value of Object.values(activeLibraryShortcuts)) globalShortcut.unregister(value);
+    activeLibraryShortcuts = {};
+    for (const [action, accelerator] of Object.entries(previous)) {
+      try { if(globalShortcut.register(accelerator, actions[action])) activeLibraryShortcuts[action] = accelerator; } catch {}
+    }
+    return false;
+  }
+}
+
+function configuredLibraryShortcuts(config) {
+  return config.shortcuts_enabled && !shortcutsSuspended ? config.shortcut_settings : {};
+}
+
+function libraryAutoStartOptions(enabled) {
+  const executable = process.env.PORTABLE_EXECUTABLE_FILE || process.execPath;
+  if (!app.isPackaged || !path.isAbsolute(executable) || !fs.existsSync(executable)) throw new Error('当前版本无法配置开机启动');
+  return {openAtLogin:!!enabled, path:executable, args:['--background'], name:'TENYING_AI'};
+}
+
+function libraryAutoStartEnabled() {
+  const options = libraryAutoStartOptions(true);
+  const state = app.getLoginItemSettings({path:options.path, args:options.args});
+  // Electron's Windows argument comparison can report false even for an enabled Run entry.
+  if (process.platform === 'win32' && Array.isArray(state.launchItems)) {
+    return state.launchItems.some(item => item.name === options.name && item.enabled && path.resolve(item.path || '').toLowerCase() === path.resolve(options.path).toLowerCase());
+  }
+  return state.openAtLogin === true;
 }
 
 function replaceOpenAppShortcut(accelerator = '') {
@@ -838,6 +926,7 @@ function registerConfiguredOpenAppShortcut() {
   const accelerator = shortcutConfig.shortcuts_enabled ? shortcutConfig.shortcut_settings.open_app : '';
   const ok = replaceOpenAppShortcut(accelerator);
   if (!ok) addLog(`全局快捷键注册失败：${accelerator} 已被系统或其他软件占用。`, { level:'warn' });
+  if (!replaceLibraryShortcuts(configuredLibraryShortcuts(shortcutConfig))) addLog('资产库或提示词库全局快捷键注册失败，请在快捷键设置中更换组合。', {level:'warn'});
   return ok;
 }
 
@@ -1939,14 +2028,17 @@ function reconcileSoftwareUpdateAfterRestart() {
 }
 function dataUrlToFile(item, owner) {
   if (!item) return '';
-  if (typeof item === 'string' && fs.existsSync(item)) return item;
+  if (typeof item === 'string') {
+    const source = resolveMigratedUpload(item);
+    if (fs.existsSync(source)) return source;
+  }
   if (!item.data || !String(item.data).startsWith('data:')) return '';
   const m = String(item.data).match(/^data:([^;]+);base64,(.*)$/);
   if (!m) return '';
   const mime = m[1];
   const fallbackExt = mime.includes('jpeg') ? '.jpg' : mime.includes('webp') ? '.webp' : mime.includes('png') ? '.png' : mime.includes('mp4') ? '.mp4' : mime.includes('quicktime') ? '.mov' : mime.includes('webm') ? '.webm' : mime.includes('mpeg') || mime.includes('mp3') ? '.mp3' : mime.includes('wav') ? '.wav' : mime.includes('aac') ? '.aac' : mime.includes('audio/mp4') ? '.m4a' : '.bin';
   const ext = (path.extname(item.name || '') || fallbackExt).toLowerCase();
-  const dir = path.join(app.getPath('userData'), 'uploads', owner);
+  const dir = batchMediaUploadDir(owner);
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, `${Date.now().toString(36)}_${Math.random().toString(36).slice(2,8)}${ext}`);
   fs.writeFileSync(file, Buffer.from(m[2], 'base64'));
@@ -1969,8 +2061,7 @@ function updateDownloadProxyCandidates(cfg = readConfig()) {
   return candidates;
 }
 function batchMediaUploadDir(owner='local') {
-  const safeOwner = String(owner || 'local').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 96) || 'local';
-  return path.join(app.getPath('userData'), 'uploads', safeOwner);
+  return uploadDirectory(readConfig(), DATA_ROOT, owner);
 }
 function batchMediaExtension(name='', mime='') {
   const allowed = new Set(['.png','.jpg','.jpeg','.webp','.gif']);
@@ -4852,7 +4943,7 @@ function formatVideoTask(row, opts = {}) {
   row = opts.fast ? row : repairVideoTaskFilePath(row);
   const hasFile = opts.fast ? !!row.file_path : !!(row.file_path && fs.existsSync(row.file_path));
   const stream = hasFile ? `/video-file?id=${encodeURIComponent(row.id)}${opts.allOwners ? '&all_owners=1' : ''}` : '';
-  const cacheReady = !opts.fast && hasFile && row.file_path ? fs.existsSync(localHotMediaCachePath(row.file_path)) : false;
+  const cacheReady = hasFile && (opts.directMedia || (!opts.fast && fs.existsSync(localHotMediaCachePath(row.file_path))));
   return { ...row, file_exists: hasFile, video_cache_ready: cacheReady, progress_text: row.progress_text || (row.status === '\u5df2\u5b8c\u6210' ? '\u5df2\u5b8c\u6210' : ''), stream_url: stream, share_url: hasFile ? `/video-share?id=${encodeURIComponent(row.id)}` : '', url: stream || row.remote_url || '', download_url: hasFile ? `/download?path=${encodeURIComponent(row.file_path)}` : (row.remote_url || ''), filename: hasFile ? path.basename(row.file_path) : `${row.id}.mp4` };
 }
 
@@ -5910,6 +6001,10 @@ function normalizeServedPathInput(filePath = '') {
   }
   return path.resolve(raw);
 }
+function resolveMigratedUpload(filePath, cfg = readConfig()) {
+  const target = relocatedUploadPath(filePath, cfg, DATA_ROOT);
+  return target !== filePath && !fs.existsSync(filePath) && fs.existsSync(target) ? target : filePath;
+}
 let referencedServedPathCache = { ts: 0, keys: new Set() };
 function referencedServedPathKeys(cfg = readConfig()) {
   if (Date.now() - referencedServedPathCache.ts < 5000) return referencedServedPathCache.keys;
@@ -5991,12 +6086,12 @@ function isAllowedServedFile(filePath = '', cfg = readConfig()) {
   return allowedFileRoots(cfg).some(root => isPathInside(root, resolved)) || isReferencedServedFile(resolved, cfg);
 }
 function resolveServedFilePath(filePath = '', cfg = readConfig()) {
-  const resolved = normalizeServedPathInput(filePath);
+  const resolved = resolveMigratedUpload(normalizeServedPathInput(filePath), cfg);
   if (!isAllowedServedFile(resolved, cfg)) throw new Error('文件路径不在允许访问的程序目录内');
   return resolved;
 }
 function resolveMediaCachePath(filePath = '', cfg = readConfig()) {
-  const resolved = normalizeServedPathInput(filePath);
+  const resolved = resolveMigratedUpload(normalizeServedPathInput(filePath), cfg);
   const key = pathKey(resolved);
   const outputRoot = String(cfg.output_dir || '').trim();
   if (outputRoot && isPathInside(path.resolve(outputRoot), resolved)) return resolved;
@@ -6767,11 +6862,16 @@ function mapPayloadToQueue(body, owner) {
     ...resolveBatchMediaUploadIds(body.reference_image_upload_ids, owner),
     ...(body.reference_images || []).map(x => dataUrlToFile(x, owner)).filter(Boolean)
   ];
+  if(body.prompt_mentions?.length && (
+    mainImages.length !== (body.main_image_upload_ids || []).length + (body.main_images || []).length ||
+    refImages.length !== (body.reference_image_upload_ids || []).length + (body.reference_images || []).length
+  )) throw new Error('引用图片未能完整读取，请重新添加素材后提交');
   const cfg = toCamelConfig(readConfig());
   const imageApiPlatform = 'apimart';
   const payload = {
     ownerId: owner,
     prompts: body.prompts || '',
+    promptMentions: Array.isArray(body.prompt_mentions) ? body.prompt_mentions : undefined,
     promptMultilineTasks: parseBoolValue(body.prompt_multiline_tasks, true),
     mainImages,
     refImages,
@@ -6829,7 +6929,8 @@ async function repeatBatch(batchId, accessOwner, createOwner, opts = {}) {
   let refImages = [];
   try { refImages = JSON.parse(tasks[0]?.ref_images_json || '[]') || []; } catch {}
   const cfg0 = cfgBatch;
-  const payload = { ...cfg0, ownerId: createOwner || accessOwner || b.owner_id || 'local', prompts, mainImages, refImages, name: (b.note || b.name || 'Batch') + '_repeat' };
+  const mentionInputs = cfg0.promptMentions?.length ? {prompts:cfg0.prompts, mainImages:cfg0.mainImages, refImages:cfg0.refImages} : {};
+  const payload = { ...cfg0, ownerId: createOwner || accessOwner || b.owner_id || 'local', prompts, mainImages, refImages, ...mentionInputs, name: (b.note || b.name || 'Batch') + '_repeat' };
   const cfg = { ...toCamelConfig(readConfig()), ...payload };
   return queue.createBatch(payload, cfg);
 }
@@ -8921,7 +9022,10 @@ async function apiHandler(req, res, parsed) {
       const globalRegistered = local && shortcutConfig.shortcuts_enabled && !SERVER_ONLY
         ? activeOpenAppShortcut === accelerator && globalShortcut.isRegistered(accelerator)
         : false;
-      return send(res, {ok:true, shortcuts_enabled:shortcutConfig.shortcuts_enabled, shortcut_settings:shortcutConfig.shortcut_settings, defaults:{...DEFAULT_SHORTCUT_SETTINGS}, global_registered:globalRegistered});
+      const libraryRegistered = local && !SERVER_ONLY && shortcutConfig.shortcuts_enabled && ['toggle_asset_library','toggle_prompt_library'].every(action => activeLibraryShortcuts[action] === shortcutConfig.shortcut_settings[action] && globalShortcut.isRegistered(activeLibraryShortcuts[action]));
+      let autoStart = false;
+      try { autoStart = libraryAutoStartEnabled(); } catch {}
+      return send(res, {ok:true, shortcuts_enabled:shortcutConfig.shortcuts_enabled, shortcut_settings:shortcutConfig.shortcut_settings, defaults:{...DEFAULT_SHORTCUT_SETTINGS}, global_registered:globalRegistered, library_global_registered:libraryRegistered, library_auto_start:autoStart, library_auto_start_supported:local && app.isPackaged});
     }
     if (method === 'POST' && p === '/api/shortcuts') {
       if (!local) return send(res, {ok:false,error:'快捷键只能在主机程序中配置'}, 403);
@@ -8930,17 +9034,27 @@ async function apiHandler(req, res, parsed) {
       try { shortcutConfig = validateShortcutConfiguration(body, true); }
       catch (error) { return send(res, {ok:false,error:error.message || '快捷键配置无效'}, 400); }
       const previousShortcut = activeOpenAppShortcut;
+      const previousLibrary = {...activeLibraryShortcuts};
       const nextShortcut = shortcutConfig.shortcuts_enabled ? shortcutConfig.shortcut_settings.open_app : '';
+      replaceLibraryShortcuts({});
+      replaceOpenAppShortcut('');
       if (!replaceOpenAppShortcut(nextShortcut)) {
+        replaceOpenAppShortcut(previousShortcut);
+        replaceLibraryShortcuts(previousLibrary);
         return send(res, {ok:false,error:'当前快捷键被系统或其他软件占用，请更换。'}, 409);
       }
+      if (!replaceLibraryShortcuts(configuredLibraryShortcuts(shortcutConfig))) {
+        replaceOpenAppShortcut(''); replaceOpenAppShortcut(previousShortcut); replaceLibraryShortcuts(previousLibrary);
+        return send(res, {ok:false,error:'资产库或提示词库快捷键被系统或其他软件占用，请更换。'}, 409);
+      }
       try {
-        saveConfig({shortcuts_enabled:shortcutConfig.shortcuts_enabled, shortcut_settings:shortcutConfig.shortcut_settings});
+        if (typeof body.library_auto_start === 'boolean' && app.isPackaged) app.setLoginItemSettings(libraryAutoStartOptions(body.library_auto_start));
+        saveConfig({shortcuts_enabled:shortcutConfig.shortcuts_enabled, shortcut_settings:shortcutConfig.shortcut_settings, ...(typeof body.library_auto_start === 'boolean' ? {library_auto_start:body.library_auto_start} : {})});
       } catch (error) {
-        replaceOpenAppShortcut(previousShortcut);
+        replaceLibraryShortcuts({}); replaceOpenAppShortcut(''); replaceOpenAppShortcut(previousShortcut); replaceLibraryShortcuts(previousLibrary);
         return send(res, {ok:false,error:error.message || '快捷键设置保存失败'}, 500);
       }
-      return send(res, {ok:true, shortcuts_enabled:shortcutConfig.shortcuts_enabled, shortcut_settings:shortcutConfig.shortcut_settings, defaults:{...DEFAULT_SHORTCUT_SETTINGS}, global_registered:shortcutConfig.shortcuts_enabled ? globalShortcut.isRegistered(shortcutConfig.shortcut_settings.open_app) : false});
+      return send(res, {ok:true, shortcuts_enabled:shortcutConfig.shortcuts_enabled, shortcut_settings:shortcutConfig.shortcut_settings, defaults:{...DEFAULT_SHORTCUT_SETTINGS}, global_registered:shortcutConfig.shortcuts_enabled ? globalShortcut.isRegistered(shortcutConfig.shortcut_settings.open_app) : false, library_global_registered:shortcutConfig.shortcuts_enabled && Object.keys(activeLibraryShortcuts).length === 2, library_auto_start:body.library_auto_start === true});
     }
     if (method === 'GET' && p === '/api/config') {
       const u = urls(cfg);
@@ -9242,7 +9356,7 @@ async function apiHandler(req, res, parsed) {
       const key = String(body.api_key || (local ? cfg.api_key : '') || '').trim();
       return send(res, resumeApimartVideoTasks(key, dataOwner));
     }
-    if (method === 'GET' && p === '/api/video_tasks') { const scopedOwner = local && parsed.query.all_owners === '1' ? '' : dataOwner; cleanupStaleVideoTasks(scopedOwner); const st=ensureVideoStore(); const allOwners = !scopedOwner; const pageSize = Math.max(1, Math.min(local ? 5000 : 500, Number(parsed.query.limit || parsed.query.page_size || (local ? 1200 : 500)))); const rawRows=st.video_tasks.filter(v=>!scopedOwner || v.owner_id===scopedOwner).sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at))).slice(0,pageSize); const rows=rawRows.map(row=>formatVideoTask(row, { allOwners, fast:true })); return send(res,{ok:true, rows, video_stats: videoTodayStats(scopedOwner), scope: scopedOwner ? 'device' : 'all_owners'}); }
+    if (method === 'GET' && p === '/api/video_tasks') { const scopedOwner = local && parsed.query.all_owners === '1' ? '' : dataOwner; cleanupStaleVideoTasks(scopedOwner); const st=ensureVideoStore(); const allOwners = !scopedOwner; const pageSize = Math.max(1, Math.min(local ? 5000 : 500, Number(parsed.query.limit || parsed.query.page_size || (local ? 1200 : 500)))); const rawRows=st.video_tasks.filter(v=>!scopedOwner || v.owner_id===scopedOwner).sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at))).slice(0,pageSize); const rows=rawRows.map(row=>formatVideoTask(row, { allOwners, fast:true, directMedia:!!cfg.output_dir })); return send(res,{ok:true, rows, video_stats: videoTodayStats(scopedOwner), scope: scopedOwner ? 'device' : 'all_owners'}); }
     if (method === 'POST' && p === '/api/video_delete_selected') { const body=await readBody(req); const scopedOwner = local && body.all_owners === true ? '' : owner; return send(res, deleteVideoTasks(body.ids || [], scopedOwner)); }
     if (method === 'POST' && p === '/api/video_export_selected') { const body=await readBody(req); const scopedOwner = local && body.all_owners === true ? '' : owner; const zipPath=exportSelectedVideos(body.ids || [], scopedOwner); return send(res,{ok:true,url:`/download?path=${encodeURIComponent(zipPath)}`}); }
     if (method === 'POST' && p === '/api/video_cache_touch') {
@@ -9570,6 +9684,10 @@ function mediaCacheStatus(req, parsed) {
   catch { return { ok:false, error:'file access denied', status:403 }; }
   const type = contentType(file);
   if (!/^image\//i.test(type)) return { ok:false, error:'not an image', status:415 };
+  if (String(cfg.output_dir || '').trim()) {
+    const ready = fs.existsSync(file);
+    return { ok:ready, ready, url:`/file?path=${encodeURIComponent(file)}`, storage:'output', ...(ready ? {} : { error:'not found', status:404 }) };
+  }
   const cachedPath = localHotMediaCachePath(file);
   if (fs.existsSync(cachedPath)) {
     fs.utimes(cachedPath, new Date(), new Date(), ()=>{});
@@ -9669,10 +9787,37 @@ ipcMain.handle('start-asset-drag', async (event, payload = {}) => {
   }
 });
 
+function trustedWindowSender(event) {
+  return [mainWindow, ...Object.values(libraryWindows)].some(win => win && !win.isDestroyed() && win.webContents === event.sender);
+}
+ipcMain.handle('library:open', (event, kind) => {
+  if (!trustedWindowSender(event) || !['asset','prompt'].includes(kind)) return false;
+  return showLibraryWindow(kind);
+});
+ipcMain.handle('library:hide', event => {
+  const win = Object.values(libraryWindows).find(item => item && !item.isDestroyed() && item.webContents === event.sender);
+  if (!win) return false;
+  win.hide(); return true;
+});
+ipcMain.handle('library:apply-prompt', (event, content) => {
+  if (!libraryWindows.prompt || libraryWindows.prompt.isDestroyed() || libraryWindows.prompt.webContents !== event.sender || typeof content !== 'string') return false;
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  bringMainWindowToFront();
+  mainWindow.webContents.send('library:apply-prompt', content.slice(0, 100000));
+  return true;
+});
+ipcMain.handle('shortcuts:suspend', (event, suspend) => {
+  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return false;
+  shortcutsSuspended = suspend === true;
+  if (shortcutsSuspended) {replaceOpenAppShortcut(''); replaceLibraryShortcuts({}); return true;}
+  const config = validateShortcutConfiguration(readConfig());
+  return replaceOpenAppShortcut(config.shortcuts_enabled ? config.shortcut_settings.open_app : '') && replaceLibraryShortcuts(configuredLibraryShortcuts(config));
+});
+
 function createWindow() {
   const cfg = readConfig();
   mainWindow = new BrowserWindow({
-    width: 1480, height: 960, minWidth: 1180, minHeight: 760,
+    width: 1480, height: 960, minWidth: 1180, minHeight: 760, show:!process.argv.includes('--background'),
     title: (cfg.app_name || APP_DISPLAY_NAME),
     icon: path.join(__dirname, '..', 'assets', 'rocket.ico'),
     webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: false, webSecurity: true, allowRunningInsecureContent: false, preload: path.join(__dirname, 'preload.js') }
@@ -9710,10 +9855,15 @@ function createWindow() {
     event.preventDefault();
     hideMainWindowToTray();
   });
+  mainWindow.on('blur', ()=>{
+    if (shortcutsSuspended) {
+      shortcutsSuspended = false;
+      registerConfiguredOpenAppShortcut();
+    }
+  });
   mainWindow.on('closed', () => { mainWindow = null; });
 }
-// V14.1: 不再使用全局单实例锁。不同版本使用不同 appId，可与旧版本同时打开；端口被占用时会自动顺延。
-app.whenReady().then(() => {
+if (hasInstanceLock) app.whenReady().then(() => {
   hardResetDataDirsBeforeInit();
   initConfig();
   reconcileSoftwareUpdateAfterRestart();
@@ -9721,6 +9871,9 @@ app.whenReady().then(() => {
   const restoredLegacyStore = restoredOutputMirror ? false : restoreStoreFromLegacyIfCurrentEmpty();
   if (!restoredLegacyStore) rememberHistoricalOutputRootsFromStoreFile(path.join(DATA_ROOT, 'data', 'store.json'));
   initDB(app.getPath('userData'));
+  trimLocalHotCacheSoon();
+  const dragCacheTimer = setInterval(trimLocalHotCacheSoon, 5 * 60 * 1000);
+  dragCacheTimer.unref?.();
   repairLegacyGeminiOmniVideoFailures();
   cleanupStaleImageTasks('');
   mirrorRuntimeDataToOutputDir();
@@ -9738,6 +9891,10 @@ app.whenReady().then(() => {
     createWindow();
     createTray();
     registerConfiguredOpenAppShortcut();
+    if (app.isPackaged) {
+      try { app.setLoginItemSettings(libraryAutoStartOptions(readConfig().library_auto_start !== false)); }
+      catch (error) { addLog(`后台开机启动设置失败：${error.message}`, {level:'warn'}); }
+    }
   }
   startServer(Number(readConfig().port || DEFAULT_CONFIG.port));
   const startupPublicCfg = readConfig();

@@ -2,7 +2,8 @@ const fs = require('fs');
 const path = require('path');
 const { EventEmitter } = require('events');
 const { getDB, nowISO, uuid, addLog } = require('./db');
-const { generateOne } = require('./apiClient');
+const { generateOne, sanitizeApimartImagePayload } = require('./apiClient');
+const { compile:compilePromptMentions } = require('../renderer/static/prompt-mention-core');
 const { safeName, createThumbAsync } = require('./cache');
 const { isTerminalGenerationError } = require('./taskErrors');
 const { createLimiter, createUploadCache } = require('./asyncWork');
@@ -305,10 +306,18 @@ class TaskQueue extends EventEmitter {
     let idx = 1;
     for (const main of (mainImages.length ? mainImages : [''])) {
       for (const prompt of taskPrompts) {
+        const resolved = Array.isArray(payload.promptMentions)
+          ? compilePromptMentions(prompt, payload.promptMentions, mainImages, refImages, main)
+          : {prompt, refImages, highestImage:0};
+        if(resolved.highestImage){
+          const images = [main, ...resolved.refImages].filter(Boolean);
+          const accepted = sanitizeApimartImagePayload({image_urls:images, n:fullCfg.imageN, resolution:fullCfg.imageSize, size:fullCfg.size}, fullCfg.model);
+          if(resolved.highestImage > (accepted.image_urls || []).length) throw new Error('引用的图片超过当前模型支持的参考图数量，请减少图片或更换模型');
+        }
         for (let r = 0; r < repeatCount; r++) {
           tasks.push({
-            id: uuid('task_'), batch_id: batchId, owner_id: ownerId, task_index: idx++, prompt,
-            main_image_path: main || '', ref_images_json: JSON.stringify(refImages), status: '等待中', attempt: 0,
+            id: uuid('task_'), batch_id: batchId, owner_id: ownerId, task_index: idx++, prompt:resolved.prompt,
+            main_image_path: main || '', ref_images_json: JSON.stringify(resolved.refImages), status: '等待中', attempt: 0,
             remote_task_id: '', result_path: '', thumb_path: '', error_message: '', created_at: createdAt, updated_at: createdAt, finished_at: ''
           });
         }

@@ -18,7 +18,8 @@ assert(mainJs.includes("'--protocol', 'http2', '--edge-ip-version', '4'"), 'Clou
 assert(mainJs.includes("host === 'api.trycloudflare.com'"), 'Cloudflare control endpoint can still be mistaken for a public tunnel URL');
 assert(mainJs.includes('tunnelRetryAttempt < 4'), 'failed quick tunnels are not retried with a finite limit');
 assert(rendererJs.includes('function stagePublicBatchMedia'), 'public media pre-upload helper is missing');
-assert(rendererJs.includes('body.main_image_upload_ids = mainImages.map'), 'public batch submit does not use staged main-image IDs');
+assert(rendererJs.includes('const inputs = {main:[...mainImages], ref:[...refImages]}'), 'batch submit must snapshot images before asynchronous uploads');
+assert(rendererJs.includes('body.main_image_upload_ids = inputs.main.map') && rendererJs.includes('body.reference_image_upload_ids = inputs.ref.map'), 'public batch submit does not use staged IDs from the same image snapshot');
 assert(rendererJs.includes('body.main_images = []'), 'public batch request does not remove staged Base64 main images');
 assert(rendererJs.includes('const PUBLIC_BATCH_UPLOAD_CONCURRENCY = 4'), 'public upload concurrency limit is missing');
 assert(rendererJs.includes('publicBatchUploadsActive < PUBLIC_BATCH_UPLOAD_CONCURRENCY'), 'public pre-upload queue does not enforce its concurrency limit');

@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>TENYING_AI 1.0</title>
-  <link rel="stylesheet" href="/static/style.css?v=1.0.106" />
+  <link rel="stylesheet" href="/static/style.css?v=1.0.111" />
 </head>
 <body>
   <div class="app-shell">
@@ -72,9 +72,10 @@
     <div class="shortcut-settings-layer" id="shortcutSettingsLayer" aria-hidden="true">
       <section class="shortcut-settings-panel glass" role="dialog" aria-modal="true" aria-labelledby="shortcutSettingsTitle">
         <header class="shortcut-settings-head">
-          <div><h2 id="shortcutSettingsTitle">快捷键设置</h2><p>仅“打开 / 关闭程序”是系统全局快捷键，两个库快捷键只在程序窗口内生效。</p></div>
+          <div><h2 id="shortcutSettingsTitle">快捷键设置</h2><p>主机的资产库和提示词库快捷键可在其他程序中使用。</p></div>
         </header>
         <label class="shortcut-master-switch"><span><b>启用快捷键</b><small>关闭后所有快捷键立即停用</small></span><input id="shortcutsEnabled" type="checkbox" checked /><i aria-hidden="true"></i></label>
+        <label class="shortcut-master-switch" id="libraryAutoStartRow"><span><b>开机启动后台</b><small>登录 Windows 后可直接使用两个库</small></span><input id="libraryAutoStart" type="checkbox" /><i aria-hidden="true"></i></label>
         <div class="shortcut-settings-list" id="shortcutSettingsList"></div>
         <div class="shortcut-settings-message" id="shortcutSettingsMessage" role="status" aria-live="polite"></div>
         <footer class="shortcut-settings-footer">
@@ -279,7 +280,7 @@
             </div>
             <div class="thumbs" id="refThumbs"></div>
 
-            <div class="prompt-mode-row"><label>提示词</label><label class="switch-line prompt-switch"><input id="promptMultilineTasks" type="checkbox" checked /> 提示词多行多任务</label></div>
+            <div class="prompt-mode-row"><label for="prompts">提示词</label><label class="switch-line prompt-switch"><input id="promptMultilineTasks" type="checkbox" checked /> 提示词多行多任务</label></div>
             <textarea id="prompts" placeholder="开启：一行/一段提示词 = 一个任务；关闭：整个输入框作为一个完整提示词。"></textarea>
             <div class="estimate" id="taskEstimate">预计任务：1</div>
           </div>
@@ -1029,8 +1030,10 @@
       </div>
     </div>
   </div>
-  <script src="/static/folder-download.js?v=1.0.106"></script>
-  <script src="/static/agent-stream.js?v=1.0.106"></script>
-  <script src="/static/app.js?v=1.0.106"></script>
+  <script src="/static/folder-download.js?v=1.0.107"></script>
+  <script src="/static/agent-stream.js?v=1.0.107"></script>
+  <script src="/static/prompt-mention-core.js?v=1.0.109"></script>
+  <script src="/static/prompt-mentions.js?v=1.0.109"></script>
+  <script src="/static/app.js?v=1.0.111"></script>
 </body>
 </html>

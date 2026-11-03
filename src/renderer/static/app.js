@@ -2,6 +2,8 @@ const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 let mainImages = [];
 let refImages = [];
+let imagePromptMentions = null;
+const standaloneLibrary = window.libraryPanel ? new URLSearchParams(location.search).get('library') : '';
 const RECENT_UPLOAD_DEFAULT_LIMIT = 10;
 let recentUploadSettings = {
   image_limit: RECENT_UPLOAD_DEFAULT_LIMIT,
@@ -3452,6 +3454,7 @@ async function runAgentTool(tool='', args={}){
     delete body.use_current_form;
     if(useCurrentForm){
       Object.assign(body, {...collectConfig(), prompts:String(body.prompts || $('#prompts')?.value || ''), main_images:mainImages, reference_images:refImages, client_id:getClientId()});
+      body.prompt_mentions = imagePromptMentions?.submission(imageMentionRows(), body.prompts) || [];
     }
     body.image_api_platform = 'apimart';
     body.model = resolveAgentImageModel(body.model);
@@ -5124,6 +5127,7 @@ async function addFiles(files, target, options={}){
 function renderThumbs(){
   renderThumbList('#mainThumbs', mainImages, 'main');
   renderThumbList('#refThumbs', refImages, 'ref');
+  imagePromptMentions?.refresh();
 }
 function batchUploadStateMarkup(item){
   if(!isPublicClient) return '';
@@ -5133,7 +5137,7 @@ function batchUploadStateMarkup(item){
   return '<span class="batch-upload-state">上传中</span>';
 }
 function renderThumbList(sel, arr, type){
-  $(sel).innerHTML = arr.map((it,i)=>`<div class="thumb-wrap"><img class="thumb draggable-generated-thumb" draggable="true" src="${it.data}" data-preview="${it.data}" data-full-url="${it.data}" data-id="input_${type}_${i}" data-name="${escapeHtml(it.name||'input-image.png')}">${batchUploadStateMarkup(it)}<button class="thumb-del" data-type="${type}" data-i="${i}">×</button></div>`).join('');
+  $(sel).innerHTML = arr.map((it,i)=>`<div class="thumb-wrap"><img class="thumb draggable-generated-thumb" draggable="true" src="${it.data}" data-preview="${it.data}" data-full-url="${it.data}" data-id="input_${type}_${i}" data-name="${escapeHtml(it.name||'input-image.png')}">${imagePromptMentions ? `<span class="input-image-label">${imagePromptMentions.label(it)}</span>` : ''}${batchUploadStateMarkup(it)}<button class="thumb-del" data-type="${type}" data-i="${i}">×</button></div>`).join('');
   $$(sel+' .thumb').forEach(img => img.addEventListener('click', () => showPreview(img.dataset.preview)));
   $$(sel+' .thumb').forEach(img => img.addEventListener('dragstart', e => {
     setImageDragData(e, {fullUrl: img.dataset.fullUrl || img.dataset.preview, filename: img.dataset.name || 'input-image.png'});
@@ -5638,16 +5642,20 @@ async function submitCurrentImageBatch(opts = {}){
     toast(message);
     return null;
   }
-  const body = {...collectConfig(), client_id:getClientId(), prompts: $('#prompts').value, prompt_multiline_tasks: isPromptMultilineTasksEnabled(), main_images: mainImages, reference_images: refImages};
+  const inputs = {main:[...mainImages], ref:[...refImages]};
+  let promptMentions;
+  try{ promptMentions = imagePromptMentions?.submission(imageMentionRows(inputs)) || []; }
+  catch(error){ if(opts.fromAgent) throw error; toast(error.message); return null; }
+  const body = {...collectConfig(), client_id:getClientId(), prompts: $('#prompts').value, prompt_mentions:promptMentions, prompt_multiline_tasks: isPromptMultilineTasksEnabled(), main_images: inputs.main, reference_images: inputs.ref};
   const button = $('#startBatchBtn');
   if(!opts.fromAgent && button){ button.disabled = true; button.textContent = '提交中...'; }
   try{
     if(isPublicClient){
-      const allCount = mainImages.length + refImages.length;
+      const allCount = inputs.main.length + inputs.ref.length;
       const progressText = (done,total)=>{ if(!opts.fromAgent && button) button.textContent = total ? `上传素材 ${done}/${total}` : '创建批次...'; };
-      await ensurePublicBatchMediaUploaded([...mainImages, ...refImages], progressText);
-      body.main_image_upload_ids = mainImages.map(item=>item.batch_upload_id).filter(Boolean);
-      body.reference_image_upload_ids = refImages.map(item=>item.batch_upload_id).filter(Boolean);
+      await ensurePublicBatchMediaUploaded([...inputs.main, ...inputs.ref], progressText);
+      body.main_image_upload_ids = inputs.main.map(item=>item.batch_upload_id).filter(Boolean);
+      body.reference_image_upload_ids = inputs.ref.map(item=>item.batch_upload_id).filter(Boolean);
       body.main_images = [];
       body.reference_images = [];
       if(!opts.fromAgent && button) button.textContent = '创建批次...';
@@ -10197,6 +10205,9 @@ const shortcutState = {
   loaded:false,
   recording:'',
   globalRegistered:false,
+  libraryGlobalRegistered:false,
+  autoStart:false,
+  autoStartSupported:false,
   persisted:{ enabled:true, settings:{...SHORTCUT_DEFAULTS} },
   draft:{ enabled:true, settings:{...SHORTCUT_DEFAULTS} }
 };
@@ -10263,13 +10274,14 @@ function renderShortcutSettings(){
     const recording = shortcutState.recording === action;
     const value = shortcutState.draft.settings[action] || '';
     return `<div class="shortcut-setting-row${recording?' recording':''}" data-shortcut-action="${action}">
-      <div class="shortcut-setting-name"><b>${SHORTCUT_LABELS[action]}</b><small>${action==='open_app'?'系统全局':'仅程序窗口内'}</small></div>
+      <div class="shortcut-setting-name"><b>${SHORTCUT_LABELS[action]}</b><small>${!isLanDesktopClient() && action !== 'toggle_agent' ? '系统全局' : '仅程序窗口内'}</small></div>
       <kbd>${recording?'请按下新的快捷键组合...':escapeHtml(shortcutDisplay(value))}</kbd>
       <button class="secondary shortcut-edit-btn" type="button" data-shortcut-edit="${action}">${recording?'录制中':'修改'}</button>
       <button class="shortcut-reset-btn" type="button" data-shortcut-reset="${action}">恢复默认</button>
     </div>`;
   }).join('');
   if($('#shortcutsEnabled')) $('#shortcutsEnabled').checked = shortcutState.draft.enabled !== false;
+  if($('#libraryAutoStartRow')) $('#libraryAutoStartRow').classList.toggle('hidden', !shortcutState.autoStartSupported || !window.libraryPanel || isLanDesktopClient());
 }
 async function loadShortcutSettings(){
   const ret = isLanDesktopClient() ? await window.lanClient.getShortcuts() : await api('/api/shortcuts');
@@ -10279,9 +10291,14 @@ async function loadShortcutSettings(){
   };
   shortcutState.draft = cloneShortcutConfig(shortcutState.persisted);
   shortcutState.globalRegistered = ret.global_registered === true;
+  shortcutState.libraryGlobalRegistered = ret.library_global_registered === true;
+  shortcutState.autoStart = ret.library_auto_start === true;
+  shortcutState.autoStartSupported = ret.library_auto_start_supported === true;
+  if($('#libraryAutoStart')) $('#libraryAutoStart').checked = shortcutState.autoStart;
   shortcutState.loaded = true;
   renderShortcutSettings();
   if(canEditShortcutSettings() && shortcutState.persisted.enabled && !shortcutState.globalRegistered) setShortcutMessage('打开 / 关闭程序快捷键未注册：当前组合可能被系统或其他软件占用。','error');
+  else if(window.libraryPanel && shortcutState.persisted.enabled && !shortcutState.libraryGlobalRegistered) setShortcutMessage('库快捷键未注册，可能被系统或其他软件占用，请更换组合。','error');
 }
 async function openShortcutSettings(){
   if(!canEditShortcutSettings()) return;
@@ -10294,6 +10311,7 @@ async function openShortcutSettings(){
   renderShortcutSettings();
 }
 function closeShortcutSettings(){
+  window.libraryPanel?.suspendShortcuts(false).catch(()=>{});
   shortcutState.recording = '';
   shortcutState.draft = cloneShortcutConfig(shortcutState.persisted);
   $('#shortcutSettingsLayer')?.classList.remove('active');
@@ -10335,7 +10353,8 @@ async function saveShortcutSettings(){
   if(saveBtn) saveBtn.disabled = true;
   setShortcutMessage('正在保存并应用快捷键...');
   try{
-    const payload = {shortcuts_enabled:shortcutState.draft.enabled,shortcut_settings:normalized};
+    if(window.libraryPanel && !isLanDesktopClient()) await window.libraryPanel.suspendShortcuts(false);
+    const payload = {shortcuts_enabled:shortcutState.draft.enabled,shortcut_settings:normalized, ...(!isLanDesktopClient() && window.libraryPanel && shortcutState.autoStartSupported ? {library_auto_start:$('#libraryAutoStart')?.checked === true} : {})};
     const ret = isLanDesktopClient()
       ? await window.lanClient.saveShortcuts(payload)
       : await api('/api/shortcuts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
@@ -10358,7 +10377,7 @@ function setupShortcutSettings(){
     $('#shortcutSettingsList')?.addEventListener('click',event=>{
       const edit = event.target.closest('[data-shortcut-edit]')?.dataset.shortcutEdit;
       const reset = event.target.closest('[data-shortcut-reset]')?.dataset.shortcutReset;
-      if(edit){ shortcutState.recording=edit; setShortcutMessage('请按下新的快捷键组合，按 Esc 取消录制。'); renderShortcutSettings(); }
+      if(edit){ window.libraryPanel?.suspendShortcuts(true).catch(()=>{}); shortcutState.recording=edit; setShortcutMessage('请按下新的快捷键组合，按 Esc 取消录制。'); renderShortcutSettings(); }
       if(reset){ shortcutState.recording=''; shortcutState.draft.settings[reset]=SHORTCUT_DEFAULTS[reset]; setShortcutMessage(`${SHORTCUT_LABELS[reset]}已恢复默认，保存后生效。`); renderShortcutSettings(); }
     });
     $('#shortcutSettingsLayer')?.addEventListener('click',event=>{ if(event.target.id==='shortcutSettingsLayer') closeShortcutSettings(); });
@@ -10367,6 +10386,7 @@ function setupShortcutSettings(){
     if(shortcutState.recording){
       event.preventDefault(); event.stopPropagation();
       if(event.key === 'Escape'){
+        window.libraryPanel?.suspendShortcuts(false).catch(()=>{});
         shortcutState.recording='';
         setShortcutMessage('已取消快捷键录制。');
         renderShortcutSettings();
@@ -10381,6 +10401,7 @@ function setupShortcutSettings(){
       if(duplicate) return setShortcutMessage('该快捷键已被使用，请重新设置。','error');
       shortcutState.draft.settings[shortcutState.recording]=value;
       shortcutState.recording='';
+      window.libraryPanel?.suspendShortcuts(false).catch(()=>{});
       setShortcutMessage('已记录新组合，点击“保存设置”后生效。');
       renderShortcutSettings();
       return;
@@ -10388,6 +10409,7 @@ function setupShortcutSettings(){
     if(!shortcutState.loaded || !shortcutState.persisted.enabled) return;
     const value = shortcutFromKeyboardEvent(event);
     if(!value) return;
+    if(window.libraryPanel && !isLanDesktopClient() && [shortcutState.persisted.settings.toggle_asset_library, shortcutState.persisted.settings.toggle_prompt_library].some(key => normalizeShortcutText(key) === value)) return;
     if(value === normalizeShortcutText(shortcutState.persisted.settings.toggle_asset_library)){
       event.preventDefault(); event.stopPropagation(); toggleAssetLibraryShortcut();
     }else if(value === normalizeShortcutText(shortcutState.persisted.settings.toggle_prompt_library)){
@@ -10499,6 +10521,7 @@ async function loadPromptLibrary(){
   catch(e){ toast(e.message || '提示词库加载失败'); }
 }
 function openPromptLibrary(){
+  if(window.libraryPanel && !standaloneLibrary && !isLanDesktopClient()){ window.libraryPanel.open('prompt'); return; }
   $('#promptLibraryLayer')?.classList.add('active');
   $('#promptLibraryOrb')?.classList.remove('show');
   const win = $('#promptLibraryWindow');
@@ -10507,8 +10530,8 @@ function openPromptLibrary(){
   bringFloatingLayer('#promptLibraryLayer', '#promptLibraryWindow');
   loadPromptLibrary();
 }
-function closePromptLibrary(){ $('#promptLibraryLayer')?.classList.remove('active'); $('#promptLibraryOrb')?.classList.remove('show'); }
-function minimizePromptLibrary(){ $('#promptLibraryLayer')?.classList.remove('active'); $('#promptLibraryOrb')?.classList.add('show'); }
+function closePromptLibrary(){ if(standaloneLibrary === 'prompt'){window.libraryPanel.hide(); return;} $('#promptLibraryLayer')?.classList.remove('active'); $('#promptLibraryOrb')?.classList.remove('show'); }
+function minimizePromptLibrary(){ if(standaloneLibrary === 'prompt'){window.libraryPanel.hide(); return;} $('#promptLibraryLayer')?.classList.remove('active'); $('#promptLibraryOrb')?.classList.add('show'); }
 function renderPromptLibrary(){
   const groups = promptLibraryData.groups || [];
   const canWrite = plCanWrite();
@@ -10571,6 +10594,7 @@ function renderPromptLibrary(){
     const act=btn.dataset.act;
     if(act==='copy'){ await copyTextSmart(t.content||'', '提示词'); toast('提示词已复制'); }
     if(act==='apply'){
+      if(standaloneLibrary === 'prompt'){ await window.libraryPanel.applyPrompt(t.content || ''); return; }
       const el=$('#prompts'); if(!el) return;
       if(el.value.trim()) { const mode=confirm('当前提示词不为空，确定替换吗？\n点击“取消”则追加到末尾。')?'replace':'append'; el.value = mode==='replace' ? t.content : (el.value.trim()+"\n\n"+t.content); }
       else el.value=t.content;
@@ -11283,9 +11307,9 @@ function assetRefreshOverlayScrollbars(show=false){
   });
 }
 function assetRevealTreeScrollbar(tree){ assetUpdateOverlayScrollbar(tree,true); }
-function openAssetLibrary(){ $('#assetLibraryLayer')?.classList.add('active'); $('#assetLibraryOrb')?.classList.remove('show'); bringFloatingLayer('#assetLibraryLayer', '#assetLibraryWindow'); loadAssetLibrary(); }
-function closeAssetLibrary(){ $('#assetLibraryLayer')?.classList.remove('active'); $('#assetLibraryOrb')?.classList.remove('show'); }
-function minimizeAssetLibrary(){ $('#assetLibraryLayer')?.classList.remove('active'); $('#assetLibraryOrb')?.classList.add('show'); }
+function openAssetLibrary(){ if(window.libraryPanel && !standaloneLibrary && !isLanDesktopClient()){window.libraryPanel.open('asset'); return;} $('#assetLibraryLayer')?.classList.add('active'); $('#assetLibraryOrb')?.classList.remove('show'); bringFloatingLayer('#assetLibraryLayer', '#assetLibraryWindow'); loadAssetLibrary(); }
+function closeAssetLibrary(){ if(standaloneLibrary === 'asset'){window.libraryPanel.hide(); return;} $('#assetLibraryLayer')?.classList.remove('active'); $('#assetLibraryOrb')?.classList.remove('show'); }
+function minimizeAssetLibrary(){ if(standaloneLibrary === 'asset'){window.libraryPanel.hide(); return;} $('#assetLibraryLayer')?.classList.remove('active'); $('#assetLibraryOrb')?.classList.add('show'); }
 function renderAssetLibrary({skipTree=false}={}){
   const tree = $('#assetGroupTree');
   if(tree && !skipTree){
@@ -12978,12 +13002,66 @@ function setupAutoHideScrollbars(){
   document.addEventListener('scroll', event=>revealUiScrollbar(event.target), {capture:true, passive:true});
 }
 
+function imageMentionRows(inputs = {main:mainImages, ref:refImages}){
+  return ['main','ref'].flatMap(kind => inputs[kind].map((item, index) => ({item, kind, index, name:item.name || '图片', src:item.data})));
+}
+function setupImagePromptMentions(){
+  if(imagePromptMentions) return;
+  imagePromptMentions = window.PromptMentions.create({
+    input:$('#prompts'), getImages:imageMentionRows,
+    loadAssets:async () => {
+      const ret = await api('/api/assets/init');
+      if(!Array.isArray(ret.assets) || !Array.isArray(ret.groups)) throw new Error('资产库返回数据异常');
+      const groups = new Map(ret.groups.map(group => [group.id, group]));
+      const groupPath = id => {
+        const names = [], seen = new Set();
+        while(id && groups.has(id) && !seen.has(id)){
+          seen.add(id); const group = groups.get(id); names.unshift(group.name); id = group.parent_id;
+        }
+        return names.join(' / ');
+      };
+      return ret.assets.filter(asset => asset.type === 'image' && (/\.(png|jpe?g|webp|gif)$/i.test(asset.name || '') || /^image\/(png|jpeg|webp|gif)$/i.test(asset.mime_type || '')))
+        .map(asset => ({...asset, src:withPublicAccess(asset.thumb_url || asset.url), group:groupPath(asset.group_id)}));
+    },
+    attachAsset:async asset => {
+      const existing = [...mainImages, ...refImages].find(item => item.mention_asset_id === asset.id);
+      if(existing) return existing;
+      const source = asset.source_url || asset.url;
+      if(!source) throw new Error('素材源文件不存在');
+      const response = await fetch(withPublicAccess(source), {headers:assetSourceHeaders(), signal:AbortSignal.timeout(60000)});
+      if(!response.ok) throw new Error(`读取素材失败 (${response.status})`);
+      const blob = await response.blob();
+      if(!/^image\//i.test(blob.type)) throw new Error('该素材不能作为参考图片');
+      const item = await batchImageFileToItem(new File([blob], asset.name || 'asset.png', {type:blob.type}));
+      item.mention_asset_id = asset.id;
+      refImages.push(item); renderThumbs(); calcEstimate(); prestagePublicBatchMedia([item]);
+      return item;
+    },
+    onChange:calcEstimate, onError:toast
+  });
+  renderThumbs();
+}
+
 async function startup(){
   try{
     setupAutoHideScrollbars();
     loadPreviewBgSettings();
     applyPreviewBgSettings();
     await loadConfig();
+    if(['asset','prompt'].includes(standaloneLibrary)){
+      document.body.classList.add('standalone-library', `standalone-${standaloneLibrary}`);
+      if(standaloneLibrary === 'asset'){ setupAssetLibrary(); openAssetLibrary(); }
+      else { setupPromptLibrary(); openPromptLibrary(); }
+      window.libraryPanel.onRefresh(()=>standaloneLibrary === 'asset' ? loadAssetLibrary() : loadPromptLibrary());
+      return;
+    }
+    window.libraryPanel?.onApplyPrompt(content=>{
+      const el=$('#prompts'); if(!el) return;
+      if(el.value.trim()){const replace=confirm('当前提示词不为空，确定替换吗？\n点击“取消”则追加到末尾。'); el.value=replace ? content : `${el.value.trim()}\n\n${content}`;}
+      else el.value=content;
+      el.dispatchEvent(new Event('input',{bubbles:true})); calcEstimate(); setPage('home'); toast('已应用到首页提示词');
+    });
+    setupImagePromptMentions();
     setupRecentUploadPanel();
     setupApimartBalance();
     setupModelUsageEstimate();
@@ -13029,7 +13107,7 @@ function scheduleRefreshLoop(delay = 6500){
 }
 
 function requestImmediateStatusRefresh(reason = ''){
-  if(document.hidden || $('#publicLoginOverlay')?.classList.contains('active')) return;
+  if(standaloneLibrary || document.hidden || $('#publicLoginOverlay')?.classList.contains('active')) return;
   const now = Date.now();
   if(now - lastImmediateRefreshAt < 500) return;
   lastImmediateRefreshAt = now;
@@ -13041,5 +13119,5 @@ window.addEventListener('online', ()=>requestImmediateStatusRefresh('network-onl
 document.addEventListener('visibilitychange', ()=>{
   if(!document.hidden) requestImmediateStatusRefresh('window-visible');
 });
-scheduleRefreshLoop(1800);
+if(!standaloneLibrary) scheduleRefreshLoop(1800);
 

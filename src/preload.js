@@ -15,3 +15,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   prepareAssetDrag: (payload) => ipcRenderer.invoke('prepare-asset-drag', payload || {}),
   startAssetDrag: (payload) => ipcRenderer.invoke('start-asset-drag', payload || {})
 });
+contextBridge.exposeInMainWorld('libraryPanel', {
+  open: kind => ipcRenderer.invoke('library:open', kind),
+  hide: () => ipcRenderer.invoke('library:hide'),
+  applyPrompt: content => ipcRenderer.invoke('library:apply-prompt', content),
+  suspendShortcuts: value => ipcRenderer.invoke('shortcuts:suspend', value),
+  onRefresh: callback => ipcRenderer.on('library:refresh', () => callback()),
+  onApplyPrompt: callback => ipcRenderer.on('library:apply-prompt', (_event, content) => callback(content))
+});
