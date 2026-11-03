@@ -4,6 +4,20 @@ let mainImages = [];
 let refImages = [];
 let imagePromptMentions = null;
 const standaloneLibrary = window.libraryPanel ? new URLSearchParams(location.search).get('library') : '';
+if(window.mainWindowControls && !standaloneLibrary && !window.lanClient){
+  document.body.classList.add('desktop-shell');
+  const updateWindowState = state=>{
+    const button=document.getElementById('mainWindowMaximize');
+    if(!button) return;
+    const label=state?.maximized ? '还原窗口' : '最大化';
+    button.title=label; button.setAttribute('aria-label',label); button.classList.toggle('is-maximized',!!state?.maximized);
+  };
+  for(const [id,action] of [['mainWindowMinimize','minimize'],['mainWindowMaximize','maximize'],['mainWindowClose','close']]){
+    document.getElementById(id)?.addEventListener('click',()=>window.mainWindowControls.action(action).then(updateWindowState).catch(()=>{}));
+  }
+  window.mainWindowControls.onState(updateWindowState);
+  window.mainWindowControls.action('state').then(updateWindowState).catch(()=>{});
+}
 const RECENT_UPLOAD_DEFAULT_LIMIT = 10;
 let recentUploadSettings = {
   image_limit: RECENT_UPLOAD_DEFAULT_LIMIT,

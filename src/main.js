@@ -9830,6 +9830,14 @@ ipcMain.handle('library:apply-prompt', (event, content) => {
   mainWindow.webContents.send('library:apply-prompt', content.slice(0, 100000));
   return true;
 });
+ipcMain.handle('main-window:action', (event, action) => {
+  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return false;
+  if (action === 'minimize') mainWindow.minimize();
+  else if (action === 'maximize') mainWindow.isMaximized() ? mainWindow.unmaximize() : mainWindow.maximize();
+  else if (action === 'close') mainWindow.close();
+  else if (action !== 'state') return false;
+  return {maximized:mainWindow.isMaximized()};
+});
 ipcMain.handle('shortcuts:suspend', (event, suspend) => {
   if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return false;
   shortcutsSuspended = suspend === true;
@@ -9841,11 +9849,15 @@ ipcMain.handle('shortcuts:suspend', (event, suspend) => {
 function createWindow() {
   const cfg = readConfig();
   mainWindow = new BrowserWindow({
-    width: 1480, height: 960, minWidth: 1180, minHeight: 760, show:!process.argv.includes('--background'),
+    width: 1480, height: 960, minWidth: 1180, minHeight: 760, show:!process.argv.includes('--background'), frame:false, thickFrame:true,
     title: (cfg.app_name || APP_DISPLAY_NAME),
     icon: path.join(__dirname, '..', 'assets', 'rocket.ico'),
     webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: false, webSecurity: true, allowRunningInsecureContent: false, preload: path.join(__dirname, 'preload.js') }
   });
+  mainWindow.removeMenu();
+  const sendWindowState = ()=>{ if(mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('main-window:state', {maximized:mainWindow.isMaximized()}); };
+  mainWindow.on('maximize', sendWindowState);
+  mainWindow.on('unmaximize', sendWindowState);
   setupImageContextMenu(mainWindow);
   let referencePasteGestureUntil = 0;
   mainWindow.on('blur', () => { referencePasteGestureUntil = 0; });

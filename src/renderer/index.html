@@ -4,11 +4,12 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>TENYING_AI 1.0</title>
-  <link rel="stylesheet" href="/static/style.css?v=1.0.113" />
+  <link rel="stylesheet" href="/static/style.css?v=1.0.114" />
 </head>
 <body>
   <div class="app-shell">
     <header class="topbar glass">
+      <span class="liquid-glass-warp" aria-hidden="true"></span>
       <div class="skin-brand-shell">
         <div class="skin-mascot-avatar" id="skinMascotAvatar" aria-label="当前皮肤助手"></div>
         <div>
@@ -24,6 +25,11 @@
         <button class="pill api-balance-pill" id="apiState" type="button" title="查看 APIMart 账户余额与当前 API Key 用量"><span class="api-balance-label">API余额</span><strong id="apiBalanceValue">查询中</strong></button>
         <span class="pill" id="runningState">运行：0</span>
         <span class="pill" id="lanState">局域网：未开启</span>
+      </div>
+      <div class="desktop-window-controls" aria-label="窗口控制">
+        <button type="button" id="mainWindowMinimize" title="最小化" aria-label="最小化"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/></svg></button>
+        <button type="button" id="mainWindowMaximize" title="最大化" aria-label="最大化"><svg class="window-maximize-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="1.5"/></svg><svg class="window-restore-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="8" width="11" height="11" rx="1.5"/><path d="M9 5h9a1 1 0 0 1 1 1v9"/></svg></button>
+        <button type="button" id="mainWindowClose" title="关闭到托盘" aria-label="关闭到托盘"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
       </div>
     </header>
 
@@ -1034,6 +1040,7 @@
   <script src="/static/agent-stream.js?v=1.0.107"></script>
   <script src="/static/prompt-mention-core.js?v=1.0.109"></script>
   <script src="/static/prompt-mentions.js?v=1.0.109"></script>
-  <script src="/static/app.js?v=1.0.113"></script>
+  <script src="/static/liquid-glass.js?v=1.0.114"></script>
+  <script src="/static/app.js?v=1.0.114"></script>
 </body>
 </html>

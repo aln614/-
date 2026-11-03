@@ -33,7 +33,46 @@ fs.writeFileSync(path.join(data, 'config.json'), JSON.stringify({
     assert.equal(secondExit,0,'A second launch must exit after notifying the background instance');
     await main.waitForFunction(()=>!document.hidden);
     assert.equal(await instance.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].isVisible()),true,'A second launch restores the original main window');
-    await instance.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].hide());
+    await main.waitForFunction(()=>document.body.classList.contains('desktop-shell') && document.body.classList.contains('liquid-refraction-ready'));
+    assert.match(await main.locator('.liquid-glass-warp').evaluate(el=>getComputedStyle(el).filter),/tenying-liquid-refraction/,'The glass layer must use the refraction filter');
+    assert.equal(await main.locator('.topbar').evaluate(el=>getComputedStyle(el).webkitAppRegion),'drag','The main glass header must drag the native window');
+    assert.equal(await main.locator('#mainWindowClose').evaluate(el=>getComputedStyle(el).webkitAppRegion),'no-drag','Window controls must remain clickable');
+    assert.equal(await instance.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].isMenuBarVisible()),false,'The native menu bar must be removed');
+    const topbarFit=await main.locator('.topbar').evaluate(el=>{
+      const header=el.getBoundingClientRect(), controls=document.querySelector('.desktop-window-controls').getBoundingClientRect(), status=document.querySelector('.top-status').getBoundingClientRect();
+      return {fit:controls.right<=header.right && status.right<=controls.left && controls.top>=header.top && controls.bottom<=header.bottom};
+    });
+    assert.equal(topbarFit.fit,true,'Header controls must not overlap or overflow');
+    fs.mkdirSync(path.join(root,'test-results'),{recursive:true});
+    await main.screenshot({path:path.join(root,'test-results','liquid-glass-main.png')});
+    await instance.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setSize(1180,760));
+    await main.waitForFunction(()=>innerWidth<=1180);
+    const narrowFit=await main.locator('.topbar').evaluate(el=>{
+      const header=el.getBoundingClientRect(), controls=document.querySelector('.desktop-window-controls').getBoundingClientRect(), status=document.querySelector('.top-status').getBoundingClientRect(), brand=document.querySelector('.skin-brand-shell').getBoundingClientRect();
+      return controls.right<=header.right && status.right<=controls.left && brand.right<=status.left && controls.bottom<=header.bottom;
+    });
+    assert.equal(narrowFit,true,'Header must fit at the minimum desktop window size');
+    await main.screenshot({path:path.join(root,'test-results','liquid-glass-narrow.png')});
+    await main.evaluate(()=>applyThemeMode('dark'));
+    await main.screenshot({path:path.join(root,'test-results','liquid-glass-dark.png')});
+    await main.evaluate(()=>applyThemeMode('light'));
+    await instance.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setSize(1480,960));
+    await main.locator('#mainWindowMaximize').click();
+    assert.equal(await instance.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].isMaximized()),true);
+    await main.locator('#mainWindowMaximize.is-maximized').waitFor();
+    assert.equal(await main.locator('#mainWindowMaximize').getAttribute('aria-label'),'还原窗口');
+    await main.locator('#mainWindowMaximize').click();
+    assert.equal(await instance.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].isMaximized()),false);
+    await main.locator('#mainWindowMinimize').click();
+    assert.equal(await instance.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].isMinimized()),true);
+    await instance.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].restore());
+    await main.waitForFunction(()=>!document.hidden,null,{polling:100});
+    await main.locator('#mainWindowClose').click();
+    for(let attempt=0;attempt<30;attempt++){
+      if(!await instance.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].isVisible())) break;
+      await new Promise(resolve=>setTimeout(resolve,100));
+    }
+    assert.equal(await instance.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].isVisible()),false,'Close must keep the background tray running');
     const registrations = await instance.evaluate(({globalShortcut})=>['Ctrl+Alt+F9','Ctrl+Alt+F10','Ctrl+Alt+F11'].map(key=>globalShortcut.isRegistered(key)));
     assert.deepEqual(registrations, [true,true,true], 'Main and both library shortcuts are registered globally');
     assert.equal(await instance.evaluate(({globalShortcut})=>globalShortcut.register('Ctrl+Alt+F8',()=>{})),true);

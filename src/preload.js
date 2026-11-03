@@ -24,3 +24,7 @@ contextBridge.exposeInMainWorld('libraryPanel', {
   onRefresh: callback => ipcRenderer.on('library:refresh', () => callback()),
   onApplyPrompt: callback => ipcRenderer.on('library:apply-prompt', (_event, content) => callback(content))
 });
+contextBridge.exposeInMainWorld('mainWindowControls', {
+  action: action => ipcRenderer.invoke('main-window:action', action),
+  onState: callback => ipcRenderer.on('main-window:state', (_event, state) => callback(state))
+});
