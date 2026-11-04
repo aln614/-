@@ -4,12 +4,11 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>TENYING_AI 1.0</title>
-  <link rel="stylesheet" href="/static/style.css?v=1.0.115" />
+  <link rel="stylesheet" href="/static/style.css?v=1.0.116" />
 </head>
 <body>
   <div class="app-shell">
     <header class="topbar glass">
-      <span class="liquid-glass-mount" aria-hidden="true"></span>
       <div class="skin-brand-shell">
         <div class="skin-mascot-avatar" id="skinMascotAvatar" aria-label="当前皮肤助手"></div>
         <div>
@@ -636,9 +635,10 @@
             <label class="switch-line"><input id="liquidEnabled" type="checkbox" checked /> 启用液态玻璃</label>
             <div class="liquid-settings-grid">
               <label>折射强度 <output id="liquidDisplacementValue"></output><input id="liquidDisplacement" type="range" min="0" max="150" step="1" /></label>
-              <label>模糊程度 <output id="liquidBlurValue"></output><input id="liquidBlur" type="range" min="0" max="1" step="0.01" /></label>
+              <label>模糊程度 <output id="liquidBlurValue"></output><input id="liquidBlur" type="range" min="0" max="1" step="0.0025" /></label>
               <label>饱和度 <output id="liquidSaturationValue"></output><input id="liquidSaturation" type="range" min="50" max="250" step="1" /></label>
               <label>色散强度 <output id="liquidAberrationValue"></output><input id="liquidAberration" type="range" min="0" max="10" step="0.1" /></label>
+              <label>材质不透明度 <output id="liquidOpacityValue"></output><input id="liquidOpacity" type="range" min="0.15" max="0.9" step="0.01" /></label>
             </div>
             <button class="secondary" id="liquidReset" type="button">恢复默认</button>
             <button class="primary" id="liquidSave" type="button">保存玻璃设置</button>
@@ -1053,7 +1053,7 @@
   <script src="/static/agent-stream.js?v=1.0.107"></script>
   <script src="/static/prompt-mention-core.js?v=1.0.109"></script>
   <script src="/static/prompt-mentions.js?v=1.0.109"></script>
-  <script src="/static/liquid-glass-bundle.js?v=1.0.115"></script>
-  <script src="/static/app.js?v=1.0.115"></script>
+  <script src="/static/liquid-glass-bundle.js?v=1.0.116"></script>
+  <script src="/static/app.js?v=1.0.116"></script>
 </body>
 </html>

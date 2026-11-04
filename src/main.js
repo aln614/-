@@ -13,6 +13,7 @@ const { spawn } = require('child_process');
 const { initDB, getDB, addLog, listBatches, listImages, listLogs, nowISO, uuid, setNetworkTimeOffset, getNetworkTimeInfo } = require('./services/db');
 const { TaskQueue } = require('./services/taskQueue');
 const assetIndex = require('./services/assetIndex');
+const { DEFAULT_LIQUID_GLASS, normalizeLiquidGlass } = require('./services/liquidGlassSettings');
 const { uploadDirectory, previewDirectory, relocatedUploadPath, expendableDragFiles } = require('./services/mediaStorage');
 const { buildExportManifest } = require('./services/exportManifest');
 const { registerFolderExport } = require('../lan-client/folderExport');
@@ -645,7 +646,7 @@ const DEFAULT_CONFIG = {
   image_n: 1,
   mask_url: '',
   theme_mode: 'auto',
-  liquid_glass: {enabled:true, displacementScale:70, blurAmount:0.0625, saturation:140, aberrationIntensity:2},
+  liquid_glass: DEFAULT_LIQUID_GLASS,
   skin_id: 'classic',
   mascot_enabled: true,
   concurrency: 30,
@@ -834,7 +835,7 @@ function createTray() {
 function applyLibraryWindowShape(win) {
   if (process.platform !== 'win32' || !win || win.isDestroyed()) return;
   const [width, height] = win.getSize();
-  const radius = Math.min(16, Math.floor(width / 2), Math.floor(height / 2));
+  const radius = Math.min(20, Math.floor(width / 2), Math.floor(height / 2));
   const rectangles = [{x:0, y:radius, width, height:height - radius * 2}];
   for (let y = 0; y < radius; y++) {
     const inset = Math.ceil(radius - Math.sqrt(radius * radius - (radius - y - 0.5) ** 2));
@@ -857,13 +858,14 @@ function showLibraryWindow(kind, toggle = false) {
   win = new BrowserWindow({
     width:kind === 'asset' ? 1200 : 1050, height:760, minWidth:720, minHeight:500,
     title:kind === 'asset' ? '资产库' : '提示词库', show:false, frame:false,
-    transparent:true, backgroundColor:'#00000000', thickFrame:true,
+    transparent:true, backgroundColor:'#00000000', thickFrame:false, hasShadow:false,
     icon:path.join(__dirname, '..', 'assets', 'rocket.ico'),
     webPreferences:{contextIsolation:true, nodeIntegration:false, sandbox:false, webSecurity:true, allowRunningInsecureContent:false, preload:path.join(__dirname,'preload.js')}
   });
   libraryWindows[kind] = win;
   if (process.platform === 'win32') {
-    try { win.setBackgroundMaterial('acrylic'); } catch {}
+    // DWM acrylic paints an opaque rectangular backdrop outside a transparent HWND's region.
+    // Keep the native surface transparent; the renderer owns the complete glass material.
     applyLibraryWindowShape(win);
     win.on('resize', ()=>applyLibraryWindowShape(win));
   }
@@ -1026,6 +1028,7 @@ function readConfig() {
 }
 function saveConfig(partial) {
   const next = { ...readConfig(), ...partial };
+  next.liquid_glass = normalizeLiquidGlass(next.liquid_glass);
   if (next.api_endpoint) next.api_endpoint = normalizeImageApiEndpoint(next.api_endpoint);
   next.announcement_url = normalizeAnnouncementUrl(next.announcement_url || DEFAULT_CONFIG.announcement_url);
   next.announcement_custom_title = String(next.announcement_custom_title || '').slice(0, 120);
@@ -1167,6 +1170,7 @@ function getDeviceOwner(req, parsed) {
 }
 function configForClient(cfg, local, publicHost) {
   const out = { ...cfg };
+  out.liquid_glass = normalizeLiquidGlass(cfg.liquid_glass);
   if (!local) {
     // 局域网/公网访问端必须手动填写本设备 API Key；绝不下发主机端 API Key。
     out.api_key = '';

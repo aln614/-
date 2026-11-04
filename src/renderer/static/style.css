@@ -4470,19 +4470,17 @@ body.theme-dark *::-webkit-scrollbar-thumb:hover{
 
 body.standalone-library .app-shell,body.standalone-library .panel-restore{display:none!important}
 html:has(body.standalone-library),body.standalone-library,body[data-skin].standalone-library,body[data-skin].theme-dark.standalone-library{background:transparent!important}
-body.standalone-library .asset-library-window,body.standalone-library .prompt-library-window{position:fixed!important;left:0!important;top:0!important;width:100vw!important;height:100vh!important;max-width:none!important;max-height:none!important;border-radius:16px!important}
+body.standalone-library{overflow:hidden!important}
+body.standalone-library .asset-library-window,body.standalone-library .prompt-library-window{position:fixed!important;left:0!important;top:0!important;width:100vw!important;height:100vh!important;max-width:none!important;max-height:none!important;border-radius:20px!important}
 body.standalone-library .chat-floating-resize{display:block!important;z-index:12}
 body.standalone-library .asset-library-head,body.standalone-library .prompt-library-head{-webkit-app-region:drag;cursor:move;user-select:none}
 body.standalone-library .asset-library-head button,body.standalone-library .asset-library-head input,body.standalone-library .prompt-library-head button,body.standalone-library .prompt-library-head input,body.standalone-library .prompt-library-head select,body.standalone-library .chat-floating-resize{-webkit-app-region:no-drag}
 
 /* Liquid glass keeps the working controls sharp above the refracted backdrop. */
-.liquid-glass-warp,.desktop-window-controls{display:none}
+.desktop-window-controls{display:none}
 body.desktop-shell .topbar.glass{position:relative;overflow:hidden;-webkit-app-region:drag;isolation:isolate}
 body.desktop-shell .topbar .skin-brand-shell,body.desktop-shell .topbar .top-status,body.desktop-shell .desktop-window-controls{position:relative;z-index:1}
 body.desktop-shell .topbar button,body.desktop-shell .topbar input,body.desktop-shell .topbar select{-webkit-app-region:no-drag}
-body.desktop-shell .liquid-glass-warp{display:block;position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:linear-gradient(135deg,rgba(255,255,255,.16),rgba(255,255,255,.02) 55%,rgba(255,255,255,.10));backdrop-filter:blur(12px) saturate(145%);-webkit-backdrop-filter:blur(12px) saturate(145%);box-shadow:inset 0 1px 1px rgba(255,255,255,.6),inset 0 -1px 1px rgba(88,115,145,.15)}
-body.desktop-shell.liquid-refraction-ready .liquid-glass-warp{filter:url(#tenying-liquid-refraction)}
-body.desktop-shell.theme-dark .liquid-glass-warp{background:linear-gradient(135deg,rgba(255,255,255,.10),rgba(255,255,255,.015) 60%,rgba(255,255,255,.04));box-shadow:inset 0 1px 1px rgba(255,255,255,.18),inset 0 -1px 1px rgba(0,0,0,.25)}
 body.desktop-shell .top-status{min-width:0;flex-wrap:nowrap;align-items:center}
 body.desktop-shell #lanState{white-space:nowrap}
 body.desktop-shell .desktop-window-controls{display:flex;align-items:center;gap:3px;flex:none;margin-left:8px;-webkit-app-region:no-drag}
@@ -4494,8 +4492,6 @@ body.desktop-shell .window-restore-icon,body.desktop-shell .is-maximized .window
 body.desktop-shell .is-maximized .window-restore-icon{display:block}
 body.desktop-shell.theme-dark .desktop-window-controls button{background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.14);box-shadow:inset 0 1px 0 rgba(255,255,255,.12)}
 body.desktop-shell.theme-dark .desktop-window-controls button:hover{background:rgba(255,255,255,.18)}
-body.desktop-shell #page-home .card{background:linear-gradient(145deg,rgba(255,255,255,.84),rgba(255,255,255,.68))!important;border:1px solid rgba(255,255,255,.7)!important;box-shadow:0 10px 30px rgba(37,49,70,.09),inset 0 1px 0 rgba(255,255,255,.9)!important}
-body.desktop-shell.theme-dark #page-home .card{background:linear-gradient(145deg,rgba(30,39,54,.88),rgba(20,28,40,.78))!important;border-color:rgba(255,255,255,.12)!important;box-shadow:0 10px 30px rgba(0,0,0,.22),inset 0 1px 0 rgba(255,255,255,.1)!important}
 body.desktop-shell .topbar .pill,body.desktop-shell .nav.active{box-shadow:0 5px 16px rgba(38,58,75,.08),inset 0 1px 1px rgba(255,255,255,.8),inset 0 -1px 2px rgba(102,144,169,.16)!important}
 body.desktop-shell .topbar button:active,body.desktop-shell .nav:active{transform:scale(.97)!important}
 body.desktop-shell .right-panel .stats>div{background:linear-gradient(145deg,rgba(255,255,255,.72),rgba(255,255,255,.42))!important;border:1px solid rgba(255,255,255,.65);box-shadow:0 8px 22px rgba(30,48,70,.07),inset 0 1px 0 rgba(255,255,255,.85)}
@@ -4503,15 +4499,48 @@ body.desktop-shell.theme-dark .right-panel .stats>div{background:linear-gradient
 @media (max-width:1350px){body.desktop-shell #lanState{max-width:170px;overflow:hidden;text-overflow:ellipsis}body.desktop-shell .top-status{gap:4px}}
 @media (prefers-reduced-motion:reduce){body.desktop-shell .topbar button,body.desktop-shell .nav{transition:none!important}}
 
-/* The React component is an inert backdrop; existing controls stay above it. */
-.liquid-glass-mount{display:none;position:absolute;inset:0;pointer-events:none;overflow:hidden;border-radius:inherit;z-index:0}
-body.desktop-shell .liquid-glass-mount,body.standalone-library .liquid-glass-mount{display:block}
-.asset-library-head,.prompt-library-head{position:relative;isolation:isolate}
-.asset-library-head>*,.prompt-library-head>*{position:relative;z-index:1}
-.asset-library-head>.liquid-glass-mount,.prompt-library-head>.liquid-glass-mount{position:absolute;z-index:0;margin:0}
-.liquid-glass-mount>div{position:absolute!important}
-.liquid-glass-mount .glass{width:100%;height:100%;background:rgba(255,255,255,.05);border:0;box-shadow:none!important;backdrop-filter:none}
-.liquid-glass-mount .glass__warp{display:block!important;margin:0!important;background:rgba(255,255,255,.05)}
+/* Only the backdrop is refracted. Text, media and hit targets remain in their original DOM. */
+:root{--liquid-opacity:.48;--liquid-tint:255,255,255}
+body.theme-dark{--liquid-tint:24,26,32}
+.liquid-static-host{position:relative}
+[data-liquid-surface]{isolation:isolate}
+body.liquid-glass-enabled .liquid-surface-active[data-liquid-surface],
+body.liquid-glass-enabled[data-skin] .liquid-surface-active[data-liquid-surface]{
+  background:transparent!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;
+}
+.liquid-glass-mount{position:absolute!important;inset:0;display:block;margin:0!important;padding:0!important;overflow:hidden;border-radius:inherit;z-index:-1;pointer-events:none!important}
+.liquid-glass-mount *{pointer-events:none!important}
+.liquid-react-layer{position:absolute;inset:0}
+.liquid-react-layer>span{opacity:.28!important}
+.liquid-react-layer>div,.liquid-react-layer>span{position:absolute!important}
+.liquid-react-layer>.bg-black{display:none!important}
+body .liquid-glass-mount .glass{
+  display:block!important;width:100%!important;height:100%!important;min-width:0!important;min-height:0!important;
+  padding:0!important;margin:0!important;background:transparent!important;border:0!important;
+  box-shadow:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;transition:none!important;
+}
+/* Electron cannot compose the upstream filter + backdrop-filter nesting correctly.
+   Reuse the component's SVG optics directly on the sampled backdrop instead. */
+body .liquid-glass-mount .glass__warp{display:none!important}
+.liquid-backdrop{
+  position:absolute;inset:0;border-radius:inherit;z-index:-1;pointer-events:none!important;
+  background:rgba(var(--liquid-tint),var(--liquid-opacity))!important;
+  backdrop-filter:blur(var(--liquid-blur,6px)) saturate(var(--liquid-saturation,140%)) var(--liquid-refraction,blur(0px))!important;
+  -webkit-backdrop-filter:blur(var(--liquid-blur,6px)) saturate(var(--liquid-saturation,140%)) var(--liquid-refraction,blur(0px))!important;
+}
+#previewModal{--liquid-tint:18,20,26}
+#previewInfo{--liquid-tint:255,255,255}
+#previewModal .preview-toolbar{--liquid-tint:18,20,26}
+body.theme-dark #previewInfo{--liquid-tint:24,26,32}
+#previewModal>.liquid-glass-mount,#previewModal>.liquid-backdrop{border-radius:0}
+body.liquid-glass-enabled #previewModal.liquid-surface-active{background:rgba(0,0,0,.22)!important}
+body.liquid-glass-enabled .preview-info{color:#151a20}
+body.liquid-glass-enabled .preview-info-row b,body.liquid-glass-enabled .preview-prompt-box b{color:#374454}
+body.theme-dark.liquid-glass-enabled .preview-info{color:#f5f5f7}
+body.theme-dark.liquid-glass-enabled .preview-info-row b,body.theme-dark.liquid-glass-enabled .preview-prompt-box b{color:#c1cad6}
+body.standalone-library .asset-library-window,body.standalone-library .prompt-library-window{box-shadow:inset 0 1px 0 rgba(255,255,255,.5)!important}
+body.liquid-glass-enabled .asset-library-head,body.liquid-glass-enabled .prompt-library-head{background:rgba(var(--liquid-tint),.12);border-bottom:1px solid rgba(128,140,155,.18)}
+body.liquid-glass-enabled .asset-card,body.liquid-glass-enabled .pl-card{background:rgba(var(--liquid-tint),.72)!important}
 body.desktop-shell .top-status{justify-content:center;flex:1;overflow:hidden}
 body.desktop-shell .skin-brand-shell{flex:none}
 .liquid-settings{margin:18px 0;padding:16px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}

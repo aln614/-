@@ -1,65 +1,125 @@
-import React from 'react';
+import React, {useLayoutEffect,useRef} from 'react';
 import { createRoot } from 'react-dom/client';
+import { createPortal } from 'react-dom';
 import LiquidGlass from 'liquid-glass-react';
+import glassSettings from '../services/liquidGlassSettings';
 
-const key = 'tenying-liquid-glass-settings';
-const defaults = { enabled:true, displacementScale:70, blurAmount:0.0625, saturation:140, aberrationIntensity:2 };
-const controls = { displacementScale:'liquidDisplacement', blurAmount:'liquidBlur', saturation:'liquidSaturation', aberrationIntensity:'liquidAberration' };
-const limits = { displacementScale:[0,150], blurAmount:[0,1], saturation:[50,250], aberrationIntensity:[0,10] };
-const clamp = (value, fallback, [min,max]) => Number.isFinite(Number(value)) ? Math.max(min,Math.min(max,Number(value))) : fallback;
-function normalize(value = {}) {
-  if (!value || typeof value !== 'object') value = {};
-  const result = { enabled:value.enabled !== false };
-  for (const name of Object.keys(controls)) result[name] = clamp(value[name] ?? defaults[name], defaults[name], limits[name]);
-  return result;
-}
+const {DEFAULT_LIQUID_GLASS:defaults,normalizeLiquidGlass:normalize}=glassSettings;
+const key='tenying-liquid-glass-settings';
+const controls={displacementScale:'liquidDisplacement',blurAmount:'liquidBlur',saturation:'liquidSaturation',aberrationIntensity:'liquidAberration',surfaceOpacity:'liquidOpacity'};
+const selector=[
+  '.topbar','.sidebar','.right-panel','.bottom-log','.page > .card','.page > .grid > .card',
+  '.asset-library-window','.prompt-library-window','.chat-floating-window','.announcement-panel',
+  '#previewModal','.preview-toolbar','.preview-info','.video-preview-info',
+  '.api-balance-dialog','.recent-audio-preview-card','.danger-confirm-card'
+].join(',');
 function stored() {
-  try { return normalize(JSON.parse(localStorage.getItem(key) || '{}')); } catch { return {...defaults}; }
+  try { const value=localStorage.getItem(key); return value ? normalize(JSON.parse(value)) : null; } catch { return null; }
 }
-let settings = stored();
-const mounts = [];
-for (const selector of ['.topbar .liquid-glass-mount','#assetLibraryHead','#promptLibraryHead']) {
-  const target = document.querySelector(selector);
-  if (!target) continue;
-  let mount = target;
-  if (!target.classList.contains('liquid-glass-mount')) {
-    mount = document.createElement('span');
-    mount.className = 'liquid-glass-mount';
-    mount.setAttribute('aria-hidden','true');
-    target.prepend(mount);
+let settings=stored() || {...defaults};
+const surfaces=new Map();
+let frame=0;
+const visibility=new IntersectionObserver(entries=>{
+  for(const item of entries) {
+    const surface=surfaces.get(item.target);
+    if(surface) { surface.visible=item.isIntersecting; renderSurface(surface); }
   }
-  mounts.push(createRoot(mount));
+});
+const resize=new ResizeObserver(entries=>{
+  for(const item of entries) {
+    const surface=surfaces.get(item.target);
+    if(surface) { surface.width=Math.round(item.contentRect.width);surface.height=Math.round(item.contentRect.height);renderSurface(surface); }
+  }
+});
+
+function GlassSurface({host,...props}) {
+  const layer=useRef(null);
+  useLayoutEffect(()=>{
+    const warp=layer.current?.querySelector('.glass__warp');
+    const backdrop=host.querySelector(':scope > .liquid-backdrop');
+    if(warp) {
+      const match=warp.style.filter.match(/url\(["']?#([^)"']+)/);
+      if(match && backdrop) backdrop.style.setProperty('--liquid-refraction',`url("#${match[1]}")`);
+    }
+  },[]);
+  return <><div ref={layer} className="liquid-react-layer"><LiquidGlass {...props} /></div>{createPortal(<div className="liquid-backdrop" aria-hidden="true" />,host)}</>;
 }
+
+function renderSurface(surface) {
+  const active=settings.enabled && surface.visible && surface.width>0 && surface.height>0;
+  const radius=parseFloat(getComputedStyle(surface.host).borderTopLeftRadius) || 0;
+  const signature=JSON.stringify([active,settings,radius,surface.width,surface.height]);
+  if(surface.signature===signature) return;
+  surface.signature=signature;
+  surface.host.classList.toggle('liquid-surface-active',active);
+  const {enabled,surfaceOpacity,...props}=settings;
+  // The library measures on mount/window resize; remount on container-only resizes too.
+  surface.root.render(active ? <GlassSurface host={surface.host} key={surface.width+'x'+surface.height} {...props} overLight={false} cornerRadius={radius} elasticity={0} padding="0" style={{position:'absolute',top:'50%',left:'50%',width:'100%',height:'100%'}} /> : null);
+}
+function discoverSurfaces() {
+  frame=0;
+  for(const [host,surface] of surfaces) if(!host.isConnected) {
+    surface.root.unmount();visibility.unobserve(host);resize.unobserve(host);surfaces.delete(host);
+  }
+  for(const host of document.querySelectorAll(selector)) {
+    if(surfaces.has(host) || host.closest('.liquid-glass-mount')) continue;
+    host.dataset.liquidSurface='';
+    if(getComputedStyle(host).position==='static') host.classList.add('liquid-static-host');
+    const mount=document.createElement('div');
+    mount.className='liquid-glass-mount';
+    mount.setAttribute('aria-hidden','true');
+    host.prepend(mount);
+    const surface={host,root:createRoot(mount),width:0,height:0,visible:false,signature:''};
+    surfaces.set(host,surface);visibility.observe(host);resize.observe(host);
+  }
+}
+function scheduleDiscover() { if(!frame) frame=requestAnimationFrame(discoverSurfaces); }
+new MutationObserver(records=>{
+  if(records.some(record=>!record.target.closest?.('.liquid-glass-mount'))) scheduleDiscover();
+}).observe(document.body,{subtree:true,childList:true});
 function render() {
   document.body.classList.toggle('liquid-glass-enabled',settings.enabled);
-  for (const root of mounts) root.render(settings.enabled ? <LiquidGlass {...settings} cornerRadius={16} elasticity={0} padding="0" style={{position:'absolute',top:'50%',left:'50%',width:'100%',height:'100%'}} /> : null);
-  const enabled = document.getElementById('liquidEnabled');
-  if (enabled) enabled.checked = settings.enabled;
-  for (const [name,id] of Object.entries(controls)) {
-    const input = document.getElementById(id);
-    if (input) { input.value = settings[name]; input.disabled = !settings.enabled; }
-    const output = document.getElementById(id+'Value');
-    if (output) output.textContent = String(settings[name]);
+  document.documentElement.style.setProperty('--liquid-opacity',settings.surfaceOpacity);
+  document.documentElement.style.setProperty('--liquid-blur',(4+settings.blurAmount*32)+'px');
+  document.documentElement.style.setProperty('--liquid-saturation',settings.saturation+'%');
+  for(const surface of surfaces.values()) renderSurface(surface);
+  const enabled=document.getElementById('liquidEnabled');
+  if(enabled) enabled.checked=settings.enabled;
+  for(const [name,id] of Object.entries(controls)) {
+    const input=document.getElementById(id);
+    if(input) { input.value=settings[name];input.disabled=!settings.enabled; }
+    const output=document.getElementById(id+'Value');
+    if(output) output.textContent=name==='surfaceOpacity' ? Math.round(settings[name]*100)+'%' : String(settings[name]);
   }
 }
-function publish() {
+function status(text) { const element=document.getElementById('liquidSaveStatus');if(element) element.textContent=text; }
+function publish(dirty=false) {
   try { localStorage.setItem(key,JSON.stringify(settings)); } catch {}
+  if(dirty) status('未保存');
   render();
 }
-document.getElementById('liquidEnabled')?.addEventListener('change',e=>{ settings.enabled=e.target.checked; publish(); });
-for (const [name,id] of Object.entries(controls)) document.getElementById(id)?.addEventListener('input',e=>{ settings=normalize({...settings,[name]:e.target.value}); publish(); });
-document.getElementById('liquidReset')?.addEventListener('click',()=>{settings={...defaults}; publish();});
-document.getElementById('liquidSave')?.addEventListener('click',async()=>{
-  const status=document.getElementById('liquidSaveStatus');
+document.getElementById('liquidEnabled')?.addEventListener('change',e=>{settings.enabled=e.target.checked;publish(true);});
+for(const [name,id] of Object.entries(controls)) document.getElementById(id)?.addEventListener('input',e=>{settings=normalize({...settings,[name]:e.target.value});publish(true);});
+document.getElementById('liquidReset')?.addEventListener('click',()=>{settings={...defaults};publish(true);});
+document.getElementById('liquidSave')?.addEventListener('click',async e=>{
+  const snapshot={...settings},button=e.currentTarget;
+  button.disabled=true;status('保存中');
   try {
-    const response=await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({liquid_glass:settings})});
-    if(!response.ok) throw new Error('save failed');
-    if(status) status.textContent='已保存';
-  } catch { if(status) status.textContent='保存失败，请重试'; }
+    const response=await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({liquid_glass:snapshot})});
+    const result=await response.json();
+    if(!response.ok || result.ok===false) throw new Error('save failed');
+    status(JSON.stringify(snapshot)===JSON.stringify(settings) ? '已保存' : '未保存');
+  } catch { status('保存失败，请重试'); }
+  finally { button.disabled=false; }
 });
-window.addEventListener('storage',e=>{ if(e.key===key){settings=stored(); render();} });
-window.liquidGlassSettings = {
+window.addEventListener('storage',e=>{if(e.key===key){settings=stored() || {...defaults};render();}});
+document.addEventListener('visibilitychange',()=>{for(const surface of surfaces.values()) renderSurface(surface);});
+new MutationObserver(()=>{for(const surface of surfaces.values()) renderSurface(surface);}).observe(document.body,{attributes:true,attributeFilter:['class','data-skin']});
+window.liquidGlassSettings={
   get:()=>({...settings}),
-  load:value=>{ if(!new URLSearchParams(location.search).has('library')) {settings=normalize(value); publish();} }
+  load:value=>{
+    settings=new URLSearchParams(location.search).has('library') ? (stored() || normalize(value)) : normalize(value);
+    publish();
+  }
 };
-render();
+discoverSurfaces();render();

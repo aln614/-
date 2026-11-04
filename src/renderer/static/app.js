@@ -4,6 +4,7 @@ let mainImages = [];
 let refImages = [];
 let imagePromptMentions = null;
 const standaloneLibrary = window.libraryPanel ? new URLSearchParams(location.search).get('library') : '';
+if(['asset','prompt'].includes(standaloneLibrary)) document.body.classList.add('standalone-library', `standalone-${standaloneLibrary}`);
 if(window.mainWindowControls && !standaloneLibrary && !window.lanClient){
   document.body.classList.add('desktop-shell');
   const updateWindowState = state=>{

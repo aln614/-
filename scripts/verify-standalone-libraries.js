@@ -20,12 +20,13 @@ fs.writeFileSync(path.join(data, 'config.json'), JSON.stringify({
   let instance;
   try {
     const testEnv={...process.env, APPDATA:temporary, LOCALAPPDATA:temporary, LOCAL_API_IMAGE_GENERATOR_DATA_DIR:data};
-    instance = await electron.launch({executablePath:require('electron'), args:[root,'--background'], env:testEnv});
+    const packaged=process.env.GLASS_TEST_PACKAGED;
+    instance = await electron.launch({executablePath:packaged || require('electron'), args:packaged ? ['--background'] : [root,'--background'], env:testEnv});
     const main = await instance.firstWindow();
     await main.waitForURL('http://127.0.0.1:18768/**', {timeout:30000});
     await main.waitForFunction(()=>window.libraryPanel && document.querySelector('#assetLibraryBtn'));
     assert.equal(await instance.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].isVisible()), false, 'Background startup hides the main window');
-    const second = spawn(require('electron'), [root], {env:testEnv,windowsHide:true,stdio:'ignore'});
+    const second = spawn(packaged || require('electron'), packaged ? [] : [root], {env:testEnv,windowsHide:true,stdio:'ignore'});
     const secondExit = await Promise.race([
       new Promise((resolve,reject)=>{second.once('error',reject);second.once('exit',resolve);}),
       new Promise((_,reject)=>{const timer=setTimeout(()=>{second.kill();reject(new Error('Second instance did not exit'));},10000);timer.unref();})
@@ -34,7 +35,7 @@ fs.writeFileSync(path.join(data, 'config.json'), JSON.stringify({
     await main.waitForFunction(()=>!document.hidden);
     assert.equal(await instance.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].isVisible()),true,'A second launch restores the original main window');
     await main.waitForFunction(()=>document.body.classList.contains('desktop-shell') && document.querySelector('.topbar .glass__warp'));
-    assert.match(await main.locator('.topbar .glass__warp').evaluate(el=>getComputedStyle(el).filter),/url\(/,'The installed glass component must use a refraction filter');
+    assert.match(await main.locator('.topbar .liquid-backdrop').evaluate(el=>getComputedStyle(el).backdropFilter),/url\(/,'The installed glass component must refract the actual backdrop');
     await main.evaluate(()=>{const slider=document.querySelector('#liquidDisplacement');slider.value='95';slider.dispatchEvent(new Event('input',{bubbles:true}));});
     await main.waitForFunction(()=>document.querySelector('.topbar feDisplacementMap')?.getAttribute('scale')==='-95');
     assert.equal(await main.locator('.topbar').evaluate(el=>getComputedStyle(el).webkitAppRegion),'drag','The main glass header must drag the native window');
@@ -110,7 +111,7 @@ fs.writeFileSync(path.join(data, 'config.json'), JSON.stringify({
     const asset = await waitForLibrary('asset');
     assert.ok(asset, 'Asset library opens in a separate native window');
     await asset.waitForSelector('body.standalone-asset #assetLibraryLayer.active', {timeout:15000});
-    await asset.waitForFunction(()=>document.querySelector('#assetLibraryHead feDisplacementMap')?.getAttribute('scale')==='-95');
+    await asset.waitForFunction(()=>document.querySelector('#assetLibraryWindow > .liquid-glass-mount feDisplacementMap')?.getAttribute('scale')==='-95');
     await asset.getByText('fixture.png',{exact:true}).waitFor();
     const appearance=await instance.evaluate(({BrowserWindow})=>{
       const win=BrowserWindow.getAllWindows().find(item=>item.webContents.getURL().includes('library=asset'));
@@ -142,7 +143,7 @@ fs.writeFileSync(path.join(data, 'config.json'), JSON.stringify({
     await asset.mouse.down(); await asset.mouse.move(grip.x+grip.width/2+80,grip.y+grip.height/2+50,{steps:4}); await asset.mouse.up();
     await asset.waitForTimeout(150);
     const resized=await instance.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().find(item=>item.webContents.getURL().includes('library=asset')).getBounds());
-    assert.ok(resized.width > appearance.bounds.width && resized.height > appearance.bounds.height,'The resize grip must change the native window size');
+    assert.ok(resized.width > appearance.bounds.width && resized.height > appearance.bounds.height,`The resize grip must change the native window size: ${JSON.stringify({before:appearance.bounds,after:resized,grip,element:await handle.evaluate(el=>{const r=el.getBoundingClientRect();return document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)?.outerHTML.slice(0,160)})})}`);
     const resizedShape=await instance.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().find(item=>item.webContents.getURL().includes('library=asset')).__testShape);
     assert.equal(inside(resizedShape,resized.width-1,resized.height-1),false,'Rounded clipping must follow the resized window');
     assert.equal(inside(resizedShape,resized.width/2,resized.height/2),true);
@@ -150,6 +151,9 @@ fs.writeFileSync(path.join(data, 'config.json'), JSON.stringify({
     await asset.screenshot({path:path.join(root,'test-results','standalone-asset-library.png')});
     await asset.locator('.asset-card').first().click();
     await asset.locator('#previewModal.active').waitFor();
+    await asset.locator('#previewModal > .liquid-backdrop').waitFor({state:'attached'});
+    await asset.locator('#previewInfo > .liquid-backdrop').waitFor({state:'attached'});
+    await asset.screenshot({path:path.join(root,'test-results','liquid-glass-image-preview.png')});
     await asset.evaluate(()=>closePreview());
     const size = await asset.locator('#assetLibraryWindow').evaluate(el=>{const r=el.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height,innerWidth,innerHeight};});
     assert.equal(size.x,0); assert.equal(size.y,0); assert.equal(size.width,size.innerWidth); assert.equal(size.height,size.innerHeight);
