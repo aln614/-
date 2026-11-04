@@ -4475,14 +4475,16 @@ body.standalone-library{overflow:hidden!important;background-attachment:fixed!im
 body.standalone-library.library-backdrop-ready{background-image:var(--library-backdrop-image)!important;background-size:var(--library-backdrop-size)!important;background-position:var(--library-backdrop-position)!important;background-repeat:no-repeat!important}
 body.standalone-library .asset-library-window,body.standalone-library .prompt-library-window{position:fixed!important;left:0!important;top:0!important;width:100vw!important;height:100vh!important;max-width:none!important;max-height:none!important;border-radius:20px!important}
 body.standalone-library .chat-floating-resize{display:block!important;z-index:12}
-body.standalone-library .asset-library-head,body.standalone-library .prompt-library-head{-webkit-app-region:drag;cursor:move;user-select:none}
-body.standalone-library .asset-library-head button,body.standalone-library .asset-library-head input,body.standalone-library .prompt-library-head button,body.standalone-library .prompt-library-head input,body.standalone-library .prompt-library-head select,body.standalone-library .chat-floating-resize{-webkit-app-region:no-drag}
+body.standalone-library .asset-library-head,body.standalone-library .prompt-library-head{-webkit-app-region:no-drag;cursor:default;user-select:none}
+body.standalone-library .asset-library-drag-region,body.standalone-library .prompt-library-drag-region{-webkit-app-region:drag;cursor:move;user-select:none}
+body.standalone-library .asset-library-head button,body.standalone-library .asset-library-head input,body.standalone-library .asset-library-head select,body.standalone-library .prompt-library-head button,body.standalone-library .prompt-library-head input,body.standalone-library .prompt-library-head select,body.standalone-library .chat-floating-resize{-webkit-app-region:no-drag;pointer-events:auto!important}
 
 /* Liquid glass keeps the working controls sharp above the refracted backdrop. */
 .desktop-window-controls{display:none}
-body.desktop-shell .topbar.glass{position:relative;overflow:hidden;-webkit-app-region:drag;isolation:isolate}
+body.desktop-shell .topbar.glass{position:relative;overflow:hidden;-webkit-app-region:no-drag;isolation:isolate}
 body.desktop-shell .topbar .skin-brand-shell,body.desktop-shell .topbar .top-status,body.desktop-shell .desktop-window-controls{position:relative;z-index:1}
-body.desktop-shell .topbar button,body.desktop-shell .topbar input,body.desktop-shell .topbar select{-webkit-app-region:no-drag}
+body.desktop-shell .topbar .window-drag-region{-webkit-app-region:drag;cursor:move;user-select:none}
+body.desktop-shell .topbar button,body.desktop-shell .topbar input,body.desktop-shell .topbar select,body.desktop-shell .topbar .top-status,body.desktop-shell .desktop-window-controls{-webkit-app-region:no-drag;pointer-events:auto!important}
 body.desktop-shell .top-status{min-width:0;flex-wrap:nowrap;align-items:center}
 body.desktop-shell #lanState{white-space:nowrap}
 body.desktop-shell .desktop-window-controls{display:flex;align-items:center;gap:3px;flex:none;margin-left:8px;-webkit-app-region:no-drag}
@@ -4577,8 +4579,11 @@ body.liquid-glass-enabled .preview-info{color:#151a20}
 body.liquid-glass-enabled .preview-info-row b,body.liquid-glass-enabled .preview-prompt-box b{color:#374454}
 body.theme-dark.liquid-glass-enabled .preview-info{color:#f5f5f7}
 body.theme-dark.liquid-glass-enabled .preview-info-row b,body.theme-dark.liquid-glass-enabled .preview-prompt-box b{color:#c1cad6}
-body.standalone-library .asset-library-window,body.standalone-library .prompt-library-window{box-shadow:inset 0 1px 0 rgba(255,255,255,.5)!important}
+body.standalone-library .asset-library-window,body.standalone-library .prompt-library-window{border:0!important;outline:0!important;box-shadow:none!important}
 body.liquid-glass-enabled .asset-library-head,body.liquid-glass-enabled .prompt-library-head{background:rgba(var(--liquid-tint),.12);border-bottom:1px solid rgba(128,140,155,.18)}
+body.standalone-library.liquid-glass-enabled .asset-library-head,body.standalone-library.liquid-glass-enabled .prompt-library-head{border-bottom:0!important;box-shadow:none!important}
+body.desktop-shell #previewModal,body.desktop-shell #previewModal *,body.standalone-library #previewModal,body.standalone-library #previewModal *{-webkit-app-region:no-drag!important}
+#previewModal .preview-toolbar,#previewModal .preview-toolbar *,#previewModal .modal-close{pointer-events:auto!important;-webkit-app-region:no-drag!important}
 body.liquid-glass-enabled .asset-card,body.liquid-glass-enabled .pl-card{background:rgba(var(--liquid-tint),.72)!important}
 body.desktop-shell .top-status{justify-content:center;flex:1;overflow:hidden}
 body.desktop-shell .skin-brand-shell{flex:none}

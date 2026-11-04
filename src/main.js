@@ -869,11 +869,17 @@ function sendLibraryBackdrop(kind, includeImage = false) {
 }
 
 function scheduleLibraryBackdrop(kind) {
-  if(libraryBackdropTimers[kind]) return;
+  clearTimeout(libraryBackdropTimers[kind]);
   libraryBackdropTimers[kind]=setTimeout(()=>{
     libraryBackdropTimers[kind]=null;
     sendLibraryBackdrop(kind);
-  },32);
+  },160);
+}
+
+function flushLibraryBackdrop(kind) {
+  clearTimeout(libraryBackdropTimers[kind]);
+  libraryBackdropTimers[kind]=null;
+  sendLibraryBackdrop(kind);
 }
 
 function captureLibraryBackdrop(kind) {
@@ -932,6 +938,7 @@ function showLibraryWindow(kind, toggle = false) {
     applyLibraryWindowShape(win);
     win.on('resize', ()=>applyLibraryWindowShape(win));
     win.on('move', ()=>scheduleLibraryBackdrop(kind));
+    win.on('moved', ()=>flushLibraryBackdrop(kind));
   }
   setupImageContextMenu(win);
   win.webContents.setWindowOpenHandler(({url:target})=>{

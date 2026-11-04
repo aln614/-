@@ -4,12 +4,12 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>TENYING_AI 1.0</title>
-  <link rel="stylesheet" href="/static/style.css?v=1.0.119" />
+  <link rel="stylesheet" href="/static/style.css?v=1.0.120" />
 </head>
 <body>
   <div class="app-shell">
     <header class="topbar glass">
-      <div class="skin-brand-shell">
+      <div class="skin-brand-shell window-drag-region" title="拖动窗口">
         <div class="skin-mascot-avatar" id="skinMascotAvatar" aria-label="当前皮肤助手"></div>
         <div>
           <div class="brand" id="appBrand">TENYING_AI 1.0</div>
@@ -733,7 +733,7 @@
   <div class="prompt-library-layer" id="promptLibraryLayer">
     <div class="prompt-library-window glass" id="promptLibraryWindow">
       <div class="prompt-library-head" id="promptLibraryHead">
-        <strong>提示词库</strong>
+        <strong class="prompt-library-drag-region" title="拖动窗口">提示词库</strong>
         <input id="promptLibrarySearch" placeholder="搜索模板标题、内容、标签..." />
         <select id="promptLibraryTypeFilter"><option value="">全部类型</option><option>文生图</option><option>图生图</option><option>图生视频</option><option>首帧/尾帧</option><option>AI聊天</option><option>通用</option></select>
         <div class="prompt-library-actions"><button class="secondary" id="newPromptLibraryTemplateBtn">+ 新建模板</button><button class="chat-window-min" id="minimizePromptLibraryWindow" title="缩小成图标"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg></button><button class="chat-window-close" id="closePromptLibraryWindow" title="关闭"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg></button></div>
@@ -769,7 +769,7 @@
   <div class="asset-library-layer" id="assetLibraryLayer">
     <div class="asset-library-window glass" id="assetLibraryWindow">
       <div class="asset-library-head" id="assetLibraryHead">
-        <div><strong>资产库</strong><span id="assetLibrarySub">素材分组管理</span></div>
+        <div class="asset-library-drag-region" title="拖动窗口"><strong>资产库</strong><span id="assetLibrarySub">素材分组管理</span></div>
         <div class="asset-library-tools">
           <button class="asset-search-all-btn" id="assetSearchAllBtn" type="button" title="搜索全部资产" aria-label="搜索全部资产" aria-pressed="false">全</button>
           <input id="assetLibrarySearch" placeholder="搜索素材" />
@@ -1053,7 +1053,7 @@
   <script src="/static/agent-stream.js?v=1.0.107"></script>
   <script src="/static/prompt-mention-core.js?v=1.0.109"></script>
   <script src="/static/prompt-mentions.js?v=1.0.109"></script>
-  <script src="/static/liquid-glass-bundle.js?v=1.0.119"></script>
-  <script src="/static/app.js?v=1.0.119"></script>
+  <script src="/static/liquid-glass-bundle.js?v=1.0.120"></script>
+  <script src="/static/app.js?v=1.0.120"></script>
 </body>
 </html>
