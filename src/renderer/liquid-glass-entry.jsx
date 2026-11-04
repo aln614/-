@@ -19,6 +19,7 @@ function stored() {
 }
 let settings=stored() || {...defaults};
 const surfaces=new Map();
+const candidates=new Set();
 const pendingHosts=new Set();
 let frame=0;
 let motionTimer=0;
@@ -78,6 +79,7 @@ function renderSurface(surface) {
       backdrop.className='liquid-backdrop liquid-backdrop-static';
       backdrop.setAttribute('aria-hidden','true');
       surface.host.prepend(backdrop);
+      if(standaloneLibrary) window.dispatchEvent(new Event('library-backdrop-ready'));
     } else if(!active) backdrop?.remove();
     return;
   }
@@ -100,20 +102,20 @@ function hostDisplayed(host) {
 }
 function collectHosts(node) {
   if(node.nodeType!==1 || node.closest('.liquid-glass-mount,.liquid-backdrop')) return;
-  const collect=host=>{if(hostDisplayed(host))pendingHosts.add(host);else removeSurface(host);};
+  const collect=host=>{candidates.add(host);pendingHosts.add(host);};
   if(node.matches(selector)) collect(node);
   for(const host of node.querySelectorAll(selector)) collect(host);
 }
 function discoverSurfaces() {
   frame=0;
-  for(const [host,surface] of surfaces) if(!host.isConnected) {
-    removeSurface(host);
-  }
+  for(const host of candidates) if(!host.isConnected) {removeSurface(host);candidates.delete(host);}
   for(const host of pendingHosts) {
-    if(!host.isConnected || surfaces.has(host) || host.closest('.liquid-glass-mount')) continue;
+    if(!host.isConnected || host.closest('.liquid-glass-mount')) continue;
+    if(!hostDisplayed(host)) {removeSurface(host);continue;}
+    if(surfaces.has(host)) continue;
     host.dataset.liquidSurface='';
     if(getComputedStyle(host).position==='static') host.classList.add('liquid-static-host');
-    const staticOnly=['asset','prompt'].includes(standaloneLibrary) && host.matches('.asset-library-window,.prompt-library-window');
+    const staticOnly=host.id==='previewModal' || (['asset','prompt'].includes(standaloneLibrary) && host.matches('.asset-library-window,.prompt-library-window'));
     let root=null;
     if(!staticOnly) {
       const mount=document.createElement('div');
@@ -137,11 +139,25 @@ new MutationObserver(records=>{
   }
   if(pendingHosts.size || removed) scheduleDiscover();
 }).observe(document.body,{subtree:true,childList:true});
-new MutationObserver(records=>{for(const record of records)collectHosts(record.target);if(pendingHosts.size)scheduleDiscover();}).observe(document.body,{subtree:true,attributes:true,attributeFilter:['class','style','hidden','open','aria-hidden']});
+new MutationObserver(records=>{
+  const targets=new Set();
+  for(const record of records) {
+    // Desktop offsets are CSS variables on body, not visibility changes.
+    if(record.target===document.body && record.attributeName==='style') continue;
+    if(!record.target.closest('.liquid-glass-mount,.liquid-backdrop')) targets.add(record.target);
+  }
+  for(const target of targets) {
+    if(target.matches(selector)) candidates.add(target);
+    for(const host of candidates) if(target===host || target.contains(host)) pendingHosts.add(host);
+  }
+  if(pendingHosts.size) scheduleDiscover();
+}).observe(document.body,{subtree:true,attributes:true,attributeFilter:['class','style','hidden','open','aria-hidden']});
 function render() {
   document.body.classList.toggle('liquid-glass-enabled',settings.enabled);
+  if(standaloneLibrary) window.libraryPanel?.setGlassEnabled?.(settings.enabled);
   document.documentElement.style.setProperty('--liquid-opacity',settings.surfaceOpacity);
   document.documentElement.style.setProperty('--liquid-blur',(4+settings.blurAmount*32)+'px');
+  document.documentElement.style.setProperty('--library-liquid-blur',(2+settings.blurAmount*10)+'px');
   document.documentElement.style.setProperty('--liquid-saturation',settings.saturation+'%');
   for(const surface of surfaces.values()) renderSurface(surface);
   const enabled=document.getElementById('liquidEnabled');

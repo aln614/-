@@ -69,7 +69,11 @@ fs.writeFileSync(path.join(data,'config.json'),JSON.stringify({port:18769,output
     await main.evaluate(()=>{const el=document.getElementById('liquidDisplacement');el.value='95';el.dispatchEvent(new Event('input',{bubbles:true}));});
     await main.waitForFunction(()=>document.querySelector('.topbar feDisplacementMap')?.getAttribute('scale')==='-95');
     await main.evaluate(()=>{const el=document.getElementById('liquidOpacity');el.value='0.31';el.dispatchEvent(new Event('input',{bubbles:true}));});
-    await main.waitForFunction(()=>getComputedStyle(document.querySelector('.topbar .liquid-backdrop')).backgroundColor==='rgba(255, 255, 255, 0.31)');
+    await main.waitForFunction(()=>Math.abs(parseFloat(getComputedStyle(document.querySelector('.topbar .liquid-backdrop')).backgroundColor.split(',')[3])-.31)<.01);
+    const cardOpacity=await main.locator('#page-settings .card').first().evaluate(el=>getComputedStyle(el).backgroundColor);
+    await main.evaluate(()=>{const el=document.getElementById('liquidOpacity');el.value='0.8';el.dispatchEvent(new Event('input',{bubbles:true}));});
+    assert.notEqual(await main.locator('#page-settings .card').first().evaluate(el=>getComputedStyle(el).backgroundColor),cardOpacity,'Main work surfaces respond to opacity changes');
+    await main.evaluate(()=>{const el=document.getElementById('liquidOpacity');el.value='0.31';el.dispatchEvent(new Event('input',{bubbles:true}));});
     await main.evaluate(()=>document.getElementById('liquidSave').click());
     await main.waitForFunction(()=>document.getElementById('liquidSaveStatus').textContent==='已保存');
     assert.equal(await main.evaluate(()=>fetch('/api/config').then(r=>r.json()).then(c=>c.liquid_glass.displacementScale)),95,'Saved parameters must be in the application configuration');

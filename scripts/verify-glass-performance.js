@@ -17,6 +17,14 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     instance = await electron.launch({executablePath:require('electron'), args:[root,'--background'], env:{...process.env, APPDATA:temporary, LOCALAPPDATA:temporary, LOCAL_API_IMAGE_GENERATOR_DATA_DIR:data}});
     const main = await instance.firstWindow();
     await main.waitForURL('http://127.0.0.1:18775/**');
+    await instance.context().addInitScript(()=>{
+      navigator.mediaDevices.getUserMedia=async()=>{
+        const canvas=document.createElement('canvas');canvas.width=960;canvas.height=540;
+        const context=canvas.getContext('2d');
+        for(let x=0;x<960;x+=10){context.fillStyle=Math.floor(x/10)%2?'#4499ff':'#ee4444';context.fillRect(x,0,10,540);}
+        return canvas.captureStream(60);
+      };
+    });
     await instance.evaluate(({desktopCapturer,nativeImage,screen,BrowserWindow}) => {
       // Use synthetic pixels instead of capturing the user's desktop during tests.
       const bitmap = Buffer.alloc(960*540*4);
@@ -26,7 +34,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
       }
       const thumbnail=nativeImage.createFromBitmap(bitmap,{width:960,height:540});
       global.__backdropMessages=[];
-      desktopCapturer.getSources=async()=>[{display_id:String(screen.getPrimaryDisplay().id),thumbnail}];
+      desktopCapturer.getSources=async()=>[{id:'screen:999999:0',display_id:String(screen.getPrimaryDisplay().id),thumbnail}];
       const original=BrowserWindow.prototype.setShape;
       BrowserWindow.prototype.setShape=function(rects){this.__shape=rects;return original.call(this,rects);};
     });
@@ -34,8 +42,8 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     let asset;
     for(let i=0;i<100 && !asset;i++){asset=instance.windows().find(p=>p.url().includes('library=asset'));if(!asset)await pause(50);}
     await asset.waitForSelector('#assetLibraryWindow > .liquid-backdrop-static');
-    await asset.waitForFunction(()=>document.body.style.getPropertyValue('--library-backdrop-image').startsWith('url('));
-    await pause(250);
+    await asset.waitForFunction(()=>document.querySelector('#assetLibraryWindow > .liquid-backdrop-static')?.style.getPropertyValue('--library-backdrop-image').startsWith('url('));
+    await pause(600);
     await instance.evaluate(({BrowserWindow})=>{
       const win=BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().includes('library=asset'));
       const original=win.webContents.send.bind(win.webContents);
@@ -53,16 +61,25 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
       });
       observer.observe(document.body,{subtree:true,childList:true});
       const original=CSSStyleDeclaration.prototype.setProperty;
-      CSSStyleDeclaration.prototype.setProperty=function(name,...args){if(this===document.body.style && ['background-image','--library-backdrop-image'].includes(name)) window.__perf.backgroundWrites++;return original.call(this,name,...args);};
+      const layerStyle=document.querySelector('#assetLibraryWindow > .liquid-backdrop-static').style;
+      CSSStyleDeclaration.prototype.setProperty=function(name,...args){if(this===layerStyle && ['background-image','--library-backdrop-image'].includes(name)) window.__perf.backgroundWrites++;return original.call(this,name,...args);};
       let last=performance.now();
       const frame=now=>{window.__perf.frames.push(now-last);last=now;window.__perf.frame=requestAnimationFrame(frame);};
       window.__perf.frame=requestAnimationFrame(frame);
     });
+    await asset.evaluate(()=>window.libraryPanel.startWindowDrag({x:window.screenX,y:window.screenY}));
     await instance.evaluate(async({BrowserWindow})=>{
       const win=BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().includes('library=asset'));
       const start=win.getBounds();
       for(let i=0;i<60;i++) { win.setPosition(start.x+i%30,start.y+i%20); win.emit('move'); await new Promise(r=>setTimeout(r,8)); }
       win.emit('moved');
+    });
+    const whileMoving=await asset.evaluate(()=>({backgroundWrites:window.__perf.backgroundWrites}));
+    const movingMessages=await instance.evaluate(()=>global.__backdropMessages.filter(m=>m.image).length);
+    await asset.evaluate(()=>window.libraryPanel.endWindowDrag());
+    await pause(500);
+    await instance.evaluate(async({BrowserWindow})=>{
+      const win=BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().includes('library=asset'));
       for(let i=0;i<60;i++) { win.setSize(1000+i*3,620+i*2); await new Promise(r=>setTimeout(r,8)); }
     });
     await pause(400);
@@ -75,7 +92,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     });
     const native=await instance.evaluate(({BrowserWindow})=>{
       const win=BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().includes('library=asset'));
-      return {messages:global.__backdropMessages.length,bytes:global.__backdropMessages.reduce((sum,m)=>sum+m.bytes,0),imageMessages:global.__backdropMessages.filter(m=>m.image).length,bounds:win.getBounds(),shape:win.__shape};
+      return {messages:global.__backdropMessages.length,bytes:global.__backdropMessages.filter(m=>!m.image).reduce((sum,m)=>sum+m.bytes,0),imageMessages:global.__backdropMessages.filter(m=>m.image).length,bounds:win.getBounds(),shape:win.__shape};
     });
     const result={...metrics,...native}; delete result.shape;
     console.log(JSON.stringify(result,null,2));
@@ -84,8 +101,10 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     fs.writeFileSync(path.join(root,'test-results','glass-perf-'+label+'.json'),JSON.stringify(result,null,2));
     await asset.screenshot({path:path.join(root,'test-results','glass-perf-'+label+'.png')});
     if(!process.env.GLASS_PERF_BASELINE){
-      assert.equal(native.imageMessages,0,'Moving/resizing must never retransmit the desktop image');
-      assert.equal(metrics.backgroundWrites,0,'Moving/resizing must not reassign the desktop bitmap');
+      assert.equal(movingMessages,0,'Moving must not retransmit the cached desktop image');
+      assert.equal(whileMoving.backgroundWrites,0,'Moving must not reassign the cached desktop image');
+      assert.ok(native.imageMessages<=1,'Release may refresh the cached desktop image once');
+      assert.ok(metrics.backgroundWrites<=1,'Release may update the cached desktop image once');
       assert.ok(native.bytes<30000,'Movement IPC must stay bounded');
       assert.ok(metrics.mounts<=4,'Continuous resizing must coalesce glass component remounts');
       assert.doesNotMatch(metrics.filter,/url\(/,'Standalone glass must not run chromatic displacement across the full window');
@@ -102,7 +121,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
       assert.ok(changed<100,'Standalone neutral glass must ignore chromatic displacement changes');
       console.log('Standalone neutral glass changed pixels:',changed);
       await asset.reload();
-      await asset.waitForFunction(()=>document.body.style.getPropertyValue('--library-backdrop-image').startsWith('url('));
+      await asset.waitForFunction(()=>document.querySelector('#assetLibraryWindow > .liquid-backdrop-static')?.style.getPropertyValue('--library-backdrop-image').startsWith('url('));
     }
   } finally {
     if(instance) await instance.close();

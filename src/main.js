@@ -32,6 +32,7 @@ const libraryWindows = { asset:null, prompt:null };
 const libraryBackdropState = { asset:null, prompt:null };
 const libraryBackdropTimers = { asset:null, prompt:null };
 const libraryBackdropCaptures = { asset:null, prompt:null };
+const libraryBackdropMotion = { asset:null, prompt:null };
 let activeLibraryShortcuts = {};
 let shortcutsSuspended = false;
 let isAppQuitting = false;
@@ -863,23 +864,72 @@ function sendLibraryBackdrop(kind, includeImage = false) {
   const position=`${bounds.x}:${bounds.y}`;
   if(!includeImage && state.lastPosition===position) return;
   state.lastPosition=position;
-  const payload={offsetX:bounds.x-state.displayX,offsetY:bounds.y-state.displayY};
+  const payload={offsetX:bounds.x-state.displayX,offsetY:bounds.y-state.displayY,displayWidth:state.displayWidth,displayHeight:state.displayHeight};
   if(includeImage) Object.assign(payload,{image:state.image,displayWidth:state.displayWidth,displayHeight:state.displayHeight});
   win.webContents.send('library:backdrop',payload);
 }
 
 function scheduleLibraryBackdrop(kind) {
-  clearTimeout(libraryBackdropTimers[kind]);
-  libraryBackdropTimers[kind]=setTimeout(()=>{
-    libraryBackdropTimers[kind]=null;
-    sendLibraryBackdrop(kind);
-  },240);
+  const motion=libraryBackdropMotion[kind];
+  if(!motion?.glassEnabled) return;
+  if(!motion || !motion.active) beginLibraryBackdropMotion(kind);
+  if(!libraryBackdropTimers[kind]) libraryBackdropTimers[kind]=setTimeout(()=>{
+    libraryBackdropTimers[kind]=null;sendLibraryBackdrop(kind);
+  },32);
+  const current=libraryBackdropMotion[kind];
+  if(!current) return;
+  const win=libraryWindows[kind],state=libraryBackdropState[kind];
+  if(win && !win.isDestroyed() && state) {
+    const displayId=String(screen.getDisplayMatching(win.getBounds()).id);
+    if(displayId!==state.displayId && current.pendingDisplayId!==displayId) {
+      current.pendingDisplayId=displayId;
+      captureLibraryBackdrop(kind).finally(()=>{
+        if(libraryBackdropMotion[kind]===current) {
+          current.pendingDisplayId='';
+          if(current.active) sendLibraryBackdropMotion(kind);
+        }
+      });
+    }
+  }
 }
 
 function flushLibraryBackdrop(kind) {
   clearTimeout(libraryBackdropTimers[kind]);
   libraryBackdropTimers[kind]=null;
   sendLibraryBackdrop(kind);
+}
+
+function sendLibraryBackdropMotion(kind) {
+  const win=libraryWindows[kind],state=libraryBackdropState[kind],motion=libraryBackdropMotion[kind];
+  if(!win || win.isDestroyed() || !state?.sourceId || !motion?.active) return;
+  const bounds=win.getBounds();
+  win.webContents.send('library:backdrop-motion',{
+    active:true,sourceId:state.sourceId,displayWidth:state.displayWidth,displayHeight:state.displayHeight,
+    offsetX:bounds.x-state.displayX,offsetY:bounds.y-state.displayY
+  });
+}
+
+function beginLibraryBackdropMotion(kind) {
+  const win=libraryWindows[kind],motion=libraryBackdropMotion[kind];
+  if(process.platform!=='win32' || !win || win.isDestroyed() || !win.isVisible() || win.isMinimized() || !motion?.glassEnabled || motion.active) return;
+  motion.active=true;
+  try { win.setContentProtection(true); }
+  catch(error) { addLog('独立窗口实时玻璃启动失败：'+error.message,{level:'warn'});motion.active=false;return; }
+  if(libraryBackdropState[kind]?.sourceId) sendLibraryBackdropMotion(kind);
+  else captureLibraryBackdrop(kind).finally(()=>sendLibraryBackdropMotion(kind));
+}
+
+function cancelLibraryBackdropMotion(kind) {
+  const win=libraryWindows[kind],motion=libraryBackdropMotion[kind];
+  if(!motion) return;
+  motion.active=false;
+  motion.drag=null;
+  clearTimeout(libraryBackdropTimers[kind]);
+  libraryBackdropTimers[kind]=null;
+  if(win && !win.isDestroyed()) {
+    win.webContents.send('library:backdrop-motion',{active:false});
+    try { win.setContentProtection(false); } catch {}
+  }
 }
 
 function captureLibraryBackdrop(kind) {
@@ -902,7 +952,7 @@ async function captureLibraryBackdropImage(kind) {
     if(!source || source.thumbnail.isEmpty() || win.isDestroyed() || libraryWindows[kind]!==win) return false;
     libraryBackdropState[kind]={
       image:'data:image/jpeg;base64,'+source.thumbnail.toJPEG(82).toString('base64'),
-      displayX:display.bounds.x,displayY:display.bounds.y,
+      sourceId:source.id,displayId:String(display.id),displayX:display.bounds.x,displayY:display.bounds.y,
       displayWidth:display.bounds.width,displayHeight:display.bounds.height
     };
     sendLibraryBackdrop(kind,true);
@@ -932,14 +982,25 @@ function showLibraryWindow(kind, toggle = false) {
     webPreferences:{contextIsolation:true, nodeIntegration:false, sandbox:false, webSecurity:true, allowRunningInsecureContent:false, preload:path.join(__dirname,'preload.js')}
   });
   libraryWindows[kind] = win;
+  libraryBackdropMotion[kind] = {active:false,pendingDisplayId:'',glassEnabled:true,drag:null};
   setupWindowVisibility(win);
-  win.webContents.on('did-finish-load',()=>sendLibraryBackdrop(kind,true));
+  win.webContents.on('did-finish-load',()=>{
+    sendLibraryBackdrop(kind,true);
+    if(libraryBackdropMotion[kind]?.active) sendLibraryBackdropMotion(kind);
+    else beginLibraryBackdropMotion(kind);
+  });
   if (process.platform === 'win32') {
     applyLibraryWindowShape(win);
     win.on('resize', ()=>applyLibraryWindowShape(win));
+    win.on('will-move', ()=>beginLibraryBackdropMotion(kind));
     win.on('move', ()=>scheduleLibraryBackdrop(kind));
     win.on('moved', ()=>flushLibraryBackdrop(kind));
   }
+  win.on('show', ()=>beginLibraryBackdropMotion(kind));
+  win.on('restore', ()=>beginLibraryBackdropMotion(kind));
+  win.on('hide', ()=>cancelLibraryBackdropMotion(kind));
+  win.on('minimize', ()=>cancelLibraryBackdropMotion(kind));
+  win.webContents.on('render-process-gone',()=>cancelLibraryBackdropMotion(kind));
   setupImageContextMenu(win);
   win.webContents.setWindowOpenHandler(({url:target})=>{
     if (/^https?:\/\//i.test(String(target || ''))) shell.openExternal(target).catch(()=>{});
@@ -951,6 +1012,8 @@ function showLibraryWindow(kind, toggle = false) {
   });
   win.on('close', event=>{ if(!isAppQuitting){event.preventDefault(); win.hide();} });
   win.on('closed', ()=>{
+    cancelLibraryBackdropMotion(kind);
+    libraryBackdropMotion[kind]=null;
     if(libraryWindows[kind] === win) libraryWindows[kind] = null;
     clearTimeout(libraryBackdropTimers[kind]);
     libraryBackdropTimers[kind]=null;
@@ -9890,6 +9953,64 @@ ipcMain.handle('start-asset-drag', async (event, payload = {}) => {
 function trustedWindowSender(event) {
   return [mainWindow, ...Object.values(libraryWindows)].some(win => win && !win.isDestroyed() && win.webContents === event.sender);
 }
+function librarySenderKind(event) {
+  return Object.keys(libraryWindows).find(kind=>{
+    const win=libraryWindows[kind];
+    return win && !win.isDestroyed() && win.webContents===event.sender;
+  });
+}
+ipcMain.on('library:glass-enabled', (event, enabled)=>{
+  const kind=librarySenderKind(event),motion=libraryBackdropMotion[kind];
+  if(!motion || typeof enabled!=='boolean') return;
+  motion.glassEnabled=enabled;
+  if(!enabled) {
+    const drag=motion.drag;
+    cancelLibraryBackdropMotion(kind);
+    motion.drag=drag;
+  } else beginLibraryBackdropMotion(kind);
+});
+ipcMain.on('library:backdrop-unavailable', event=>{
+  const kind=librarySenderKind(event);
+  if(kind) cancelLibraryBackdropMotion(kind);
+});
+ipcMain.on('library:backdrop-visibility', (event,visible)=>{
+  const kind=librarySenderKind(event),win=libraryWindows[kind];
+  if(!win || typeof visible!=='boolean') return;
+  if(visible && win.isVisible() && !win.isMinimized()) {
+    if(libraryBackdropMotion[kind]?.active) sendLibraryBackdropMotion(kind);
+    else beginLibraryBackdropMotion(kind);
+  } else cancelLibraryBackdropMotion(kind);
+});
+function libraryDragPoint(point) {
+  return Number.isFinite(point?.x) && Number.isFinite(point?.y) && Math.abs(point.x)<100000 && Math.abs(point.y)<100000
+    ? {x:Math.round(point.x),y:Math.round(point.y)} : null;
+}
+ipcMain.on('library:drag-start', (event,point)=>{
+  const kind=librarySenderKind(event),win=libraryWindows[kind],motion=libraryBackdropMotion[kind];
+  const cursor=libraryDragPoint(point);
+  if(!win || !motion || !win.isVisible() || !cursor) return;
+  const bounds=win.getBounds();
+  motion.drag={cursorX:cursor.x,cursorY:cursor.y,windowX:bounds.x,windowY:bounds.y,lastX:bounds.x,lastY:bounds.y,moved:false};
+});
+ipcMain.on('library:drag-move', (event,point)=>{
+  const kind=librarySenderKind(event),win=libraryWindows[kind],motion=libraryBackdropMotion[kind],drag=motion?.drag;
+  const cursor=libraryDragPoint(point);
+  if(!win || !drag || !win.isVisible() || !cursor) return;
+  const dx=cursor.x-drag.cursorX,dy=cursor.y-drag.cursorY;
+  if(!drag.moved && Math.abs(dx)+Math.abs(dy)<2) return;
+  const x=Math.round(drag.windowX+dx),y=Math.round(drag.windowY+dy);
+  if(x===drag.lastX && y===drag.lastY) return;
+  if(!drag.moved) {drag.moved=true;beginLibraryBackdropMotion(kind);}
+  drag.lastX=x;drag.lastY=y;
+  win.setPosition(x,y);
+  sendLibraryBackdrop(kind);
+});
+ipcMain.on('library:drag-end', event=>{
+  const kind=librarySenderKind(event),motion=libraryBackdropMotion[kind];
+  if(!motion?.drag) return;
+  motion.drag=null;
+  flushLibraryBackdrop(kind);
+});
 ipcMain.handle('library:open', (event, kind) => {
   if (!trustedWindowSender(event) || !['asset','prompt'].includes(kind)) return false;
   return showLibraryWindow(kind);

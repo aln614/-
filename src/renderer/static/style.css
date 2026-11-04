@@ -4476,7 +4476,10 @@ body.standalone-library.library-backdrop-ready{background-image:none!important}
 body.standalone-library .asset-library-window,body.standalone-library .prompt-library-window{position:fixed!important;left:0!important;top:0!important;width:100vw!important;height:100vh!important;max-width:none!important;max-height:none!important;border-radius:20px!important}
 body.standalone-library .chat-floating-resize{display:block!important;z-index:12}
 body.standalone-library .asset-library-head,body.standalone-library .prompt-library-head{-webkit-app-region:no-drag;cursor:default;user-select:none}
-body.standalone-library .asset-library-drag-region,body.standalone-library .prompt-library-drag-region{-webkit-app-region:drag;cursor:move;user-select:none}
+body.standalone-library .asset-library-drag-region,body.standalone-library .prompt-library-drag-region{-webkit-app-region:no-drag;cursor:grab;user-select:none;touch-action:none}
+body.standalone-library :is(.asset-library-drag-region,.prompt-library-drag-region).is-dragging{cursor:grabbing}
+body.standalone-library .asset-library-drag-region{display:flex;flex:1;min-width:40px;align-self:stretch;flex-direction:column;justify-content:center}
+body.standalone-library .prompt-library-drag-region{display:flex;align-items:center;align-self:stretch}
 body.standalone-library .asset-library-head button,body.standalone-library .asset-library-head input,body.standalone-library .asset-library-head select,body.standalone-library .prompt-library-head button,body.standalone-library .prompt-library-head input,body.standalone-library .prompt-library-head select,body.standalone-library .chat-floating-resize{-webkit-app-region:no-drag;pointer-events:auto!important}
 
 /* Liquid glass keeps the working controls sharp above the refracted backdrop. */
@@ -4557,16 +4560,24 @@ body.standalone-library.library-backdrop-ready :is(.asset-library-window,.prompt
 body.standalone-library.library-backdrop-ready :is(.asset-library-window,.prompt-library-window)>.liquid-backdrop::before{
   content:"";position:absolute;inset:-16px;pointer-events:none;transform:translateZ(0);
   background-image:var(--library-backdrop-image);background-size:var(--library-backdrop-size);background-position:calc(var(--library-backdrop-x,0px) + 16px) calc(var(--library-backdrop-y,0px) + 16px);background-repeat:no-repeat;
-  filter:blur(5px) saturate(55%) brightness(1.07) contrast(.9);
+  filter:blur(var(--library-liquid-blur,5px)) saturate(var(--liquid-saturation,140%)) brightness(1.04) contrast(.94);
 }
 body.standalone-library.library-backdrop-ready :is(.asset-library-window,.prompt-library-window)>.liquid-backdrop::after{
   content:"";position:absolute;inset:0;background:linear-gradient(145deg,rgba(255,255,255,.18),rgba(255,255,255,.04)),rgba(var(--liquid-tint),var(--liquid-opacity));pointer-events:none;
 }
-.liquid-in-motion .liquid-backdrop{
-  backdrop-filter:blur(var(--liquid-blur,6px)) saturate(var(--liquid-saturation,140%))!important;
-  -webkit-backdrop-filter:blur(var(--liquid-blur,6px)) saturate(var(--liquid-saturation,140%))!important;
+body.standalone-library .library-live-backdrop{
+  position:absolute;left:0;top:0;
+  width:var(--library-backdrop-width,100vw);height:var(--library-backdrop-height,100vh);max-width:none;
+  object-fit:fill;pointer-events:none;opacity:0;transform:translate3d(var(--library-backdrop-x,0px),var(--library-backdrop-y,0px),0);
+  filter:blur(var(--library-liquid-blur,5px)) saturate(var(--liquid-saturation,140%)) brightness(1.04) contrast(.94);
+  transition:none;
 }
-.liquid-in-motion body.standalone-library :is(.asset-library-window,.prompt-library-window)>.liquid-backdrop::before{filter:blur(5px) saturate(55%) brightness(1.07) contrast(.9)}
+body.standalone-library .library-live-backdrop.is-ready{opacity:1}
+body.standalone-library[data-library-backdrop-motion="active"] :is(.asset-library-window,.prompt-library-window)>.liquid-backdrop::before{visibility:hidden}
+body.standalone-library :is(.asset-library-tools,.prompt-library-actions) button{transition:transform .14s ease,background-color .14s ease,border-color .14s ease}
+body.standalone-library :is(.asset-library-tools,.prompt-library-actions) button:active{transform:scale(.96)}
+body.standalone-library :is(.asset-card,.pl-card){transition:transform .16s ease,box-shadow .16s ease}
+@media(prefers-reduced-motion:reduce){body.standalone-library .library-live-backdrop,body.standalone-library :is(.asset-library-tools,.prompt-library-actions) button,body.standalone-library :is(.asset-card,.pl-card){transition:none!important}}
 #previewModal{--liquid-tint:18,20,26}
 #previewInfo{--liquid-tint:255,255,255}
 #previewModal .preview-toolbar{--liquid-tint:18,20,26}
@@ -4591,3 +4602,72 @@ body.desktop-shell .skin-brand-shell{flex:none}
 .liquid-settings-grid label{min-width:0}.liquid-settings-grid output{float:right;font-variant-numeric:tabular-nums}
 .liquid-settings-grid input{display:block;padding:0;margin:8px 0;width:100%}
 @media(max-width:620px){.liquid-settings-grid{grid-template-columns:1fr}}
+
+/* A consistent, lightweight working surface; glass optics remain configurable. */
+body.desktop-shell.liquid-glass-enabled .page .card{
+  border-radius:8px!important;
+  background-color:rgba(var(--liquid-tint),clamp(.55,calc(.48 + var(--liquid-opacity)*.5),.94))!important;
+  background-image:linear-gradient(180deg,rgba(var(--liquid-tint),.12),rgba(var(--liquid-tint),0))!important;
+  border:1px solid rgba(118,137,151,.17)!important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.36)!important;
+}
+body.desktop-shell.liquid-glass-enabled .topbar.glass{border-radius:12px!important}
+body.desktop-shell.liquid-glass-enabled .right-panel{
+  border-radius:10px!important;
+  background:linear-gradient(145deg,rgba(var(--liquid-tint),clamp(.55,calc(.48 + var(--liquid-opacity)*.5),.94)),rgba(var(--liquid-tint),clamp(.35,calc(.22 + var(--liquid-opacity)*.5),.7)))!important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.36)!important;
+}
+body.desktop-shell.liquid-glass-enabled .right-panel .stats>div{
+  border-radius:8px!important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.45)!important;
+}
+body.desktop-shell .section-head h1{font-size:25px;line-height:1.25;letter-spacing:0}
+body.desktop-shell .section-head p{line-height:1.5}
+body.desktop-shell .page .card h2{font-size:17px;line-height:1.35;letter-spacing:0}
+body.desktop-shell .page .card :is(input:not([type=checkbox]):not([type=radio]):not([type=range]),select,textarea){
+  border:1px solid rgba(107,125,140,.24);
+  border-radius:7px!important;
+  background-color:rgba(255,255,255,.52);
+  transition:border-color .14s ease,box-shadow .14s ease,background-color .14s ease;
+}
+body.desktop-shell .page .card :is(input,select,textarea):focus-visible{
+  outline:2px solid rgba(24,150,153,.38);
+  outline-offset:1px;
+}
+body.desktop-shell.theme-dark.liquid-glass-enabled .page .card{
+  border-color:rgba(255,255,255,.1)!important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.08)!important;
+}
+body.desktop-shell.theme-dark .page .card :is(input:not([type=checkbox]):not([type=radio]):not([type=range]),select,textarea){
+  background-color:rgba(15,19,25,.35);
+  border-color:rgba(220,231,237,.2);
+}
+body.standalone-library.liquid-glass-enabled :is(.asset-library-head,.prompt-library-head){
+  background:rgba(var(--liquid-tint),.25);
+}
+body.standalone-library.liquid-glass-enabled :is(.asset-main-head,.asset-drop-hint,.prompt-sidebar-content){
+  background-color:rgba(var(--liquid-tint),.22);
+}
+body.standalone-library.liquid-glass-enabled :is(.asset-card,.pl-card){
+  border-radius:8px!important;
+  border-color:rgba(110,128,142,.25)!important;
+  box-shadow:0 3px 12px rgba(24,38,46,.08)!important;
+}
+body.standalone-library.liquid-glass-enabled :is(.asset-main-head p,.asset-drop-hint,.asset-library-head span){color:#354556}
+body.standalone-library.theme-dark.liquid-glass-enabled :is(.asset-main-head p,.asset-drop-hint,.asset-library-head span){color:#d0dbe3}
+body.standalone-library :is(.asset-library-tools,.prompt-library-actions) button:focus-visible,
+body.standalone-library :is(.asset-library-tools,.prompt-library-head) :is(input,select):focus-visible{
+  outline:2px solid rgba(24,150,153,.65);outline-offset:2px;
+}
+@media(prefers-reduced-motion:reduce){body.desktop-shell .page .card :is(input,select,textarea){transition:none!important}}
+
+/* The enclosing surface already refracts and blurs its background. */
+body.liquid-glass-enabled .liquid-surface-active :is(button,input,select,textarea,.asset-library-sidebar,.asset-sidebar-content){
+  backdrop-filter:none!important;-webkit-backdrop-filter:none!important;
+}
+body.liquid-glass-enabled :is(.liquid-surface-active button,.asset-card,.pl-card){
+  transition:transform .14s ease,opacity .14s ease,background-color .14s ease,color .14s ease,border-color .14s ease!important;
+}
+body.liquid-glass-enabled .page.active{animation:ui-page-enter .14s ease both}
+@keyframes ui-page-enter{from{opacity:.72}to{opacity:1}}
+@media(prefers-reduced-motion:reduce){body.liquid-glass-enabled .page.active{animation:none}body.liquid-glass-enabled :is(.liquid-surface-active button,.asset-card,.pl-card){transition:none!important}}
