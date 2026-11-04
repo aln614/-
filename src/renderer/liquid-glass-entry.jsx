@@ -8,7 +8,7 @@ const {DEFAULT_LIQUID_GLASS:defaults,normalizeLiquidGlass:normalize}=glassSettin
 const key='tenying-liquid-glass-settings';
 const controls={displacementScale:'liquidDisplacement',blurAmount:'liquidBlur',saturation:'liquidSaturation',aberrationIntensity:'liquidAberration',surfaceOpacity:'liquidOpacity'};
 const selector=[
-  '.topbar','.sidebar',
+  '.topbar',
   '.asset-library-window','.prompt-library-window','.chat-floating-window','.announcement-panel',
   '#previewModal','.preview-toolbar','.preview-info','.video-preview-info',
   '.api-balance-dialog','.recent-audio-preview-card','.danger-confirm-card'

@@ -21,7 +21,7 @@ fs.writeFileSync(path.join(data,'config.json'),JSON.stringify({port:18769,output
     main.setDefaultTimeout(15000);
     await main.waitForURL('http://127.0.0.1:18769/**',{timeout:30000});
     await main.waitForFunction(()=>window.liquidGlassSettings && document.querySelector('.topbar feDisplacementMap'));
-    assert.equal(await main.locator('.sidebar > .liquid-backdrop').count(),1,'Sidebar uses one bounded liquid surface');
+    assert.equal(await main.locator('.sidebar > .liquid-backdrop').count(),0,'Sidebar avoids a second chromatic refraction stack');
     assert.equal(await main.locator('#page-home > .grid > .card > .liquid-backdrop').count(),0,'Main cards avoid whole-card displacement filters');
     assert.equal(await main.locator('#page-home .liquid-backdrop').count(),0,'Home controls avoid nested displacement filters');
     assert.ok(await main.locator('[data-liquid-surface]').count()<=12,'The main page keeps a bounded number of liquid surfaces');
@@ -72,9 +72,9 @@ fs.writeFileSync(path.join(data,'config.json'),JSON.stringify({port:18769,output
     await main.waitForFunction(()=>document.querySelector('.topbar feDisplacementMap')?.getAttribute('scale')==='-95');
     await main.evaluate(()=>{const el=document.getElementById('liquidOpacity');el.value='0.31';el.dispatchEvent(new Event('input',{bubbles:true}));});
     await main.waitForFunction(()=>getComputedStyle(document.documentElement).getPropertyValue('--liquid-opacity').trim()==='0.31');
-    const navigationOpacity=await main.locator('.sidebar > .liquid-backdrop').evaluate(el=>getComputedStyle(el).backgroundColor);
+    const navigationOpacity=await main.locator('.topbar > .liquid-backdrop').evaluate(el=>getComputedStyle(el).backgroundColor);
     await main.evaluate(()=>{const el=document.getElementById('liquidOpacity');el.value='0.8';el.dispatchEvent(new Event('input',{bubbles:true}));});
-    assert.notEqual(await main.locator('.sidebar > .liquid-backdrop').evaluate(el=>getComputedStyle(el).backgroundColor),navigationOpacity,'Navigation glass responds to opacity changes');
+    assert.notEqual(await main.locator('.topbar > .liquid-backdrop').evaluate(el=>getComputedStyle(el).backgroundColor),navigationOpacity,'Navigation glass responds to opacity changes');
     await main.evaluate(()=>{const el=document.getElementById('liquidOpacity');el.value='0.31';el.dispatchEvent(new Event('input',{bubbles:true}));});
     await main.evaluate(()=>document.getElementById('liquidSave').click());
     await main.waitForFunction(()=>document.getElementById('liquidSaveStatus').textContent==='已保存');

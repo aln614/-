@@ -869,7 +869,10 @@ function applyNativeWindowAppearance(win, appearance = {}) {
   if(!win || win.isDestroyed()) return {material:'none'};
   const mode=['board','none','custom'].includes(appearance.mode) ? appearance.mode : 'board';
   const theme=appearance.theme==='dark' ? 'dark' : 'light';
-  const material=mode==='none' && appearance.enabled===true ? 'acrylic' : 'none';
+  // The Windows acrylic layer adds an opaque gray tint and square outer pixels
+  // before Chromium paints our rounded liquid surface. Keep the native window
+  // transparent and let the bounded web material own the refraction and shape.
+  const material='none';
   const previous=nativeWindowAppearances.get(win);
   // Desktop capture exclusion also hides windows from remote desktop and screen sharing.
   win.setContentProtection(false);

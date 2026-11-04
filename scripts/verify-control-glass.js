@@ -16,17 +16,22 @@ fs.writeFileSync(path.join(data,'config.json'),JSON.stringify({port:18790,shortc
     app=await electron.launch({executablePath:packaged || require('electron'),args:packaged?[]:[root],env:{...process.env,APPDATA:temporary,LOCALAPPDATA:temporary,LOCAL_API_IMAGE_GENERATOR_DATA_DIR:data}});
     const page=await app.firstWindow();
     await page.waitForURL('http://127.0.0.1:18790/**',{timeout:30000});
-    await page.waitForFunction(()=>document.querySelector('.topbar>.liquid-backdrop') && document.querySelector('.sidebar>.liquid-backdrop'));
+    await page.waitForFunction(()=>document.querySelector('.topbar>.liquid-backdrop'));
     const surfaceCount=await page.locator('[data-liquid-surface]').count();
-    assert.ok(surfaceCount>=2 && surfaceCount<=12,'Liquid optics stay limited to navigation and floating layers: '+surfaceCount);
+    assert.ok(surfaceCount>=1 && surfaceCount<=10,'Liquid optics stay limited to the title and floating layers: '+surfaceCount);
     assert.equal(await page.locator('#page-home .liquid-backdrop').count(),0,'Home content controls do not create nested refractive black blocks');
-    for(const selector of ['.topbar','.sidebar']) {
+    for(const selector of ['.topbar']) {
       const style=await page.locator(selector).evaluate(el=>{const s=getComputedStyle(el),glass=getComputedStyle(el.querySelector(':scope>.liquid-backdrop'));return {radius:parseFloat(s.borderRadius),shadow:s.boxShadow,border:s.borderTopColor,backdrop:glass.backdropFilter};});
       assert.ok(style.radius>=20,selector+' has a continuous Apple-style corner');
       assert.notEqual(style.shadow,'none',selector+' has material depth');
       assert.notEqual(style.border,'rgba(0, 0, 0, 0)',selector+' has a fine material edge');
       assert.match(style.backdrop,/url\(/,selector+' uses the upstream refractive filter');
     }
+    const sidebar=await page.locator('.sidebar').evaluate(el=>{const s=getComputedStyle(el);return{radius:parseFloat(s.borderRadius),shadow:s.boxShadow,backdrop:s.backdropFilter,liquid:!!el.querySelector(':scope>.liquid-backdrop')};});
+    assert.ok(sidebar.radius>=20,'Sidebar has a continuous Apple-style corner');
+    assert.notEqual(sidebar.shadow,'none','Sidebar has material depth');
+    assert.match(sidebar.backdrop,/blur/,'Sidebar keeps lightweight live backdrop blur');
+    assert.equal(sidebar.liquid,false,'Sidebar avoids a second chromatic refraction stack');
     for(const selector of ['#page-home .card','.right-panel','.recent-upload-panel','.right-panel .stats>div']) {
       const style=await page.locator(selector).first().evaluate(el=>{const s=getComputedStyle(el);return {radius:parseFloat(s.borderRadius),background:s.backgroundColor,shadow:s.boxShadow};});
       assert.ok(style.radius>=17,selector+' keeps concentric rounded corners');
