@@ -71,7 +71,7 @@ fs.writeFileSync(path.join(data,'config.json'),JSON.stringify({port:18770,shortc
         const fs=process.getBuiltinModule('fs'),path=process.getBuiltinModule('path');
         const display=screen.getPrimaryDisplay(),work=display.workArea,baseX=work.x+20,baseY=work.y+20;
         const backdrop=new BrowserWindow({x:baseX,y:baseY,width:900,height:620,frame:false,alwaysOnTop:true,skipTaskbar:true,backgroundColor:'#38c68b'});
-        await backdrop.loadURL('data:text/html,'+encodeURIComponent('<style>html,body{margin:0;width:100%;height:100%;background:#38c68b}</style>'));
+        await backdrop.loadURL('data:text/html,'+encodeURIComponent('<style>html,body{margin:0;width:100%;height:100%;background:#38c68b}.pattern{position:absolute;left:150px;right:100px;top:120px;bottom:100px;background:repeating-linear-gradient(90deg,#e44 0 10px,#49f 10px 20px)}</style><div class="pattern"></div>'));
         backdrop.show();
         const panel=BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().includes('library='+kind));
         panel.setBounds({x:baseX+50,y:baseY+50,width:800,height:520});
@@ -83,7 +83,8 @@ fs.writeFileSync(path.join(data,'config.json'),JSON.stringify({port:18770,shortc
         const crop=image.crop({x:Math.round((baseX-display.bounds.x+30)*ratio),y:Math.round((baseY-display.bounds.y+30)*ratio),width:Math.round(840*ratio),height:Math.round(560*ratio)});
         const bitmap=crop.toBitmap(),size=crop.getSize();
         const pixel=(x,y)=>{const i=(Math.round(y*ratio)*size.width+Math.round(x*ratio))*4;return [bitmap[i+2],bitmap[i+1],bitmap[i]];};
-        const result={background:pixel(4,4),corners:[pixel(20,20),pixel(819,20),pixel(20,539),pixel(819,539)],center:pixel(400,300)};
+        const stripeSamples=[pixel(390,300),pixel(400,300),pixel(410,300),pixel(420,300)];
+        const result={background:pixel(4,4),corners:[pixel(20,20),pixel(819,20),pixel(20,539),pixel(819,539)],center:pixel(400,300),stripeSamples};
         if(result.background[0]!==56 || result.background[1]!==198 || result.background[2]!==139) throw Error('Controlled backdrop was obscured');
         fs.writeFileSync(path.join(process.cwd(),'test-results','native-real-'+kind+'.png'),crop.toPNG());
         panel.setAlwaysOnTop(false);panel.hide();backdrop.destroy();
@@ -91,6 +92,8 @@ fs.writeFileSync(path.join(data,'config.json'),JSON.stringify({port:18770,shortc
       },kind);
       for(const corner of native.corners) assert.deepEqual(corner,native.background,kind+' corner must be transparent');
       assert.notDeepEqual(native.center,native.background,kind+' panel must be visible');
+      const bodyBackground=await page.evaluate(()=>getComputedStyle(document.body).backgroundImage);
+      assert.match(bodyBackground,/^url\(/,kind+' must sample the desktop behind the standalone window');
       console.log(kind+' real window pixels:',JSON.stringify(native));
     }
   } finally {

@@ -15,12 +15,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   prepareAssetDrag: (payload) => ipcRenderer.invoke('prepare-asset-drag', payload || {}),
   startAssetDrag: (payload) => ipcRenderer.invoke('start-asset-drag', payload || {})
 });
+let lastLibraryBackdrop=null;
+const libraryBackdropListeners=new Set();
+ipcRenderer.on('library:backdrop',(_event,payload)=>{lastLibraryBackdrop=payload;for(const callback of libraryBackdropListeners) callback(payload);});
 contextBridge.exposeInMainWorld('libraryPanel', {
   open: kind => ipcRenderer.invoke('library:open', kind),
   hide: () => ipcRenderer.invoke('library:hide'),
   resize: size => ipcRenderer.send('library:resize', size),
   applyPrompt: content => ipcRenderer.invoke('library:apply-prompt', content),
   suspendShortcuts: value => ipcRenderer.invoke('shortcuts:suspend', value),
+  onBackdrop: callback => { libraryBackdropListeners.add(callback); if(lastLibraryBackdrop) queueMicrotask(()=>callback(lastLibraryBackdrop)); },
   onRefresh: callback => ipcRenderer.on('library:refresh', () => callback()),
   onApplyPrompt: callback => ipcRenderer.on('library:apply-prompt', (_event, content) => callback(content))
 });

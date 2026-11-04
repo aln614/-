@@ -5,6 +5,13 @@ let refImages = [];
 let imagePromptMentions = null;
 const standaloneLibrary = window.libraryPanel ? new URLSearchParams(location.search).get('library') : '';
 if(['asset','prompt'].includes(standaloneLibrary)) document.body.classList.add('standalone-library', `standalone-${standaloneLibrary}`);
+if(standaloneLibrary && window.libraryPanel?.onBackdrop) window.libraryPanel.onBackdrop(payload=>{
+  if(!payload?.image) return;
+  document.body.style.setProperty('background-image',`url(${JSON.stringify(payload.image)})`,'important');
+  document.body.style.setProperty('background-size',`${payload.displayWidth}px ${payload.displayHeight}px`,'important');
+  document.body.style.setProperty('background-position',`${-payload.offsetX}px ${-payload.offsetY}px`,'important');
+  document.body.style.setProperty('background-repeat','no-repeat','important');
+});
 if(window.mainWindowControls && !standaloneLibrary && !window.lanClient){
   document.body.classList.add('desktop-shell');
   const updateWindowState = state=>{
@@ -10681,11 +10688,12 @@ function makeFloatingBox(boxId, headId, resizeId){
       let origin = null;
       resize.addEventListener('pointerdown', event=>{
         if(event.button !== 0) return;
-        origin = {x:event.screenX, y:event.screenY, width:window.outerWidth, height:window.outerHeight};
-        resize.setPointerCapture(event.pointerId); event.preventDefault(); event.stopPropagation();
+        origin = {x:event.clientX, y:event.clientY, width:window.outerWidth, height:window.outerHeight};
+        try{ resize.setPointerCapture(event.pointerId); }catch{}
+        event.preventDefault(); event.stopPropagation();
       });
       resize.addEventListener('pointermove', event=>{
-        if(origin) window.libraryPanel.resize({width:origin.width + event.screenX - origin.x, height:origin.height + event.screenY - origin.y});
+        if(origin) window.libraryPanel.resize({width:origin.width + event.clientX - origin.x, height:origin.height + event.clientY - origin.y});
       });
       const finish = ()=>{origin = null;};
       resize.addEventListener('pointerup', finish); resize.addEventListener('pointercancel', finish); resize.addEventListener('lostpointercapture', finish);

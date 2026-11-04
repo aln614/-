@@ -8,13 +8,14 @@ const main = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
 const preload = fs.readFileSync(path.join(root, 'preload.js'), 'utf8');
 const settings = fs.readFileSync(path.join(root, 'settings.html'), 'utf8');
 const packageJson = fs.readFileSync(path.join(root, 'package.json'), 'utf8');
+const mainPackage = JSON.parse(fs.readFileSync(path.join(root, '..', 'package.json'), 'utf8'));
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
 assert(main.includes("const DEFAULT_HOST_URL = 'http://192.168.110.30:7868';"), 'LAN client default host is incorrect');
-assert(packageJson.includes('"electronVersion": "35.7.5"'), 'LAN client build must pin its Electron version');
+assert(JSON.parse(packageJson).build.electronVersion === mainPackage.devDependencies.electron, 'LAN client and host must use the same pinned Electron version');
 assert(main.includes("await mainWindow.loadURL(hostUrl);"), 'LAN client does not load the host application');
 assert(main.includes("contextIsolation: true") && main.includes("nodeIntegration: false"), 'LAN client BrowserWindow security settings are missing');
 assert(main.includes('writeConnectionConfig'), 'LAN client host setting is not persisted');

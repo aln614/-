@@ -4469,8 +4469,9 @@ body.theme-dark *::-webkit-scrollbar-thumb:hover{
 .input-image-label{position:absolute;top:3px;left:3px;padding:1px 3px;border-radius:4px;background:#17202de8;color:#fff;font-size:9px;line-height:14px;white-space:nowrap;pointer-events:none;letter-spacing:0}
 
 body.standalone-library .app-shell,body.standalone-library .panel-restore{display:none!important}
-html:has(body.standalone-library),body.standalone-library,body[data-skin].standalone-library,body[data-skin].theme-dark.standalone-library{background:transparent!important}
-body.standalone-library{overflow:hidden!important}
+html:has(body.standalone-library){background:transparent!important}
+body.standalone-library,body[data-skin].standalone-library,body[data-skin].theme-dark.standalone-library{background-color:transparent!important}
+body.standalone-library{overflow:hidden!important;background-attachment:fixed!important}
 body.standalone-library .asset-library-window,body.standalone-library .prompt-library-window{position:fixed!important;left:0!important;top:0!important;width:100vw!important;height:100vh!important;max-width:none!important;max-height:none!important;border-radius:20px!important}
 body.standalone-library .chat-floating-resize{display:block!important;z-index:12}
 body.standalone-library .asset-library-head,body.standalone-library .prompt-library-head{-webkit-app-region:drag;cursor:move;user-select:none}

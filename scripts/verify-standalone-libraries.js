@@ -129,13 +129,7 @@ fs.writeFileSync(path.join(data, 'config.json'), JSON.stringify({
     assert.equal(await asset.evaluate(()=>getComputedStyle(document.body).backgroundColor),'rgba(0, 0, 0, 0)');
     assert.equal(await asset.locator('#assetLibraryHead').evaluate(el=>getComputedStyle(el).webkitAppRegion),'drag','The header must drag the native window');
     assert.equal(await asset.locator('#assetLibrarySearch').evaluate(el=>getComputedStyle(el).webkitAppRegion),'no-drag','Search stays interactive in the draggable header');
-    const glassAlpha=await instance.evaluate(async({BrowserWindow})=>{
-      const panel=BrowserWindow.getAllWindows().find(item=>item.webContents.getURL().includes('library=asset'));
-      const image=await panel.webContents.capturePage();
-      const bitmap=image.toBitmap(), size=image.getSize(), offset=(Math.floor(size.height*.55)*size.width+Math.floor(size.width*.7))*4;
-      return bitmap[offset+3];
-    });
-    assert.ok(glassAlpha < 245,`Panel background should remain translucent, alpha ${glassAlpha}`);
+    assert.match(await asset.evaluate(()=>getComputedStyle(document.body).backgroundImage),/^url\(/,'Standalone glass must use the sampled desktop as its refraction source');
     const handle=asset.locator('#assetLibraryResize');
     await handle.waitFor({state:'visible'});
     const grip=await handle.boundingBox();

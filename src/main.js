@@ -8,7 +8,7 @@ const crypto = require('crypto');
 const zlib = require('zlib');
 const { Transform } = require('stream');
 const { pipeline } = require('stream/promises');
-const { app, BrowserWindow, Tray, shell, Menu, clipboard, nativeImage, ipcMain, globalShortcut } = require('electron');
+const { app, BrowserWindow, Tray, shell, Menu, clipboard, nativeImage, ipcMain, globalShortcut, desktopCapturer, screen } = require('electron');
 const { spawn } = require('child_process');
 const { initDB, getDB, addLog, listBatches, listImages, listLogs, nowISO, uuid, setNetworkTimeOffset, getNetworkTimeInfo } = require('./services/db');
 const { TaskQueue } = require('./services/taskQueue');
@@ -29,6 +29,7 @@ let configPath = null;
 let currentPort = 7868;
 let activeOpenAppShortcut = '';
 const libraryWindows = { asset:null, prompt:null };
+const libraryBackdropState = { asset:null, prompt:null };
 let activeLibraryShortcuts = {};
 let shortcutsSuspended = false;
 let isAppQuitting = false;
@@ -845,6 +846,39 @@ function applyLibraryWindowShape(win) {
   try { win.setShape(rectangles); } catch (error) { addLog(`独立窗口圆角设置失败：${error.message}`, {level:'warn'}); }
 }
 
+function sendLibraryBackdrop(kind) {
+  const win=libraryWindows[kind], state=libraryBackdropState[kind];
+  if (!win || win.isDestroyed() || !state) return;
+  const bounds=win.getBounds();
+  win.webContents.send('library:backdrop',{...state,offsetX:bounds.x-state.displayX,offsetY:bounds.y-state.displayY});
+}
+
+async function captureLibraryBackdrop(kind) {
+  const win=libraryWindows[kind];
+  if (process.platform !== 'win32' || !win || win.isDestroyed()) return false;
+  try {
+    const display=screen.getDisplayMatching(win.getBounds());
+    const thumbnailSize={width:Math.max(1,Math.round(display.bounds.width*display.scaleFactor)),height:Math.max(1,Math.round(display.bounds.height*display.scaleFactor))};
+    const sources=await desktopCapturer.getSources({types:['screen'],thumbnailSize});
+    const source=sources.find(item=>item.display_id===String(display.id)) || sources[0];
+    if(!source || source.thumbnail.isEmpty()) return false;
+    libraryBackdropState[kind]={
+      image:`data:image/jpeg;base64,${source.thumbnail.toJPEG(78).toString('base64')}`,
+      displayX:display.bounds.x,displayY:display.bounds.y,
+      displayWidth:display.bounds.width,displayHeight:display.bounds.height
+    };
+    sendLibraryBackdrop(kind);
+    return true;
+  } catch(error) {
+    addLog(`独立窗口桌面玻璃背景采样失败：${error.message}`,{level:'warn'});
+    return false;
+  }
+}
+
+function refreshLibraryWindowMaterials() {
+  for (const kind of Object.keys(libraryWindows)) sendLibraryBackdrop(kind);
+}
+
 function showLibraryWindow(kind, toggle = false) {
   if (!['asset','prompt'].includes(kind) || !server?.listening) return false;
   let win = libraryWindows[kind];
@@ -852,7 +886,8 @@ function showLibraryWindow(kind, toggle = false) {
     if (toggle && win.isVisible() && win.isFocused()) { win.hide(); return true; }
     if (win.isMinimized()) win.restore();
     win.webContents.send('library:refresh');
-    win.show(); win.focus();
+    if(win.isVisible()){sendLibraryBackdrop(kind);win.show();win.focus();}
+    else captureLibraryBackdrop(kind).finally(()=>{if(!win.isDestroyed()){win.show();win.focus();}});
     return true;
   }
   win = new BrowserWindow({
@@ -864,10 +899,9 @@ function showLibraryWindow(kind, toggle = false) {
   });
   libraryWindows[kind] = win;
   if (process.platform === 'win32') {
-    // DWM acrylic paints an opaque rectangular backdrop outside a transparent HWND's region.
-    // Keep the native surface transparent; the renderer owns the complete glass material.
     applyLibraryWindowShape(win);
-    win.on('resize', ()=>applyLibraryWindowShape(win));
+    win.on('resize', ()=>{applyLibraryWindowShape(win);sendLibraryBackdrop(kind);});
+    win.on('move', ()=>sendLibraryBackdrop(kind));
   }
   setupImageContextMenu(win);
   win.webContents.setWindowOpenHandler(({url:target})=>{
@@ -879,8 +913,11 @@ function showLibraryWindow(kind, toggle = false) {
     catch { event.preventDefault(); }
   });
   win.on('close', event=>{ if(!isAppQuitting){event.preventDefault(); win.hide();} });
-  win.on('closed', ()=>{ if(libraryWindows[kind] === win) libraryWindows[kind] = null; });
-  win.once('ready-to-show', ()=>{if(!win.isDestroyed()){win.show();win.focus();}});
+  win.on('closed', ()=>{
+    if(libraryWindows[kind] === win) libraryWindows[kind] = null;
+    libraryBackdropState[kind]=null;
+  });
+  win.once('ready-to-show', async()=>{if(!win.isDestroyed()){await captureLibraryBackdrop(kind);win.show();win.focus();}});
   win.loadURL(`http://127.0.0.1:${currentPort}/?library=${kind}`).catch(error=>addLog(`独立窗口打开失败：${error.message}`, {level:'warn'}));
   return true;
 }
@@ -1054,6 +1091,7 @@ function saveConfig(partial) {
   next.mascot_enabled = next.mascot_enabled !== false;
   if (!next.port) next.port = DEFAULT_CONFIG.port;
   fs.writeFileSync(configPath, JSON.stringify(next, null, 2), 'utf8');
+  if (Object.prototype.hasOwnProperty.call(partial || {}, 'liquid_glass')) refreshLibraryWindowMaterials();
   try { mirrorRuntimeDataToOutputDir(next, { configOnly: true }); } catch {}
   return next;
 }
