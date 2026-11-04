@@ -16,34 +16,43 @@ fs.writeFileSync(path.join(data,'config.json'),JSON.stringify({port:18790,shortc
     app=await electron.launch({executablePath:packaged || require('electron'),args:packaged?[]:[root],env:{...process.env,APPDATA:temporary,LOCALAPPDATA:temporary,LOCAL_API_IMAGE_GENERATOR_DATA_DIR:data}});
     const page=await app.firstWindow();
     await page.waitForURL('http://127.0.0.1:18790/**',{timeout:30000});
-    await page.waitForFunction(()=>document.querySelector('#startBatchBtn>.liquid-backdrop') && document.querySelector('.right-panel .stats>div>.liquid-backdrop'));
+    await page.waitForFunction(()=>document.querySelector('.topbar>.liquid-backdrop') && document.querySelector('.sidebar>.liquid-backdrop'));
     const surfaceCount=await page.locator('[data-liquid-surface]').count();
-    assert.ok(surfaceCount>=18 && surfaceCount<=24,'Control surfaces stay within the intended bounded tier: '+surfaceCount);
-    for(const selector of ['#startBatchBtn','.topbar .pill','.desktop-window-controls button','.right-panel .stats>div','#saveConfigBtn','#clearAllInputImagesBtn']) {
-      const style=await page.locator(selector).first().evaluate(el=>{const s=getComputedStyle(el);return {radius:parseFloat(s.borderRadius),shadow:s.boxShadow,border:s.borderTopColor,backdrop:getComputedStyle(el.querySelector(':scope>.liquid-backdrop')).backdropFilter};});
-      assert.ok(style.radius>=10,selector+' has a rounded liquid edge');
-      assert.notEqual(style.shadow,'none',selector+' has glass depth');
-      assert.notEqual(style.border,'rgba(0, 0, 0, 0)',selector+' has an edge highlight');
+    assert.ok(surfaceCount>=2 && surfaceCount<=12,'Liquid optics stay limited to navigation and floating layers: '+surfaceCount);
+    assert.equal(await page.locator('#page-home .liquid-backdrop').count(),0,'Home content controls do not create nested refractive black blocks');
+    for(const selector of ['.topbar','.sidebar']) {
+      const style=await page.locator(selector).evaluate(el=>{const s=getComputedStyle(el),glass=getComputedStyle(el.querySelector(':scope>.liquid-backdrop'));return {radius:parseFloat(s.borderRadius),shadow:s.boxShadow,border:s.borderTopColor,backdrop:glass.backdropFilter};});
+      assert.ok(style.radius>=20,selector+' has a continuous Apple-style corner');
+      assert.notEqual(style.shadow,'none',selector+' has material depth');
+      assert.notEqual(style.border,'rgba(0, 0, 0, 0)',selector+' has a fine material edge');
       assert.match(style.backdrop,/url\(/,selector+' uses the upstream refractive filter');
     }
+    for(const selector of ['#page-home .card','.right-panel','.recent-upload-panel','.right-panel .stats>div']) {
+      const style=await page.locator(selector).first().evaluate(el=>{const s=getComputedStyle(el);return {radius:parseFloat(s.borderRadius),background:s.backgroundColor,shadow:s.boxShadow};});
+      assert.ok(style.radius>=17,selector+' keeps concentric rounded corners');
+      assert.notEqual(style.background,'rgba(0, 0, 0, 0)',selector+' has a readable material fill');
+      assert.notEqual(style.shadow,'none',selector+' has restrained depth');
+    }
     const start=page.locator('#startBatchBtn');
-    const box=await start.boundingBox();
-    await page.mouse.move(box.x+box.width*.72,box.y+box.height*.42);
-    await page.waitForTimeout(80);
-    assert.equal(await start.evaluate(el=>el.classList.contains('liquid-pointer-active')),true,'Pointer highlight activates through the shared rAF tracker');
-    assert.notEqual(await start.evaluate(el=>el.style.getPropertyValue('--liquid-pointer-x')),'','Pointer highlight position is written without React remounts');
-    await page.mouse.down();
-    assert.equal(await start.evaluate(el=>el.classList.contains('liquid-control-pressed')),true,'Pressed glass state activates');
-    await page.mouse.up();
-    assert.equal(await start.evaluate(el=>el.classList.contains('liquid-control-pressed')),false,'Pressed glass state releases');
+    assert.equal(await start.evaluate(el=>getComputedStyle(el).borderRadius),'999px','Primary commands use a system pill shape');
     await page.locator('#apiKey').focus();
     const input=await page.locator('#apiKey').evaluate(el=>{const s=getComputedStyle(el);return {radius:parseFloat(s.borderRadius),shadow:s.boxShadow,backdrop:s.backdropFilter};});
     assert.ok(input.radius>=12,'Inputs use the rounded glass language');
     assert.notEqual(input.shadow,'none','Focused input has a glass focus ring');
-    assert.match(input.backdrop,/blur/,'Inputs keep lightweight blur without a React surface');
+    assert.equal(input.backdrop,'none','Inputs stay optically sharp inside the material card');
+    const pages=['home','history','images','video','video-manage','chat','api','lan','public','logs','settings'];
+    for(const name of pages) {
+      const nav=page.locator('.nav[data-page="'+name+'"]');
+      if(!await nav.count() || !await nav.isVisible()) continue;
+      await nav.click();
+      await page.waitForFunction(value=>document.getElementById('page-'+value)?.classList.contains('active'),name);
+      const problems=await page.evaluate(()=>[...document.querySelectorAll('.page.active .card,.page.active .table-wrap,.page.active .batch-card,.page.active .dropzone,.page.active .recent-upload-panel,.page.active .recent-video-upload-panel')].filter(el=>{const r=el.getBoundingClientRect();return r.width>0&&r.height>0&&parseFloat(getComputedStyle(el).borderTopLeftRadius)<14;}).map(el=>({tag:el.tagName,id:el.id,className:el.className,radius:getComputedStyle(el).borderRadius})));
+      assert.deepEqual(problems,[],name+' page has no square primary surfaces');
+    }
+    await page.locator('.nav[data-page="home"]').click();
     fs.mkdirSync(path.join(root,'test-results'),{recursive:true});
     await page.screenshot({path:path.join(root,'test-results','control-glass-main.png')});
-    console.log('Control glass:',JSON.stringify({surfaceCount,inputRadius:input.radius}));
+    console.log('Apple material hierarchy:',JSON.stringify({surfaceCount,inputRadius:input.radius}));
   } finally {
     if(app) await app.close();
     const relative=path.relative(os.tmpdir(),temporary);

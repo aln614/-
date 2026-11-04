@@ -12,7 +12,7 @@ fs.writeFileSync(path.join(data,'config.json'),JSON.stringify({port:18789,shortc
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aDAAAAABJRU5ErkJggg==','base64');
 const gif=Buffer.from('47494638396101000100800000ff000000ff0021ff0b4e45545343415045322e30030100000021f904000a0000002c000000000100010000020244010021f904000a0000002c00000000010001000002024c01003b','hex');
-const ready=page=>page.waitForFunction(()=>window.localAppearance && window.liquidGlassSettings && document.getElementById('appVersionText').textContent==='1.0.125');
+const ready=page=>page.waitForFunction(()=>window.localAppearance && window.liquidGlassSettings && document.getElementById('appVersionText').textContent==='1.0.126');
 const imageReady=page=>page.waitForFunction(()=>document.querySelector('.appearance-custom-media')?.tagName==='IMG' && document.querySelector('.appearance-custom-media').naturalWidth>0);
 async function videoFixture(page) {
   const bytes=await page.evaluate(async()=>{
