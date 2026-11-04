@@ -6,7 +6,6 @@ import glassSettings from '../services/liquidGlassSettings';
 
 const {DEFAULT_LIQUID_GLASS:defaults,normalizeLiquidGlass:normalize}=glassSettings;
 const key='tenying-liquid-glass-settings';
-const standaloneLibrary=new URLSearchParams(location.search).get('library');
 const controls={displacementScale:'liquidDisplacement',blurAmount:'liquidBlur',saturation:'liquidSaturation',aberrationIntensity:'liquidAberration',surfaceOpacity:'liquidOpacity'};
 const selector=[
   '.topbar',
@@ -24,6 +23,8 @@ const pendingHosts=new Set();
 let frame=0;
 let motionTimer=0;
 let nativeHidden=false;
+let nativeAppearanceSignature='';
+let nativeAppearanceRevision=0;
 const stationaryMouse={x:0,y:0};
 function motion() {
   if(document.hidden || nativeHidden || !settings.enabled) return;
@@ -79,7 +80,6 @@ function renderSurface(surface) {
       backdrop.className='liquid-backdrop liquid-backdrop-static';
       backdrop.setAttribute('aria-hidden','true');
       surface.host.prepend(backdrop);
-      if(standaloneLibrary) window.dispatchEvent(new Event('library-backdrop-ready'));
     } else if(!active) backdrop?.remove();
     return;
   }
@@ -115,7 +115,7 @@ function discoverSurfaces() {
     if(surfaces.has(host)) continue;
     host.dataset.liquidSurface='';
     if(getComputedStyle(host).position==='static') host.classList.add('liquid-static-host');
-    const staticOnly=host.id==='previewModal' || (['asset','prompt'].includes(standaloneLibrary) && host.matches('.asset-library-window,.prompt-library-window'));
+    const staticOnly=host.id==='previewModal';
     let root=null;
     if(!staticOnly) {
       const mount=document.createElement('div');
@@ -152,9 +152,20 @@ new MutationObserver(records=>{
   }
   if(pendingHosts.size) scheduleDiscover();
 }).observe(document.body,{subtree:true,attributes:true,attributeFilter:['class','style','hidden','open','aria-hidden']});
+function syncNativeAppearance() {
+  if(!window.desktopAppearance?.apply) return;
+  const appearance={mode:document.body.dataset.backgroundMode || 'board',theme:document.body.dataset.themeActual || 'light',enabled:settings.enabled};
+  const signature=JSON.stringify(appearance);
+  if(signature===nativeAppearanceSignature) return;
+  nativeAppearanceSignature=signature;
+  const revision=++nativeAppearanceRevision;
+  window.desktopAppearance.apply(appearance).then(result=>{
+    if(revision===nativeAppearanceRevision) document.body.dataset.nativeGlassMaterial=result?.material || 'none';
+  }).catch(()=>{if(revision===nativeAppearanceRevision) nativeAppearanceSignature='';});
+}
 function render() {
   document.body.classList.toggle('liquid-glass-enabled',settings.enabled);
-  window.libraryPanel?.setGlassEnabled?.(settings.enabled && document.body.dataset.backgroundMode==='none');
+  syncNativeAppearance();
   document.documentElement.style.setProperty('--liquid-opacity',settings.surfaceOpacity);
   document.documentElement.style.setProperty('--liquid-blur',(4+settings.blurAmount*32)+'px');
   document.documentElement.style.setProperty('--library-liquid-blur',(2+settings.blurAmount*10)+'px');
@@ -189,7 +200,7 @@ document.getElementById('liquidSave')?.addEventListener('click',async e=>{
 });
 window.addEventListener('storage',e=>{if(e.key===key){settings=stored() || {...defaults};render();}});
 window.addEventListener('local-appearance-change',()=>{
-  window.libraryPanel?.setGlassEnabled?.(settings.enabled && document.body.dataset.backgroundMode==='none');
+  syncNativeAppearance();
 });
 function updateVisibility() {
   const update=()=>{for(const surface of surfaces.values()) renderSurface(surface);};

@@ -21,25 +21,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
   prepareAssetDrag: (payload) => ipcRenderer.invoke('prepare-asset-drag', payload || {}),
   startAssetDrag: (payload) => ipcRenderer.invoke('start-asset-drag', payload || {})
 });
-let lastLibraryBackdrop=null;
-const libraryBackdropListeners=new Set();
-const libraryBackdropMotionListeners=new Set();
-ipcRenderer.on('library:backdrop',(_event,payload)=>{lastLibraryBackdrop={...lastLibraryBackdrop,...payload};for(const callback of libraryBackdropListeners) callback(payload);});
-ipcRenderer.on('library:backdrop-motion',(_event,payload)=>{for(const callback of libraryBackdropMotionListeners) callback(payload);});
+contextBridge.exposeInMainWorld('desktopAppearance', {
+  apply: appearance => ipcRenderer.invoke('desktop:appearance', appearance)
+});
 contextBridge.exposeInMainWorld('libraryPanel', {
   open: kind => ipcRenderer.invoke('library:open', kind),
   hide: () => ipcRenderer.invoke('library:hide'),
   resize: size => ipcRenderer.send('library:resize', size),
-  setGlassEnabled: enabled => ipcRenderer.send('library:glass-enabled', enabled === true),
   startWindowDrag: point => ipcRenderer.send('library:drag-start', point),
   moveWindowDrag: point => ipcRenderer.send('library:drag-move', point),
   endWindowDrag: () => ipcRenderer.send('library:drag-end'),
-  backdropUnavailable: () => ipcRenderer.send('library:backdrop-unavailable'),
-  setBackdropVisible: visible => ipcRenderer.send('library:backdrop-visibility', visible === true),
   applyPrompt: content => ipcRenderer.invoke('library:apply-prompt', content),
   suspendShortcuts: value => ipcRenderer.invoke('shortcuts:suspend', value),
-  onBackdrop: callback => { libraryBackdropListeners.add(callback); if(lastLibraryBackdrop) queueMicrotask(()=>callback(lastLibraryBackdrop)); },
-  onBackdropMotion: callback => {libraryBackdropMotionListeners.add(callback);return ()=>libraryBackdropMotionListeners.delete(callback);},
   onRefresh: callback => ipcRenderer.on('library:refresh', () => callback()),
   onApplyPrompt: callback => ipcRenderer.on('library:apply-prompt', (_event, content) => callback(content))
 });

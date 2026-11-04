@@ -116,8 +116,8 @@ fs.writeFileSync(path.join(data, 'config.json'), JSON.stringify({
     const asset = await waitForLibrary('asset');
     assert.ok(asset, 'Asset library opens in a separate native window');
     await asset.waitForSelector('body.standalone-asset #assetLibraryLayer.active', {timeout:15000});
-    await asset.waitForSelector('#assetLibraryWindow > .liquid-backdrop-static');
-    assert.equal(await asset.locator('#assetLibraryWindow feDisplacementMap').count(),0,'Standalone asset glass is neutral and avoids full-window chromatic filters');
+    await asset.waitForSelector('#assetLibraryWindow > .liquid-backdrop');
+    await asset.waitForFunction(()=>document.querySelector('#assetLibraryWindow feDisplacementMap'));
     await asset.getByText('fixture.png',{exact:true}).waitFor();
     const appearance=await instance.evaluate(({BrowserWindow})=>{
       const win=BrowserWindow.getAllWindows().find(item=>item.webContents.getURL().includes('library=asset'));
@@ -140,7 +140,8 @@ fs.writeFileSync(path.join(data, 'config.json'), JSON.stringify({
     assert.equal(await asset.locator('#assetUploadTopBtn').evaluate(el=>getComputedStyle(el).webkitAppRegion),'no-drag');
     assert.equal(await asset.locator('#assetLibraryWindow').evaluate(el=>getComputedStyle(el).borderTopWidth),'0px','Standalone asset window has no outer border line');
     assert.equal(await asset.locator('#assetLibraryHead').evaluate(el=>getComputedStyle(el).borderBottomWidth),'0px','Standalone asset header has no divider line');
-    assert.match(await asset.locator('#assetLibraryWindow > .liquid-backdrop-static').evaluate(el=>getComputedStyle(el,'::before').backgroundImage),/^url\(/,'Standalone glass must use the sampled desktop as its neutral background source');
+    await asset.waitForFunction(()=>document.body.dataset.nativeGlassMaterial==='acrylic');
+    assert.match(await asset.locator('#assetLibraryWindow > .liquid-backdrop').evaluate(el=>getComputedStyle(el).backdropFilter),/url\(/,'Standalone glass uses the upstream optics');
     const handle=asset.locator('#assetLibraryResize');
     await handle.waitFor({state:'visible'});
     const grip=await handle.boundingBox();
@@ -182,8 +183,8 @@ fs.writeFileSync(path.join(data, 'config.json'), JSON.stringify({
     const prompt = await waitForLibrary('prompt');
     assert.ok(prompt, 'Prompt library opens in a separate native window');
     await prompt.waitForSelector('body.standalone-prompt #promptLibraryLayer.active', {timeout:15000});
-    await prompt.waitForSelector('#promptLibraryWindow > .liquid-backdrop-static');
-    assert.equal(await prompt.locator('#promptLibraryWindow feDisplacementMap').count(),0);
+    await prompt.waitForSelector('#promptLibraryWindow > .liquid-backdrop');
+    await prompt.waitForFunction(()=>document.querySelector('#promptLibraryWindow feDisplacementMap'));
     await prompt.getByText('Test template', {exact:true}).waitFor();
     assert.equal(await prompt.evaluate(()=>getComputedStyle(document.body).backgroundColor),'rgba(0, 0, 0, 0)');
     const promptShape=await instance.evaluate(({BrowserWindow})=>{

@@ -1,14 +1,11 @@
 'use strict';
-// Keep dynamic desktops live while the panel is visible; release tracks when hidden.
+// Coalesce native panel movement without reading or capturing the desktop.
 (() => {
-  if(typeof window.libraryPanel?.onBackdropMotion!=='function' || window.lanClient) return;
+  if(typeof window.libraryPanel?.startWindowDrag!=='function' || window.lanClient) return;
   const kind=new URLSearchParams(location.search).get('library');
-  const backdropLayer=()=>kind ? document.querySelector('#'+kind+'LibraryWindow > .liquid-backdrop-static') : document.getElementById('desktopLiveBackdrop');
-  let generation=0,stream=null,video=null,sourceId='';
   let drag=null,dragFrame=0;
   function endDrag(event) {
     if(!drag) return;
-    if(event?.type==='pointerup' && event.pointerId===drag.pointerId) drag.point={x:event.screenX,y:event.screenY};
     if(dragFrame) {cancelAnimationFrame(dragFrame);dragFrame=0;}
     window.libraryPanel.moveWindowDrag(drag.point);
     const {element,pointerId}=drag;
@@ -36,63 +33,6 @@
     element.addEventListener('lostpointercapture',endDrag);
   }
   window.addEventListener('blur',endDrag);
-  function stop(status='idle') {
-    generation++;
-    if(stream) for(const track of stream.getTracks()) track.stop();
-    stream=null;sourceId='';
-    if(video) {video.srcObject=null;video.remove();video=null;}
-    document.body.dataset.libraryBackdropMotion=status;
-  }
-  async function start(payload) {
-    if(!payload?.active || document.body.dataset.backgroundMode!=='none') {stop();return;}
-    if(!payload.sourceId || !navigator.mediaDevices?.getUserMedia) {stop('unavailable');window.libraryPanel.backdropUnavailable();return;}
-    if(sourceId===payload.sourceId && (stream?.active || document.body.dataset.libraryBackdropMotion==='starting')) return;
-    stop('starting');
-    const token=generation;
-    sourceId=payload.sourceId;
-    const body=document.body;
-    window.dispatchEvent(new CustomEvent('library-backdrop-update',{detail:payload}));
-    try {
-      const next=await navigator.mediaDevices.getUserMedia({
-        audio:false,video:{mandatory:{chromeMediaSource:'desktop',chromeMediaSourceId:payload.sourceId,maxWidth:960,maxHeight:600,maxFrameRate:60}}
-      });
-      if(token!==generation) {for(const track of next.getTracks()) track.stop();return;}
-      const layer=backdropLayer();
-      if(!layer) {for(const track of next.getTracks()) track.stop();stop('unavailable');window.libraryPanel.backdropUnavailable();return;}
-      stream=next;
-      video=document.createElement('video');
-      video.className='library-live-backdrop';
-      video.setAttribute('aria-hidden','true');
-      video.muted=true;video.autoplay=true;video.playsInline=true;video.srcObject=next;
-      layer.appendChild(video);
-      await video.play();
-      if(typeof video.requestVideoFrameCallback==='function') {
-        await new Promise(resolve=>{video.requestVideoFrameCallback(resolve);setTimeout(resolve,500);});
-      }
-      if(token!==generation) return;
-      video.classList.add('is-ready');
-      body.dataset.libraryBackdropMotion='active';
-      for(const track of next.getTracks()) track.addEventListener('ended',()=>{
-        if(token===generation) {stop('unavailable');window.libraryPanel.backdropUnavailable();}
-      },{once:true});
-    } catch(error) {
-      if(token===generation) {console.warn('Live library backdrop unavailable:',error);stop('unavailable');window.libraryPanel.backdropUnavailable();}
-    }
-  }
-  window.libraryPanel.onBackdropMotion(start);
-  function updateVisibility() {
-    const visible=!document.hidden && document.body.dataset.backgroundMode==='none';
-    if(!visible) {endDrag();stop();}
-    window.libraryPanel.setBackdropVisible(visible);
-  }
-  window.addEventListener('library-backdrop-ready',()=>{
-    const layer=backdropLayer();
-    if(video && layer && video.parentElement!==layer) layer.appendChild(video);
-    updateVisibility();
-  });
-  document.addEventListener('visibilitychange',updateVisibility);
-  window.addEventListener('local-appearance-change',updateVisibility);
-  window.addEventListener('pagehide',()=>{endDrag();stop();});
-  window.desktopVisibility?.onChange(visible=>{if(!visible){endDrag();stop();}});
-  updateVisibility();
+  window.addEventListener('pagehide',endDrag);
+  window.desktopVisibility?.onChange(visible=>{if(!visible) endDrag();});
 })();

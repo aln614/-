@@ -5,40 +5,6 @@ let refImages = [];
 let imagePromptMentions = null;
 const standaloneLibrary = window.libraryPanel ? new URLSearchParams(location.search).get('library') : '';
 if(['asset','prompt'].includes(standaloneLibrary)) document.body.classList.add('standalone-library', `standalone-${standaloneLibrary}`);
-if(window.libraryPanel?.onBackdrop && !window.lanClient) {
-  if(!standaloneLibrary) {
-    const layer=document.createElement('div');
-    layer.id='desktopLiveBackdrop';layer.className='liquid-backdrop-static';
-    layer.setAttribute('aria-hidden','true');
-    document.getElementById('localAppearanceBackground')?.prepend(layer);
-  }
-  let backdropState={},backdropLayer=null,lastBackdropImage='';
-  function applyLibraryBackdrop(payload) {
-    if(payload) backdropState={...backdropState,...payload};
-    const layer=standaloneLibrary ? document.querySelector('#'+standaloneLibrary+'LibraryWindow > .liquid-backdrop-static') : document.getElementById('desktopLiveBackdrop');
-    if(!layer) return;
-    if(layer!==backdropLayer) {backdropLayer=layer;lastBackdropImage='';}
-    const set=(name,value)=>{if(layer.style.getPropertyValue(name)!==value) layer.style.setProperty(name,value);};
-    const {image,displayWidth,displayHeight,offsetX,offsetY}=backdropState;
-    if(image && image!==lastBackdropImage) {
-      set('--library-backdrop-image',`url(${JSON.stringify(image)})`);
-      lastBackdropImage=image;
-      if(!document.body.classList.contains('library-backdrop-ready')) document.body.classList.add('library-backdrop-ready');
-    }
-    if(displayWidth && displayHeight) {
-      set('--library-backdrop-size',`${displayWidth}px ${displayHeight}px`);
-      set('--library-backdrop-width',`${displayWidth}px`);
-      set('--library-backdrop-height',`${displayHeight}px`);
-    }
-    if(Number.isFinite(offsetX) && Number.isFinite(offsetY)) {
-      set('--library-backdrop-x',`${-offsetX}px`);
-      set('--library-backdrop-y',`${-offsetY}px`);
-    }
-  }
-  window.libraryPanel.onBackdrop(applyLibraryBackdrop);
-  window.addEventListener('library-backdrop-ready',()=>applyLibraryBackdrop());
-  window.addEventListener('library-backdrop-update',event=>applyLibraryBackdrop(event.detail));
-}
 if(window.mainWindowControls && !standaloneLibrary && !window.lanClient){
   document.body.classList.add('desktop-shell');
   const updateWindowState = state=>{

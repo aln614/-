@@ -8,7 +8,7 @@ const crypto = require('crypto');
 const zlib = require('zlib');
 const { Transform } = require('stream');
 const { pipeline } = require('stream/promises');
-const { app, BrowserWindow, Tray, shell, Menu, clipboard, nativeImage, ipcMain, globalShortcut, desktopCapturer, screen } = require('electron');
+const { app, BrowserWindow, Tray, shell, Menu, clipboard, nativeImage, ipcMain, globalShortcut, nativeTheme, screen } = require('electron');
 const { spawn } = require('child_process');
 const { initDB, getDB, addLog, listBatches, listImages, listLogs, nowISO, uuid, setNetworkTimeOffset, getNetworkTimeInfo } = require('./services/db');
 const { TaskQueue } = require('./services/taskQueue');
@@ -30,10 +30,7 @@ let currentPort = 7868;
 let activeOpenAppShortcut = '';
 const libraryWindows = { asset:null, prompt:null };
 let mainWindowDrag = null;
-const libraryBackdropState = { main:null, asset:null, prompt:null };
-const libraryBackdropTimers = { main:null, asset:null, prompt:null };
-const libraryBackdropCaptures = { main:null, asset:null, prompt:null };
-const libraryBackdropMotion = { main:null, asset:null, prompt:null };
+const libraryWindowDrags = { asset:null, prompt:null };
 let activeLibraryShortcuts = {};
 let shortcutsSuspended = false;
 let isAppQuitting = false;
@@ -792,6 +789,17 @@ function validateShortcutConfiguration(input = {}, strict = false) {
 
 function bringMainWindowToFront() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.setContentProtection(false);
+  mainWindow.setOpacity(1);
+  const bounds=mainWindow.getBounds();
+  const visible=screen.getAllDisplays().some(display=>{
+    const area=display.workArea;
+    return bounds.x+Math.min(bounds.width,120)>area.x && bounds.x<area.x+area.width-80 && bounds.y+48>area.y && bounds.y<area.y+area.height-40;
+  });
+  if(!visible) {
+    const area=screen.getPrimaryDisplay().workArea;
+    mainWindow.setPosition(area.x+Math.max(0,Math.round((area.width-bounds.width)/2)),area.y+Math.max(0,Math.round((area.height-bounds.height)/2)));
+  }
   try { mainWindow.setSkipTaskbar(false); } catch {}
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show();
@@ -856,113 +864,25 @@ function applyLibraryWindowShape(win) {
   try { win.setShape(rectangles); } catch (error) { addLog(`独立窗口圆角设置失败：${error.message}`, {level:'warn'}); }
 }
 
-function backdropWindow(kind) {
-  return kind==='main' ? mainWindow : libraryWindows[kind];
-}
-function sendLibraryBackdrop(kind, includeImage = false) {
-  const win=backdropWindow(kind), state=libraryBackdropState[kind];
-  if (!win || win.isDestroyed() || !state) return;
-  const bounds=win.getBounds();
-  const position=`${bounds.x}:${bounds.y}`;
-  if(!includeImage && state.lastPosition===position) return;
-  state.lastPosition=position;
-  const payload={offsetX:bounds.x-state.displayX,offsetY:bounds.y-state.displayY,displayWidth:state.displayWidth,displayHeight:state.displayHeight};
-  if(includeImage) Object.assign(payload,{image:state.image,displayWidth:state.displayWidth,displayHeight:state.displayHeight});
-  win.webContents.send('library:backdrop',payload);
-}
-
-function scheduleLibraryBackdrop(kind) {
-  const motion=libraryBackdropMotion[kind];
-  if(!motion?.glassEnabled) return;
-  if(!motion || !motion.active) beginLibraryBackdropMotion(kind);
-  if(!libraryBackdropTimers[kind]) libraryBackdropTimers[kind]=setTimeout(()=>{
-    libraryBackdropTimers[kind]=null;sendLibraryBackdrop(kind);
-  },32);
-  const current=libraryBackdropMotion[kind];
-  if(!current) return;
-  const win=backdropWindow(kind),state=libraryBackdropState[kind];
-  if(win && !win.isDestroyed() && state) {
-    const displayId=String(screen.getDisplayMatching(win.getBounds()).id);
-    if(displayId!==state.displayId && current.pendingDisplayId!==displayId) {
-      current.pendingDisplayId=displayId;
-      captureLibraryBackdrop(kind).finally(()=>{
-        if(libraryBackdropMotion[kind]===current) {
-          current.pendingDisplayId='';
-          if(current.active) sendLibraryBackdropMotion(kind);
-        }
-      });
-    }
+const nativeWindowAppearances=new WeakMap();
+function applyNativeWindowAppearance(win, appearance = {}) {
+  if(!win || win.isDestroyed()) return {material:'none'};
+  const mode=['board','none','custom'].includes(appearance.mode) ? appearance.mode : 'board';
+  const theme=appearance.theme==='dark' ? 'dark' : 'light';
+  const material=mode==='none' && appearance.enabled===true ? 'acrylic' : 'none';
+  const previous=nativeWindowAppearances.get(win);
+  // Desktop capture exclusion also hides windows from remote desktop and screen sharing.
+  win.setContentProtection(false);
+  let actual=previous?.material || 'none';
+  if(process.platform==='win32' && (!previous || previous.material!==material)) {
+    try {win.setBackgroundMaterial(material);actual=material;}
+    catch(error) {actual='none';addLog('窗口玻璃材质设置失败：'+error.message,{level:'warn'});}
   }
-}
-
-function flushLibraryBackdrop(kind) {
-  clearTimeout(libraryBackdropTimers[kind]);
-  libraryBackdropTimers[kind]=null;
-  sendLibraryBackdrop(kind);
-}
-
-function sendLibraryBackdropMotion(kind) {
-  const win=backdropWindow(kind),state=libraryBackdropState[kind],motion=libraryBackdropMotion[kind];
-  if(!win || win.isDestroyed() || !state?.sourceId || !motion?.active) return;
-  const bounds=win.getBounds();
-  win.webContents.send('library:backdrop-motion',{
-    active:true,sourceId:state.sourceId,displayWidth:state.displayWidth,displayHeight:state.displayHeight,
-    offsetX:bounds.x-state.displayX,offsetY:bounds.y-state.displayY
-  });
-}
-
-function beginLibraryBackdropMotion(kind) {
-  const win=backdropWindow(kind),motion=libraryBackdropMotion[kind];
-  if(process.platform!=='win32' || !win || win.isDestroyed() || !win.isVisible() || win.isMinimized() || !motion?.glassEnabled || motion.active) return;
-  motion.active=true;
-  try { win.setContentProtection(true); }
-  catch(error) { addLog('独立窗口实时玻璃启动失败：'+error.message,{level:'warn'});motion.active=false;return; }
-  if(libraryBackdropState[kind]?.sourceId) sendLibraryBackdropMotion(kind);
-  else captureLibraryBackdrop(kind).finally(()=>sendLibraryBackdropMotion(kind));
-}
-
-function cancelLibraryBackdropMotion(kind) {
-  const win=backdropWindow(kind),motion=libraryBackdropMotion[kind];
-  if(!motion) return;
-  motion.active=false;
-  motion.drag=null;
-  clearTimeout(libraryBackdropTimers[kind]);
-  libraryBackdropTimers[kind]=null;
-  if(win && !win.isDestroyed()) {
-    win.webContents.send('library:backdrop-motion',{active:false});
-    try { win.setContentProtection(false); } catch {}
-  }
-}
-
-function captureLibraryBackdrop(kind) {
-  if(libraryBackdropCaptures[kind]) return libraryBackdropCaptures[kind];
-  const pending=captureLibraryBackdropImage(kind).finally(()=>{if(libraryBackdropCaptures[kind]===pending) libraryBackdropCaptures[kind]=null;});
-  libraryBackdropCaptures[kind]=pending;
-  return pending;
-}
-
-async function captureLibraryBackdropImage(kind) {
-  const win=backdropWindow(kind);
-  if (process.platform !== 'win32' || !win || win.isDestroyed()) return false;
-  try {
-    const display=screen.getDisplayMatching(win.getBounds());
-    // A low-resolution neutral sample is cheaper to composite and naturally softens the desktop.
-    const scale=Math.min(1,960/display.bounds.width,600/display.bounds.height);
-    const thumbnailSize={width:Math.max(1,Math.round(display.bounds.width*scale)),height:Math.max(1,Math.round(display.bounds.height*scale))};
-    const sources=await desktopCapturer.getSources({types:['screen'],thumbnailSize});
-    const source=sources.find(item=>item.display_id===String(display.id));
-    if(!source || source.thumbnail.isEmpty() || win.isDestroyed() || backdropWindow(kind)!==win) return false;
-    libraryBackdropState[kind]={
-      image:'data:image/jpeg;base64,'+source.thumbnail.toJPEG(82).toString('base64'),
-      sourceId:source.id,displayId:String(display.id),displayX:display.bounds.x,displayY:display.bounds.y,
-      displayWidth:display.bounds.width,displayHeight:display.bounds.height
-    };
-    sendLibraryBackdrop(kind,true);
-    return true;
-  } catch(error) {
-    addLog(`独立窗口桌面玻璃背景采样失败：${error.message}`,{level:'warn'});
-    return false;
-  }
+  win.setBackgroundColor('#00000000');
+  if(nativeTheme.themeSource!==theme) nativeTheme.themeSource=theme;
+  const result={mode,theme,material:actual};
+  nativeWindowAppearances.set(win,result);
+  return result;
 }
 
 function showLibraryWindow(kind, toggle = false) {
@@ -972,9 +892,7 @@ function showLibraryWindow(kind, toggle = false) {
     if (toggle && win.isVisible() && win.isFocused()) { win.hide(); return true; }
     if (win.isMinimized()) win.restore();
     win.webContents.send('library:refresh');
-    if(win.isVisible()){sendLibraryBackdrop(kind);win.show();win.focus();}
-    else if(libraryBackdropMotion[kind]?.glassEnabled) captureLibraryBackdrop(kind).finally(()=>{if(!win.isDestroyed()){win.show();win.focus();}});
-    else {win.show();win.focus();}
+    win.setContentProtection(false);win.show();win.focus();
     return true;
   }
   win = new BrowserWindow({
@@ -985,25 +903,14 @@ function showLibraryWindow(kind, toggle = false) {
     webPreferences:{contextIsolation:true, nodeIntegration:false, sandbox:false, webSecurity:true, allowRunningInsecureContent:false, preload:path.join(__dirname,'preload.js')}
   });
   libraryWindows[kind] = win;
-  libraryBackdropMotion[kind] = {active:false,pendingDisplayId:'',glassEnabled:false,drag:null};
+  libraryWindowDrags[kind] = null;
+  applyNativeWindowAppearance(win);
   setupWindowVisibility(win);
-  win.webContents.on('did-finish-load',()=>{
-    sendLibraryBackdrop(kind,true);
-    if(libraryBackdropMotion[kind]?.active) sendLibraryBackdropMotion(kind);
-    else beginLibraryBackdropMotion(kind);
-  });
   if (process.platform === 'win32') {
     applyLibraryWindowShape(win);
     win.on('resize', ()=>applyLibraryWindowShape(win));
-    win.on('will-move', ()=>beginLibraryBackdropMotion(kind));
-    win.on('move', ()=>scheduleLibraryBackdrop(kind));
-    win.on('moved', ()=>flushLibraryBackdrop(kind));
   }
-  win.on('show', ()=>beginLibraryBackdropMotion(kind));
-  win.on('restore', ()=>beginLibraryBackdropMotion(kind));
-  win.on('hide', ()=>cancelLibraryBackdropMotion(kind));
-  win.on('minimize', ()=>cancelLibraryBackdropMotion(kind));
-  win.webContents.on('render-process-gone',()=>cancelLibraryBackdropMotion(kind));
+  for(const event of ['hide','minimize','blur']) win.on(event,()=>{libraryWindowDrags[kind]=null;});
   setupImageContextMenu(win);
   win.webContents.setWindowOpenHandler(({url:target})=>{
     if (/^https?:\/\//i.test(String(target || ''))) shell.openExternal(target).catch(()=>{});
@@ -1015,14 +922,10 @@ function showLibraryWindow(kind, toggle = false) {
   });
   win.on('close', event=>{ if(!isAppQuitting){event.preventDefault(); win.hide();} });
   win.on('closed', ()=>{
-    cancelLibraryBackdropMotion(kind);
-    libraryBackdropMotion[kind]=null;
+    libraryWindowDrags[kind]=null;
     if(libraryWindows[kind] === win) libraryWindows[kind] = null;
-    clearTimeout(libraryBackdropTimers[kind]);
-    libraryBackdropTimers[kind]=null;
-    libraryBackdropState[kind]=null;
   });
-  win.once('ready-to-show', async()=>{if(libraryBackdropMotion[kind]?.glassEnabled) await captureLibraryBackdrop(kind);if(!win.isDestroyed()){win.show();win.focus();}});
+  win.once('ready-to-show', ()=>{if(!win.isDestroyed()){win.show();win.focus();}});
   win.loadURL(`http://127.0.0.1:${currentPort}/?library=${kind}`).catch(error=>addLog(`独立窗口打开失败：${error.message}`, {level:'warn'}));
   return true;
 }
@@ -9956,60 +9859,36 @@ function librarySenderKind(event) {
     return win && !win.isDestroyed() && win.webContents===event.sender;
   });
 }
-function backdropSenderKind(event) {
-  return trustedMainWindow(event) ? 'main' : librarySenderKind(event);
-}
-ipcMain.on('library:glass-enabled', (event, enabled)=>{
-  const kind=backdropSenderKind(event),motion=libraryBackdropMotion[kind];
-  if(!motion || typeof enabled!=='boolean') return;
-  motion.glassEnabled=enabled;
-  if(!enabled) {
-    const drag=motion.drag;
-    cancelLibraryBackdropMotion(kind);
-    motion.drag=drag;
-  } else beginLibraryBackdropMotion(kind);
-});
-ipcMain.on('library:backdrop-unavailable', event=>{
-  const kind=backdropSenderKind(event);
-  if(kind) cancelLibraryBackdropMotion(kind);
-});
-ipcMain.on('library:backdrop-visibility', (event,visible)=>{
-  const kind=backdropSenderKind(event),win=backdropWindow(kind);
-  if(!win || typeof visible!=='boolean') return;
-  if(visible && win.isVisible() && !win.isMinimized()) {
-    if(libraryBackdropMotion[kind]?.active) sendLibraryBackdropMotion(kind);
-    else beginLibraryBackdropMotion(kind);
-  } else cancelLibraryBackdropMotion(kind);
+ipcMain.handle('desktop:appearance', (event, appearance)=>{
+  if(!trustedWindowSender(event) || !appearance || typeof appearance!=='object') return {material:'none'};
+  return applyNativeWindowAppearance(BrowserWindow.fromWebContents(event.sender),appearance);
 });
 function windowDragPoint(point) {
   return Number.isFinite(point?.x) && Number.isFinite(point?.y) && Math.abs(point.x)<100000 && Math.abs(point.y)<100000
     ? {x:Math.round(point.x),y:Math.round(point.y)} : null;
 }
 ipcMain.on('library:drag-start', (event,point)=>{
-  const kind=librarySenderKind(event),win=libraryWindows[kind],motion=libraryBackdropMotion[kind];
+  const kind=librarySenderKind(event),win=libraryWindows[kind];
   const cursor=windowDragPoint(point);
-  if(!win || !motion || !win.isVisible() || !cursor) return;
+  if(!win || !win.isVisible() || !cursor) return;
   const bounds=win.getBounds();
-  motion.drag={cursorX:cursor.x,cursorY:cursor.y,windowX:bounds.x,windowY:bounds.y,lastX:bounds.x,lastY:bounds.y,moved:false};
+  libraryWindowDrags[kind]={cursorX:cursor.x,cursorY:cursor.y,windowX:bounds.x,windowY:bounds.y,lastX:bounds.x,lastY:bounds.y,moved:false};
 });
 ipcMain.on('library:drag-move', (event,point)=>{
-  const kind=librarySenderKind(event),win=libraryWindows[kind],motion=libraryBackdropMotion[kind],drag=motion?.drag;
+  const kind=librarySenderKind(event),win=libraryWindows[kind],drag=libraryWindowDrags[kind];
   const cursor=windowDragPoint(point);
   if(!win || !drag || !win.isVisible() || !cursor) return;
   const dx=cursor.x-drag.cursorX,dy=cursor.y-drag.cursorY;
   if(!drag.moved && Math.abs(dx)+Math.abs(dy)<2) return;
   const x=Math.round(drag.windowX+dx),y=Math.round(drag.windowY+dy);
   if(x===drag.lastX && y===drag.lastY) return;
-  if(!drag.moved) {drag.moved=true;beginLibraryBackdropMotion(kind);}
+  drag.moved=true;
   drag.lastX=x;drag.lastY=y;
   win.setPosition(x,y);
-  sendLibraryBackdrop(kind);
 });
 ipcMain.on('library:drag-end', event=>{
-  const kind=librarySenderKind(event),motion=libraryBackdropMotion[kind];
-  if(!motion?.drag) return;
-  motion.drag=null;
-  flushLibraryBackdrop(kind);
+  const kind=librarySenderKind(event);
+  if(kind) libraryWindowDrags[kind]=null;
 });
 ipcMain.handle('library:open', (event, kind) => {
   if (!trustedWindowSender(event) || !['asset','prompt'].includes(kind)) return false;
@@ -10059,9 +9938,8 @@ ipcMain.on('main-window:drag-move', (event,point)=>{
   if(x===drag.lastX && y===drag.lastY) return;
   drag.lastX=x;drag.lastY=y;
   mainWindow.setPosition(x,y);
-  sendLibraryBackdrop('main');
 });
-ipcMain.on('main-window:drag-end', event=>{if(trustedMainWindow(event)){mainWindowDrag=null;flushLibraryBackdrop('main');}});
+ipcMain.on('main-window:drag-end', event=>{if(trustedMainWindow(event)) mainWindowDrag=null;});
 ipcMain.handle('main-window:action', (event, action) => {
   if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return false;
   if (action === 'minimize') mainWindow.minimize();
@@ -10088,23 +9966,13 @@ function createWindow() {
     webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: false, webSecurity: true, allowRunningInsecureContent: false, preload: path.join(__dirname, 'preload.js') }
   });
   mainWindow.removeMenu();
-  libraryBackdropMotion.main={active:false,pendingDisplayId:'',glassEnabled:false,drag:null};
+  applyNativeWindowAppearance(mainWindow);
   const applyMainShape=()=>{
     if(mainWindow.isMaximized()) {try {mainWindow.setShape([]);} catch {}}
     else applyLibraryWindowShape(mainWindow);
   };
   applyMainShape();
   for(const name of ['resize','maximize','unmaximize']) mainWindow.on(name,applyMainShape);
-  mainWindow.on('move',()=>scheduleLibraryBackdrop('main'));
-  mainWindow.on('moved',()=>flushLibraryBackdrop('main'));
-  for(const name of ['show','restore']) mainWindow.on(name,()=>beginLibraryBackdropMotion('main'));
-  for(const name of ['hide','minimize']) mainWindow.on(name,()=>cancelLibraryBackdropMotion('main'));
-  mainWindow.webContents.on('render-process-gone',()=>cancelLibraryBackdropMotion('main'));
-  mainWindow.webContents.on('did-finish-load',()=>{
-    sendLibraryBackdrop('main',true);
-    if(libraryBackdropMotion.main?.active) sendLibraryBackdropMotion('main');
-    else beginLibraryBackdropMotion('main');
-  });
   for(const name of ['hide','minimize','blur','closed']) mainWindow.on(name,()=>{mainWindowDrag=null;});
   setupWindowVisibility(mainWindow);
   const sendWindowState = ()=>{ if(mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('main-window:state', {maximized:mainWindow.isMaximized()}); };
@@ -10149,11 +10017,7 @@ function createWindow() {
       registerConfiguredOpenAppShortcut();
     }
   });
-  mainWindow.on('closed', () => {
-    cancelLibraryBackdropMotion('main');
-    libraryBackdropMotion.main=null;libraryBackdropState.main=null;
-    mainWindow = null;
-  });
+  mainWindow.on('closed', () => {mainWindow=null;});
 }
 if (hasInstanceLock) app.whenReady().then(() => {
   hardResetDataDirsBeforeInit();

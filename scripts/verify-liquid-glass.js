@@ -86,21 +86,21 @@ fs.writeFileSync(path.join(data,'config.json'),JSON.stringify({port:18769,output
     for(let i=0;i<100 && !asset;i++){asset=instance.windows().find(p=>p.url().includes('library=asset'));if(!asset) await new Promise(r=>setTimeout(r,100));}
     assert.ok(asset,'Asset window opens');
     asset.setDefaultTimeout(15000);
-    await asset.waitForSelector('#assetLibraryWindow > .liquid-backdrop-static');
-    assert.equal(await asset.locator('#assetLibraryWindow feDisplacementMap').count(),0,'Standalone asset library avoids full-window chromatic displacement');
-    await asset.waitForFunction(()=>Math.abs(parseFloat(getComputedStyle(document.querySelector('#assetLibraryWindow > .liquid-backdrop'),'::after').backgroundColor.split(',')[3])-.31)<.01);
+    await asset.waitForSelector('#assetLibraryWindow > .liquid-backdrop');
+    await asset.waitForFunction(()=>document.querySelector('#assetLibraryWindow feDisplacementMap')?.getAttribute('scale')==='-95');
+    assert.match(await asset.locator('#assetLibraryWindow > .liquid-backdrop').evaluate(el=>getComputedStyle(el).backdropFilter),/url\(/,'Asset library uses the upstream optical filter');
     await main.evaluate(()=>window.libraryPanel.open('prompt'));
     let prompt;
     for(let i=0;i<100 && !prompt;i++){prompt=instance.windows().find(p=>p.url().includes('library=prompt'));if(!prompt) await new Promise(r=>setTimeout(r,100));}
     assert.ok(prompt,'Prompt window opens');
     prompt.setDefaultTimeout(15000);
-    await prompt.waitForSelector('#promptLibraryWindow > .liquid-backdrop-static');
-    assert.equal(await prompt.locator('#promptLibraryWindow feDisplacementMap').count(),0,'Standalone prompt library avoids full-window chromatic displacement');
+    await prompt.waitForSelector('#promptLibraryWindow > .liquid-backdrop');
+    await prompt.waitForFunction(()=>document.querySelector('#promptLibraryWindow feDisplacementMap')?.getAttribute('scale')==='-95');
     await main.evaluate(()=>{const el=document.getElementById('liquidDisplacement');el.value='45';el.dispatchEvent(new Event('input',{bubbles:true}));});
-    assert.equal(await asset.locator('#assetLibraryWindow feDisplacementMap').count(),0);
-    assert.equal(await prompt.locator('#promptLibraryWindow feDisplacementMap').count(),0);
+    await asset.waitForFunction(()=>document.querySelector('#assetLibraryWindow feDisplacementMap')?.getAttribute('scale')==='-45');
+    await prompt.waitForFunction(()=>document.querySelector('#promptLibraryWindow feDisplacementMap')?.getAttribute('scale')==='-45');
     await main.evaluate(()=>{const el=document.getElementById('liquidEnabled');el.checked=false;el.dispatchEvent(new Event('change',{bubbles:true}));});
-    await asset.waitForFunction(()=>!document.querySelector('#assetLibraryWindow > .liquid-backdrop-static'));
+    await asset.waitForFunction(()=>!document.querySelector('#assetLibraryWindow > .liquid-backdrop'));
     console.log('Liquid glass component: parameters, saving, reload, cross-window sync and disabling passed.');
   } finally {
     if(instance) await instance.close();

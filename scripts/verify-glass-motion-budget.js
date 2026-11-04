@@ -19,7 +19,7 @@ const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
     await main.evaluate(()=>window.libraryPanel.open('asset'));
     let page;
     for(let i=0;i<100 && !page;i++){page=app.windows().find(p=>p.url().includes('library=asset'));if(!page)await pause(100);}
-    await page.waitForSelector('#assetLibraryWindow > .liquid-backdrop-static');
+    await page.waitForSelector('#assetLibraryWindow > .liquid-backdrop');
     await page.evaluate(()=>{
       const grid=document.getElementById('assetGrid');
       grid.innerHTML=Array.from({length:1200},(_,i)=>'<article class="asset-card"><div class="asset-thumb"></div><div class="asset-info">Asset '+i+'</div></article>').join('');
@@ -34,7 +34,7 @@ const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
       let last=performance.now();
       for(let i=0;i<90;i++) {
         await new Promise(resolve=>requestAnimationFrame(now=>{frames.push(now-last);last=now;resolve();}));
-        window.dispatchEvent(new CustomEvent('library-backdrop-update',{detail:{offsetX:i*3,offsetY:i*2,displayWidth:1920,displayHeight:1080}}));
+        document.getElementById('assetGrid').scrollTop=i*12;
       }
       await new Promise(resolve=>requestAnimationFrame(resolve));
       Element.prototype.querySelectorAll=query;window.getComputedStyle=style;
@@ -47,11 +47,11 @@ const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
     if(!process.argv.includes('--baseline')) {
       assert.equal(metrics.fullScans,0,'Backdrop motion must not rescan the full application DOM');
       assert.ok(metrics.styleReads<100,'Backdrop motion must not repeatedly measure glass hosts');
-      assert.equal(await page.evaluate(()=>document.body.style.getPropertyValue('--library-backdrop-x')),'','Backdrop offsets must stay scoped to the backdrop layer');
+      assert.equal(await page.locator('.library-live-backdrop').count(),0,'Scrolling must not record the desktop');
     }
     await page.evaluate(()=>window.libraryPanel.hide());
     await main.evaluate(()=>window.libraryPanel.open('asset'));
-    await page.waitForSelector('#assetLibraryWindow > .liquid-backdrop-static');
+    await page.waitForSelector('#assetLibraryWindow > .liquid-backdrop');
     console.log('Independent glass resumes correctly after hiding and reopening.');
   } finally {
     if(app) await app.close();

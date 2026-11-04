@@ -36,9 +36,9 @@ const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
         await page.evaluate(i=>window.libraryPanel.moveWindowDrag({x:150+i*4,y:110+i*2}),i);
         await pause(12);
       }
-      await page.waitForFunction(()=>document.body.dataset.libraryBackdropMotion==='active',{timeout:15000});
+      await page.waitForFunction(()=>document.body.dataset.nativeGlassMaterial==='acrylic',{timeout:15000});
       await page.evaluate(()=>{window.libraryPanel.moveWindowDrag({x:290,y:180});window.libraryPanel.endWindowDrag();});
-      await page.waitForFunction(()=>document.body.dataset.libraryBackdropMotion==='active',{timeout:15000});
+      await page.waitForFunction(()=>document.body.dataset.nativeGlassMaterial==='acrylic',{timeout:15000});
       const result=await app.evaluate(({BrowserWindow},kind)=>{
         const win=BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().includes('library='+kind));
         return {bounds:win.getBounds(),positions:win.__positions};
@@ -50,7 +50,7 @@ const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
       await pause(100);
       assert.deepEqual(await app.evaluate(({BrowserWindow},kind)=>BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().includes('library='+kind)).getBounds(),kind),result.bounds,'Main window cannot move an independent window through drag IPC');
       await page.evaluate(()=>window.libraryPanel.hide());
-      await page.waitForFunction(()=>document.body.dataset.libraryBackdropMotion==='idle',{timeout:15000});
+      assert.equal(await page.locator('.library-live-backdrop').count(),0,'Window dragging must not record the desktop');
       console.log(kind+' event coordinates: '+result.positions.length+' moves, no reversal or release jump');
     }
   } finally {
