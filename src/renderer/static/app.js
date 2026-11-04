@@ -12,8 +12,10 @@ if(standaloneLibrary && window.libraryPanel?.onBackdrop) window.libraryPanel.onB
     document.body.style.setProperty('--library-backdrop-size',`${payload.displayWidth}px ${payload.displayHeight}px`);
     document.body.classList.add('library-backdrop-ready');
   }
-  document.body.style.setProperty('--library-backdrop-position',`${-payload.offsetX}px ${-payload.offsetY}px`);
-  window.liquidGlassSettings?.motion();
+  const x=-payload.offsetX,y=-payload.offsetY;
+  document.body.style.setProperty('--library-backdrop-x',`${x}px`);
+  document.body.style.setProperty('--library-backdrop-y',`${y}px`);
+  document.body.style.setProperty('--library-backdrop-position',`${x}px ${y}px`);
 });
 if(window.mainWindowControls && !standaloneLibrary && !window.lanClient){
   document.body.classList.add('desktop-shell');

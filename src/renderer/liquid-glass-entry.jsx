@@ -6,6 +6,7 @@ import glassSettings from '../services/liquidGlassSettings';
 
 const {DEFAULT_LIQUID_GLASS:defaults,normalizeLiquidGlass:normalize}=glassSettings;
 const key='tenying-liquid-glass-settings';
+const standaloneLibrary=new URLSearchParams(location.search).get('library');
 const controls={displacementScale:'liquidDisplacement',blurAmount:'liquidBlur',saturation:'liquidSaturation',aberrationIntensity:'liquidAberration',surfaceOpacity:'liquidOpacity'};
 const selector=[
   '.topbar',
@@ -43,6 +44,7 @@ const resize=new ResizeObserver(entries=>{
     if(surface.width===width && surface.height===height) continue;
     const initialized=surface.width>0 && surface.height>0;
     surface.width=width;surface.height=height;
+    if(surface.staticOnly) { if(!initialized) renderSurface(surface);continue; }
     clearTimeout(surface.resizeTimer);
     if(initialized && width>0 && height>0){motion();surface.resizeTimer=setTimeout(()=>renderSurface(surface),140);}
     else renderSurface(surface);
@@ -65,10 +67,20 @@ function GlassSurface({host,...props}) {
 function renderSurface(surface) {
   const active=settings.enabled && !document.hidden && !nativeHidden && surface.visible && surface.width>0 && surface.height>0;
   const radius=parseFloat(getComputedStyle(surface.host).borderTopLeftRadius) || 0;
-  const signature=JSON.stringify([active,settings,radius,surface.width,surface.height]);
+  const signature=surface.staticOnly ? JSON.stringify([active]) : JSON.stringify([active,settings,radius,surface.width,surface.height]);
   if(surface.signature===signature) return;
   surface.signature=signature;
   surface.host.classList.toggle('liquid-surface-active',active);
+  if(surface.staticOnly) {
+    let backdrop=surface.host.querySelector(':scope > .liquid-backdrop-static');
+    if(active && !backdrop) {
+      backdrop=document.createElement('div');
+      backdrop.className='liquid-backdrop liquid-backdrop-static';
+      backdrop.setAttribute('aria-hidden','true');
+      surface.host.prepend(backdrop);
+    } else if(!active) backdrop?.remove();
+    return;
+  }
   const {enabled,surfaceOpacity,...props}=settings;
   // The library measures on mount/window resize; remount on container-only resizes too.
   surface.root.render(active ? <GlassSurface host={surface.host} key={surface.width+'x'+surface.height} {...props} globalMousePos={stationaryMouse} mouseOffset={stationaryMouse} overLight={false} cornerRadius={radius} elasticity={0} padding="0" style={{position:'absolute',top:'50%',left:'50%',width:'100%',height:'100%'}} /> : null);
@@ -76,7 +88,7 @@ function renderSurface(surface) {
 function removeSurface(host) {
   const surface=surfaces.get(host);
   if(!surface) return;
-  clearTimeout(surface.resizeTimer);surface.root.unmount();visibility.unobserve(host);resize.unobserve(host);surfaces.delete(host);
+  clearTimeout(surface.resizeTimer);surface.root?.unmount();visibility.unobserve(host);resize.unobserve(host);surfaces.delete(host);
   host.classList.remove('liquid-surface-active');delete host.dataset.liquidSurface;
   host.querySelector(':scope > .liquid-glass-mount')?.remove();
   host.querySelector(':scope > .liquid-backdrop')?.remove();
@@ -101,11 +113,16 @@ function discoverSurfaces() {
     if(!host.isConnected || surfaces.has(host) || host.closest('.liquid-glass-mount')) continue;
     host.dataset.liquidSurface='';
     if(getComputedStyle(host).position==='static') host.classList.add('liquid-static-host');
-    const mount=document.createElement('div');
-    mount.className='liquid-glass-mount';
-    mount.setAttribute('aria-hidden','true');
-    host.prepend(mount);
-    const surface={host,root:createRoot(mount),width:0,height:0,visible:false,signature:''};
+    const staticOnly=['asset','prompt'].includes(standaloneLibrary) && host.matches('.asset-library-window,.prompt-library-window');
+    let root=null;
+    if(!staticOnly) {
+      const mount=document.createElement('div');
+      mount.className='liquid-glass-mount';
+      mount.setAttribute('aria-hidden','true');
+      host.prepend(mount);
+      root=createRoot(mount);
+    }
+    const surface={host,root,staticOnly,width:0,height:0,visible:false,signature:''};
     surfaces.set(host,surface);visibility.observe(host);resize.observe(host);
   }
   pendingHosts.clear();

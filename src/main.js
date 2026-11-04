@@ -873,7 +873,7 @@ function scheduleLibraryBackdrop(kind) {
   libraryBackdropTimers[kind]=setTimeout(()=>{
     libraryBackdropTimers[kind]=null;
     sendLibraryBackdrop(kind);
-  },160);
+  },240);
 }
 
 function flushLibraryBackdrop(kind) {
@@ -894,14 +894,14 @@ async function captureLibraryBackdropImage(kind) {
   if (process.platform !== 'win32' || !win || win.isDestroyed()) return false;
   try {
     const display=screen.getDisplayMatching(win.getBounds());
-    // Desktop pixels are blurred; avoid full-DPI 4K/8K captures and repeated JPEG copies.
-    const scale=Math.min(1,1600/display.bounds.width,1000/display.bounds.height);
+    // A low-resolution neutral sample is cheaper to composite and naturally softens the desktop.
+    const scale=Math.min(1,960/display.bounds.width,600/display.bounds.height);
     const thumbnailSize={width:Math.max(1,Math.round(display.bounds.width*scale)),height:Math.max(1,Math.round(display.bounds.height*scale))};
     const sources=await desktopCapturer.getSources({types:['screen'],thumbnailSize});
     const source=sources.find(item=>item.display_id===String(display.id));
     if(!source || source.thumbnail.isEmpty() || win.isDestroyed() || libraryWindows[kind]!==win) return false;
     libraryBackdropState[kind]={
-      image:`data:image/jpeg;base64,${source.thumbnail.toJPEG(78).toString('base64')}`,
+      image:'data:image/jpeg;base64,'+source.thumbnail.toJPEG(82).toString('base64'),
       displayX:display.bounds.x,displayY:display.bounds.y,
       displayWidth:display.bounds.width,displayHeight:display.bounds.height
     };

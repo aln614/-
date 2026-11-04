@@ -76,6 +76,10 @@ fs.writeFileSync(path.join(data,'config.json'),JSON.stringify({port:18770,shortc
       for(let i=0;i<100 && !page;i++){page=instance.windows().find(p=>p.url().includes('library='+kind));if(!page)await new Promise(r=>setTimeout(r,100));}
       assert.ok(page,kind+' window opens');
       await page.waitForSelector('body.standalone-'+kind+' #'+kind+'LibraryLayer.active');
+      await page.waitForSelector('#'+kind+'LibraryWindow > .liquid-backdrop-static',{timeout:15000});
+      await page.waitForFunction(kind=>getComputedStyle(document.querySelector('#'+kind+'LibraryWindow > .liquid-backdrop-static'),'::before').backgroundImage.startsWith('url('),kind);
+      const sampledBackground=await page.locator('#'+kind+'LibraryWindow > .liquid-backdrop-static').evaluate(el=>getComputedStyle(el,'::before').backgroundImage);
+      assert.match(sampledBackground,/^url\(/,kind+' must sample the desktop behind the standalone window');
       const native=await instance.evaluate(async({BrowserWindow,screen,desktopCapturer},kind)=>{
         const fs=process.getBuiltinModule('fs'),path=process.getBuiltinModule('path');
         const display=screen.getPrimaryDisplay(),work=display.workArea,baseX=work.x+20,baseY=work.y+20;
@@ -101,8 +105,6 @@ fs.writeFileSync(path.join(data,'config.json'),JSON.stringify({port:18770,shortc
       },kind);
       for(const corner of native.corners) assert.deepEqual(corner,native.background,kind+' corner must be transparent');
       assert.notDeepEqual(native.center,native.background,kind+' panel must be visible');
-      const bodyBackground=await page.evaluate(()=>getComputedStyle(document.body).backgroundImage);
-      assert.match(bodyBackground,/^url\(/,kind+' must sample the desktop behind the standalone window');
       console.log(kind+' real window pixels:',JSON.stringify(native));
     }
   } finally {

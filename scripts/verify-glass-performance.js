@@ -33,8 +33,8 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     await main.evaluate(()=>window.libraryPanel.open('asset'));
     let asset;
     for(let i=0;i<100 && !asset;i++){asset=instance.windows().find(p=>p.url().includes('library=asset'));if(!asset)await pause(50);}
-    await asset.waitForSelector('#assetLibraryWindow > .liquid-backdrop');
-    await asset.waitForFunction(()=>getComputedStyle(document.body).backgroundImage.startsWith('url('));
+    await asset.waitForSelector('#assetLibraryWindow > .liquid-backdrop-static');
+    await asset.waitForFunction(()=>document.body.style.getPropertyValue('--library-backdrop-image').startsWith('url('));
     await pause(250);
     await instance.evaluate(({BrowserWindow})=>{
       const win=BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().includes('library=asset'));
@@ -62,6 +62,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
       const win=BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().includes('library=asset'));
       const start=win.getBounds();
       for(let i=0;i<60;i++) { win.setPosition(start.x+i%30,start.y+i%20); win.emit('move'); await new Promise(r=>setTimeout(r,8)); }
+      win.emit('moved');
       for(let i=0;i<60;i++) { win.setSize(1000+i*3,620+i*2); await new Promise(r=>setTimeout(r,8)); }
     });
     await pause(400);
@@ -87,21 +88,21 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
       assert.equal(metrics.backgroundWrites,0,'Moving/resizing must not reassign the desktop bitmap');
       assert.ok(native.bytes<30000,'Movement IPC must stay bounded');
       assert.ok(metrics.mounts<=4,'Continuous resizing must coalesce glass component remounts');
-      assert.match(metrics.filter,/url\(/,'Full liquid-glass optics return after resizing');
+      assert.doesNotMatch(metrics.filter,/url\(/,'Standalone glass must not run chromatic displacement across the full window');
+      assert.equal(await asset.locator('#assetLibraryWindow feDisplacementMap').count(),0,'Standalone glass uses a neutral cached layer without RGB fringe filters');
       assert.ok(native.shape && !native.shape.some(r=>r.x===0 && r.y===0),'Native clipping remains rounded');
       const capture=async value=>{
         await asset.evaluate(value=>{const input=document.getElementById('liquidDisplacement');input.value=String(value);input.dispatchEvent(new Event('input',{bubbles:true}));},value);
-        await asset.waitForFunction(value=>document.querySelector('#assetLibraryWindow feDisplacementMap')?.getAttribute('scale')===String(-value),value);
         await pause(200);
         return PNG.sync.read(await asset.screenshot());
       };
       const flat=await capture(0),refracted=await capture(150);
       let changed=0;
       for(let i=0;i<flat.data.length;i+=4) if(Math.abs(flat.data[i]-refracted.data[i])+Math.abs(flat.data[i+1]-refracted.data[i+1])+Math.abs(flat.data[i+2]-refracted.data[i+2])>20) changed++;
-      assert.ok(changed>100,'Cached desktop layers must still show the upstream optical displacement');
-      console.log('Standalone refraction pixel changes:',changed);
+      assert.ok(changed<100,'Standalone neutral glass must ignore chromatic displacement changes');
+      console.log('Standalone neutral glass changed pixels:',changed);
       await asset.reload();
-      await asset.waitForFunction(()=>getComputedStyle(document.body).backgroundImage.startsWith('url('));
+      await asset.waitForFunction(()=>document.body.style.getPropertyValue('--library-backdrop-image').startsWith('url('));
     }
   } finally {
     if(instance) await instance.close();
