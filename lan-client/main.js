@@ -23,6 +23,9 @@ let showingLocalPage = false;
 let activeOpenAppShortcut = '';
 let isAppQuitting = false;
 let tray = null;
+const hasInstanceLock = app.requestSingleInstanceLock();
+if (!hasInstanceLock) app.quit();
+else app.on('second-instance', () => bringMainWindowToFront());
 
 function configPath() {
   return path.join(app.getPath('userData'), CONFIG_FILE);
@@ -282,10 +285,16 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true
+      sandbox: true,
+      backgroundThrottling: true
     }
   });
   mainWindow.once('ready-to-show', bringMainWindowToFront);
+  const sendVisibility=()=>{
+    if(mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('desktop:visibility',mainWindow.isVisible() && !mainWindow.isMinimized());
+  };
+  for(const event of ['show','hide','minimize','restore']) mainWindow.on(event,sendVisibility);
+  mainWindow.webContents.on('did-finish-load',sendVisibility);
   mainWindow.webContents.on('did-finish-load', () => applyPageZoom());
   let referencePasteGestureUntil = 0;
   mainWindow.on('blur', () => { referencePasteGestureUntil = 0; });
@@ -330,7 +339,7 @@ function createWindow() {
 }
 
 registerFolderExport({getWindow:() => mainWindow, isAllowedOrigin:isActiveHost});
-ipcMain.handle('lan-client:get-config', () => ({ ...readConnectionConfig(), default_host_url: DEFAULT_HOST_URL }));
+ipcMain.handle('lan-client:get-config', () => ({ ...readConnectionConfig(), default_host_url: DEFAULT_HOST_URL, client_version: app.getVersion() }));
 ipcMain.handle('lan-client:save-host', async (_event, hostUrl) => {
   const config = writeConnectionConfig(hostUrl);
   await loadHostApp();
@@ -360,7 +369,7 @@ ipcMain.handle('lan-client:save-shortcuts', (_event, body = {}) => {
   }
 });
 
-app.whenReady().then(() => {
+if (hasInstanceLock) app.whenReady().then(() => {
   createMenu();
   createWindow();
   createTray();

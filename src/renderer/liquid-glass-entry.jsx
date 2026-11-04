@@ -1,6 +1,6 @@
 import React, {useLayoutEffect,useRef} from 'react';
 import { createRoot } from 'react-dom/client';
-import { createPortal } from 'react-dom';
+import { createPortal, flushSync } from 'react-dom';
 import LiquidGlass from 'liquid-glass-react';
 import glassSettings from '../services/liquidGlassSettings';
 
@@ -18,7 +18,17 @@ function stored() {
 }
 let settings=stored() || {...defaults};
 const surfaces=new Map();
+const pendingHosts=new Set();
 let frame=0;
+let motionTimer=0;
+let nativeHidden=false;
+const stationaryMouse={x:0,y:0};
+function motion() {
+  if(document.hidden || nativeHidden || !settings.enabled) return;
+  document.documentElement.classList.add('liquid-in-motion');
+  clearTimeout(motionTimer);
+  motionTimer=setTimeout(()=>document.documentElement.classList.remove('liquid-in-motion'),160);
+}
 const visibility=new IntersectionObserver(entries=>{
   for(const item of entries) {
     const surface=surfaces.get(item.target);
@@ -28,7 +38,14 @@ const visibility=new IntersectionObserver(entries=>{
 const resize=new ResizeObserver(entries=>{
   for(const item of entries) {
     const surface=surfaces.get(item.target);
-    if(surface) { surface.width=Math.round(item.contentRect.width);surface.height=Math.round(item.contentRect.height);renderSurface(surface); }
+    if(!surface) continue;
+    const width=Math.round(item.contentRect.width),height=Math.round(item.contentRect.height);
+    if(surface.width===width && surface.height===height) continue;
+    const initialized=surface.width>0 && surface.height>0;
+    surface.width=width;surface.height=height;
+    clearTimeout(surface.resizeTimer);
+    if(initialized && width>0 && height>0){motion();surface.resizeTimer=setTimeout(()=>renderSurface(surface),140);}
+    else renderSurface(surface);
   }
 });
 
@@ -46,7 +63,7 @@ function GlassSurface({host,...props}) {
 }
 
 function renderSurface(surface) {
-  const active=settings.enabled && surface.visible && surface.width>0 && surface.height>0;
+  const active=settings.enabled && !document.hidden && !nativeHidden && surface.visible && surface.width>0 && surface.height>0;
   const radius=parseFloat(getComputedStyle(surface.host).borderTopLeftRadius) || 0;
   const signature=JSON.stringify([active,settings,radius,surface.width,surface.height]);
   if(surface.signature===signature) return;
@@ -54,15 +71,20 @@ function renderSurface(surface) {
   surface.host.classList.toggle('liquid-surface-active',active);
   const {enabled,surfaceOpacity,...props}=settings;
   // The library measures on mount/window resize; remount on container-only resizes too.
-  surface.root.render(active ? <GlassSurface host={surface.host} key={surface.width+'x'+surface.height} {...props} overLight={false} cornerRadius={radius} elasticity={0} padding="0" style={{position:'absolute',top:'50%',left:'50%',width:'100%',height:'100%'}} /> : null);
+  surface.root.render(active ? <GlassSurface host={surface.host} key={surface.width+'x'+surface.height} {...props} globalMousePos={stationaryMouse} mouseOffset={stationaryMouse} overLight={false} cornerRadius={radius} elasticity={0} padding="0" style={{position:'absolute',top:'50%',left:'50%',width:'100%',height:'100%'}} /> : null);
+}
+function collectHosts(node) {
+  if(node.nodeType!==1 || node.closest('.liquid-glass-mount,.liquid-backdrop')) return;
+  if(node.matches(selector)) pendingHosts.add(node);
+  for(const host of node.querySelectorAll(selector)) pendingHosts.add(host);
 }
 function discoverSurfaces() {
   frame=0;
   for(const [host,surface] of surfaces) if(!host.isConnected) {
-    surface.root.unmount();visibility.unobserve(host);resize.unobserve(host);surfaces.delete(host);
+    clearTimeout(surface.resizeTimer);surface.root.unmount();visibility.unobserve(host);resize.unobserve(host);surfaces.delete(host);
   }
-  for(const host of document.querySelectorAll(selector)) {
-    if(surfaces.has(host) || host.closest('.liquid-glass-mount')) continue;
+  for(const host of pendingHosts) {
+    if(!host.isConnected || surfaces.has(host) || host.closest('.liquid-glass-mount')) continue;
     host.dataset.liquidSurface='';
     if(getComputedStyle(host).position==='static') host.classList.add('liquid-static-host');
     const mount=document.createElement('div');
@@ -72,10 +94,17 @@ function discoverSurfaces() {
     const surface={host,root:createRoot(mount),width:0,height:0,visible:false,signature:''};
     surfaces.set(host,surface);visibility.observe(host);resize.observe(host);
   }
+  pendingHosts.clear();
 }
 function scheduleDiscover() { if(!frame) frame=requestAnimationFrame(discoverSurfaces); }
 new MutationObserver(records=>{
-  if(records.some(record=>!record.target.closest?.('.liquid-glass-mount'))) scheduleDiscover();
+  let removed=false;
+  for(const record of records){
+    if(record.target.closest?.('.liquid-glass-mount,.liquid-backdrop')) continue;
+    for(const node of record.addedNodes) collectHosts(node);
+    for(const node of record.removedNodes) if(node.nodeType===1 && (node.matches('[data-liquid-surface]') || node.querySelector('[data-liquid-surface]'))) removed=true;
+  }
+  if(pendingHosts.size || removed) scheduleDiscover();
 }).observe(document.body,{subtree:true,childList:true});
 function render() {
   document.body.classList.toggle('liquid-glass-enabled',settings.enabled);
@@ -113,13 +142,27 @@ document.getElementById('liquidSave')?.addEventListener('click',async e=>{
   finally { button.disabled=false; }
 });
 window.addEventListener('storage',e=>{if(e.key===key){settings=stored() || {...defaults};render();}});
-document.addEventListener('visibilitychange',()=>{for(const surface of surfaces.values()) renderSurface(surface);});
-new MutationObserver(()=>{for(const surface of surfaces.values()) renderSurface(surface);}).observe(document.body,{attributes:true,attributeFilter:['class','data-skin']});
+function updateVisibility() {
+  const update=()=>{for(const surface of surfaces.values()) renderSurface(surface);};
+  if(document.hidden || nativeHidden) flushSync(update); else update();
+}
+document.addEventListener('visibilitychange',updateVisibility);
+window.desktopVisibility?.onChange(visible=>{nativeHidden=!visible;updateVisibility();});
+document.addEventListener('scroll',motion,{capture:true,passive:true});
+window.addEventListener('resize',motion,{passive:true});
+let themeSignature='';
+new MutationObserver(()=>{
+  const signature=[document.body.dataset.skin,document.body.classList.contains('theme-dark')].join(':');
+  if(signature===themeSignature) return;
+  themeSignature=signature;
+  for(const surface of surfaces.values()) renderSurface(surface);
+}).observe(document.body,{attributes:true,attributeFilter:['class','data-skin']});
 window.liquidGlassSettings={
   get:()=>({...settings}),
+  motion,
   load:value=>{
     settings=new URLSearchParams(location.search).has('library') ? (stored() || normalize(value)) : normalize(value);
     publish();
   }
 };
-discoverSurfaces();render();
+collectHosts(document.body);discoverSurfaces();render();

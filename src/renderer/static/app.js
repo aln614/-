@@ -6,11 +6,14 @@ let imagePromptMentions = null;
 const standaloneLibrary = window.libraryPanel ? new URLSearchParams(location.search).get('library') : '';
 if(['asset','prompt'].includes(standaloneLibrary)) document.body.classList.add('standalone-library', `standalone-${standaloneLibrary}`);
 if(standaloneLibrary && window.libraryPanel?.onBackdrop) window.libraryPanel.onBackdrop(payload=>{
-  if(!payload?.image) return;
-  document.body.style.setProperty('background-image',`url(${JSON.stringify(payload.image)})`,'important');
-  document.body.style.setProperty('background-size',`${payload.displayWidth}px ${payload.displayHeight}px`,'important');
-  document.body.style.setProperty('background-position',`${-payload.offsetX}px ${-payload.offsetY}px`,'important');
-  document.body.style.setProperty('background-repeat','no-repeat','important');
+  if(!payload) return;
+  if(payload.image){
+    document.body.style.setProperty('--library-backdrop-image',`url(${JSON.stringify(payload.image)})`);
+    document.body.style.setProperty('--library-backdrop-size',`${payload.displayWidth}px ${payload.displayHeight}px`);
+    document.body.classList.add('library-backdrop-ready');
+  }
+  document.body.style.setProperty('--library-backdrop-position',`${-payload.offsetX}px ${-payload.offsetY}px`);
+  window.liquidGlassSettings?.motion();
 });
 if(window.mainWindowControls && !standaloneLibrary && !window.lanClient){
   document.body.classList.add('desktop-shell');
@@ -10686,6 +10689,8 @@ function makeFloatingBox(boxId, headId, resizeId){
   if(standaloneLibrary && (boxId === 'assetLibraryWindow' || boxId === 'promptLibraryWindow')){
     if(resize){
       let origin = null;
+      let pendingSize=null, resizeFrame=0;
+      const flushResize=()=>{resizeFrame=0;if(pendingSize){window.libraryPanel.resize(pendingSize);pendingSize=null;}};
       resize.addEventListener('pointerdown', event=>{
         if(event.button !== 0) return;
         origin = {x:event.clientX, y:event.clientY, width:window.outerWidth, height:window.outerHeight};
@@ -10693,9 +10698,11 @@ function makeFloatingBox(boxId, headId, resizeId){
         event.preventDefault(); event.stopPropagation();
       });
       resize.addEventListener('pointermove', event=>{
-        if(origin) window.libraryPanel.resize({width:origin.width + event.clientX - origin.x, height:origin.height + event.clientY - origin.y});
+        if(!origin) return;
+        pendingSize={width:origin.width + event.clientX - origin.x, height:origin.height + event.clientY - origin.y};
+        if(!resizeFrame) resizeFrame=requestAnimationFrame(flushResize);
       });
-      const finish = ()=>{origin = null;};
+      const finish = ()=>{origin=null;cancelAnimationFrame(resizeFrame);flushResize();};
       resize.addEventListener('pointerup', finish); resize.addEventListener('pointercancel', finish); resize.addEventListener('lostpointercapture', finish);
     }
     return;

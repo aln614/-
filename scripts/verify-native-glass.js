@@ -62,6 +62,15 @@ fs.writeFileSync(path.join(data,'config.json'),JSON.stringify({port:18770,shortc
     assert.deepEqual(clean.corner,clean.outside,'Transparent corners must show the test backdrop');
     const main=await instance.firstWindow();
     for(const kind of ['asset','prompt']){
+      await instance.evaluate(({desktopCapturer,nativeImage,screen})=>{
+        const original=desktopCapturer.getSources;
+        desktopCapturer.getSources=async()=>{
+          desktopCapturer.getSources=original;
+          const pixels=Buffer.alloc(320*180*4);
+          for(let i=0;i<pixels.length;i+=4){pixels[i]=200;pixels[i+1]=100;pixels[i+2]=80;pixels[i+3]=255;}
+          return [{display_id:String(screen.getPrimaryDisplay().id),thumbnail:nativeImage.createFromBitmap(pixels,{width:320,height:180})}];
+        };
+      });
       await main.evaluate(kind=>window.libraryPanel.open(kind),kind);
       let page;
       for(let i=0;i<100 && !page;i++){page=instance.windows().find(p=>p.url().includes('library='+kind));if(!page)await new Promise(r=>setTimeout(r,100));}

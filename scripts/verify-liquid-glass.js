@@ -18,6 +18,7 @@ fs.writeFileSync(path.join(data,'config.json'),JSON.stringify({port:18769,output
     const packaged=process.env.GLASS_TEST_PACKAGED;
     instance=await electron.launch({executablePath:packaged || require('electron'),args:packaged ? [] : [root],env:{...process.env,APPDATA:temporary,LOCALAPPDATA:temporary,LOCAL_API_IMAGE_GENERATOR_DATA_DIR:data}});
     const main=await instance.firstWindow();
+    main.setDefaultTimeout(15000);
     await main.waitForURL('http://127.0.0.1:18769/**',{timeout:30000});
     await main.waitForFunction(()=>window.liquidGlassSettings && document.querySelector('.topbar feDisplacementMap'));
     assert.equal(await main.locator('.sidebar .liquid-backdrop').count(),1,'Sidebar uses the liquid surface');
@@ -78,12 +79,14 @@ fs.writeFileSync(path.join(data,'config.json'),JSON.stringify({port:18769,output
     let asset;
     for(let i=0;i<100 && !asset;i++){asset=instance.windows().find(p=>p.url().includes('library=asset'));if(!asset) await new Promise(r=>setTimeout(r,100));}
     assert.ok(asset,'Asset window opens');
+    asset.setDefaultTimeout(15000);
     await asset.waitForFunction(()=>document.querySelector('#assetLibraryWindow > .liquid-glass-mount feDisplacementMap')?.getAttribute('scale')==='-95');
-    await asset.waitForFunction(()=>Math.abs(parseFloat(getComputedStyle(document.querySelector('#assetLibraryWindow > .liquid-backdrop')).backgroundColor.split(',')[3])-.31)<.01);
+    await asset.waitForFunction(()=>Math.abs(parseFloat(getComputedStyle(document.querySelector('#assetLibraryWindow > .liquid-backdrop'),'::after').backgroundColor.split(',')[3])-.31)<.01);
     await main.evaluate(()=>window.libraryPanel.open('prompt'));
     let prompt;
     for(let i=0;i<100 && !prompt;i++){prompt=instance.windows().find(p=>p.url().includes('library=prompt'));if(!prompt) await new Promise(r=>setTimeout(r,100));}
     assert.ok(prompt,'Prompt window opens');
+    prompt.setDefaultTimeout(15000);
     await prompt.waitForFunction(()=>document.querySelector('#promptLibraryWindow > .liquid-glass-mount feDisplacementMap')?.getAttribute('scale')==='-95');
     await main.evaluate(()=>{const el=document.getElementById('liquidDisplacement');el.value='45';el.dispatchEvent(new Event('input',{bubbles:true}));});
     await asset.waitForFunction(()=>document.querySelector('#assetLibraryWindow > .liquid-glass-mount feDisplacementMap')?.getAttribute('scale')==='-45');

@@ -4472,6 +4472,7 @@ body.standalone-library .app-shell,body.standalone-library .panel-restore{displa
 html:has(body.standalone-library){background:transparent!important}
 body.standalone-library,body[data-skin].standalone-library,body[data-skin].theme-dark.standalone-library{background-color:transparent!important}
 body.standalone-library{overflow:hidden!important;background-attachment:fixed!important}
+body.standalone-library.library-backdrop-ready{background-image:var(--library-backdrop-image)!important;background-size:var(--library-backdrop-size)!important;background-position:var(--library-backdrop-position)!important;background-repeat:no-repeat!important}
 body.standalone-library .asset-library-window,body.standalone-library .prompt-library-window{position:fixed!important;left:0!important;top:0!important;width:100vw!important;height:100vh!important;max-width:none!important;max-height:none!important;border-radius:20px!important}
 body.standalone-library .chat-floating-resize{display:block!important;z-index:12}
 body.standalone-library .asset-library-head,body.standalone-library .prompt-library-head{-webkit-app-region:drag;cursor:move;user-select:none}
@@ -4528,6 +4529,26 @@ body .liquid-glass-mount .glass__warp{display:none!important}
   background:rgba(var(--liquid-tint),var(--liquid-opacity))!important;
   backdrop-filter:blur(var(--liquid-blur,6px)) saturate(var(--liquid-saturation,140%)) var(--liquid-refraction,blur(0px))!important;
   -webkit-backdrop-filter:blur(var(--liquid-blur,6px)) saturate(var(--liquid-saturation,140%)) var(--liquid-refraction,blur(0px))!important;
+}
+/* A sampled desktop is already an image: filter that cached layer without sampling
+   the entire live asset grid again on every scroll or thumbnail update. */
+body.standalone-library.library-backdrop-ready :is(.asset-library-window,.prompt-library-window)>.liquid-backdrop{
+  overflow:hidden;background:transparent!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;
+}
+body.standalone-library.library-backdrop-ready :is(.asset-library-window,.prompt-library-window)>.liquid-backdrop::before{
+  content:"";position:absolute;inset:0;pointer-events:none;
+  background-image:var(--library-backdrop-image);background-size:var(--library-backdrop-size);background-position:var(--library-backdrop-position);background-repeat:no-repeat;
+  filter:blur(var(--liquid-blur,6px)) saturate(var(--liquid-saturation,140%)) var(--liquid-refraction,blur(0px));
+}
+body.standalone-library.library-backdrop-ready :is(.asset-library-window,.prompt-library-window)>.liquid-backdrop::after{
+  content:"";position:absolute;inset:0;background:rgba(var(--liquid-tint),var(--liquid-opacity));pointer-events:none;
+}
+.liquid-in-motion .liquid-backdrop{
+  backdrop-filter:blur(var(--liquid-blur,6px)) saturate(var(--liquid-saturation,140%))!important;
+  -webkit-backdrop-filter:blur(var(--liquid-blur,6px)) saturate(var(--liquid-saturation,140%))!important;
+}
+.liquid-in-motion body.standalone-library :is(.asset-library-window,.prompt-library-window)>.liquid-backdrop::before{
+  filter:blur(var(--liquid-blur,6px)) saturate(var(--liquid-saturation,140%));
 }
 #previewModal{--liquid-tint:18,20,26}
 #previewInfo{--liquid-tint:255,255,255}

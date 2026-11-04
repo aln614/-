@@ -30,6 +30,8 @@ let currentPort = 7868;
 let activeOpenAppShortcut = '';
 const libraryWindows = { asset:null, prompt:null };
 const libraryBackdropState = { asset:null, prompt:null };
+const libraryBackdropTimers = { asset:null, prompt:null };
+const libraryBackdropCaptures = { asset:null, prompt:null };
 let activeLibraryShortcuts = {};
 let shortcutsSuspended = false;
 let isAppQuitting = false;
@@ -833,6 +835,14 @@ function createTray() {
   tray.on('double-click', bringMainWindowToFront);
 }
 
+function setupWindowVisibility(win) {
+  const sendVisibility=()=>{
+    if(!win.isDestroyed()) win.webContents.send('desktop:visibility',win.isVisible() && !win.isMinimized());
+  };
+  for(const event of ['show','hide','minimize','restore']) win.on(event,sendVisibility);
+  win.webContents.on('did-finish-load',sendVisibility);
+}
+
 function applyLibraryWindowShape(win) {
   if (process.platform !== 'win32' || !win || win.isDestroyed()) return;
   const [width, height] = win.getSize();
@@ -846,37 +856,55 @@ function applyLibraryWindowShape(win) {
   try { win.setShape(rectangles); } catch (error) { addLog(`独立窗口圆角设置失败：${error.message}`, {level:'warn'}); }
 }
 
-function sendLibraryBackdrop(kind) {
+function sendLibraryBackdrop(kind, includeImage = false) {
   const win=libraryWindows[kind], state=libraryBackdropState[kind];
   if (!win || win.isDestroyed() || !state) return;
   const bounds=win.getBounds();
-  win.webContents.send('library:backdrop',{...state,offsetX:bounds.x-state.displayX,offsetY:bounds.y-state.displayY});
+  const position=`${bounds.x}:${bounds.y}`;
+  if(!includeImage && state.lastPosition===position) return;
+  state.lastPosition=position;
+  const payload={offsetX:bounds.x-state.displayX,offsetY:bounds.y-state.displayY};
+  if(includeImage) Object.assign(payload,{image:state.image,displayWidth:state.displayWidth,displayHeight:state.displayHeight});
+  win.webContents.send('library:backdrop',payload);
 }
 
-async function captureLibraryBackdrop(kind) {
+function scheduleLibraryBackdrop(kind) {
+  if(libraryBackdropTimers[kind]) return;
+  libraryBackdropTimers[kind]=setTimeout(()=>{
+    libraryBackdropTimers[kind]=null;
+    sendLibraryBackdrop(kind);
+  },32);
+}
+
+function captureLibraryBackdrop(kind) {
+  if(libraryBackdropCaptures[kind]) return libraryBackdropCaptures[kind];
+  const pending=captureLibraryBackdropImage(kind).finally(()=>{if(libraryBackdropCaptures[kind]===pending) libraryBackdropCaptures[kind]=null;});
+  libraryBackdropCaptures[kind]=pending;
+  return pending;
+}
+
+async function captureLibraryBackdropImage(kind) {
   const win=libraryWindows[kind];
   if (process.platform !== 'win32' || !win || win.isDestroyed()) return false;
   try {
     const display=screen.getDisplayMatching(win.getBounds());
-    const thumbnailSize={width:Math.max(1,Math.round(display.bounds.width*display.scaleFactor)),height:Math.max(1,Math.round(display.bounds.height*display.scaleFactor))};
+    // Desktop pixels are blurred; avoid full-DPI 4K/8K captures and repeated JPEG copies.
+    const scale=Math.min(1,1600/display.bounds.width,1000/display.bounds.height);
+    const thumbnailSize={width:Math.max(1,Math.round(display.bounds.width*scale)),height:Math.max(1,Math.round(display.bounds.height*scale))};
     const sources=await desktopCapturer.getSources({types:['screen'],thumbnailSize});
-    const source=sources.find(item=>item.display_id===String(display.id)) || sources[0];
-    if(!source || source.thumbnail.isEmpty()) return false;
+    const source=sources.find(item=>item.display_id===String(display.id));
+    if(!source || source.thumbnail.isEmpty() || win.isDestroyed() || libraryWindows[kind]!==win) return false;
     libraryBackdropState[kind]={
       image:`data:image/jpeg;base64,${source.thumbnail.toJPEG(78).toString('base64')}`,
       displayX:display.bounds.x,displayY:display.bounds.y,
       displayWidth:display.bounds.width,displayHeight:display.bounds.height
     };
-    sendLibraryBackdrop(kind);
+    sendLibraryBackdrop(kind,true);
     return true;
   } catch(error) {
     addLog(`独立窗口桌面玻璃背景采样失败：${error.message}`,{level:'warn'});
     return false;
   }
-}
-
-function refreshLibraryWindowMaterials() {
-  for (const kind of Object.keys(libraryWindows)) sendLibraryBackdrop(kind);
 }
 
 function showLibraryWindow(kind, toggle = false) {
@@ -898,10 +926,12 @@ function showLibraryWindow(kind, toggle = false) {
     webPreferences:{contextIsolation:true, nodeIntegration:false, sandbox:false, webSecurity:true, allowRunningInsecureContent:false, preload:path.join(__dirname,'preload.js')}
   });
   libraryWindows[kind] = win;
+  setupWindowVisibility(win);
+  win.webContents.on('did-finish-load',()=>sendLibraryBackdrop(kind,true));
   if (process.platform === 'win32') {
     applyLibraryWindowShape(win);
-    win.on('resize', ()=>{applyLibraryWindowShape(win);sendLibraryBackdrop(kind);});
-    win.on('move', ()=>sendLibraryBackdrop(kind));
+    win.on('resize', ()=>applyLibraryWindowShape(win));
+    win.on('move', ()=>scheduleLibraryBackdrop(kind));
   }
   setupImageContextMenu(win);
   win.webContents.setWindowOpenHandler(({url:target})=>{
@@ -915,9 +945,11 @@ function showLibraryWindow(kind, toggle = false) {
   win.on('close', event=>{ if(!isAppQuitting){event.preventDefault(); win.hide();} });
   win.on('closed', ()=>{
     if(libraryWindows[kind] === win) libraryWindows[kind] = null;
+    clearTimeout(libraryBackdropTimers[kind]);
+    libraryBackdropTimers[kind]=null;
     libraryBackdropState[kind]=null;
   });
-  win.once('ready-to-show', async()=>{if(!win.isDestroyed()){await captureLibraryBackdrop(kind);win.show();win.focus();}});
+  win.once('ready-to-show', async()=>{await captureLibraryBackdrop(kind);if(!win.isDestroyed()){win.show();win.focus();}});
   win.loadURL(`http://127.0.0.1:${currentPort}/?library=${kind}`).catch(error=>addLog(`独立窗口打开失败：${error.message}`, {level:'warn'}));
   return true;
 }
@@ -1091,7 +1123,6 @@ function saveConfig(partial) {
   next.mascot_enabled = next.mascot_enabled !== false;
   if (!next.port) next.port = DEFAULT_CONFIG.port;
   fs.writeFileSync(configPath, JSON.stringify(next, null, 2), 'utf8');
-  if (Object.prototype.hasOwnProperty.call(partial || {}, 'liquid_glass')) refreshLibraryWindowMaterials();
   try { mirrorRuntimeDataToOutputDir(next, { configOnly: true }); } catch {}
   return next;
 }
@@ -9898,6 +9929,7 @@ function createWindow() {
     webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: false, webSecurity: true, allowRunningInsecureContent: false, preload: path.join(__dirname, 'preload.js') }
   });
   mainWindow.removeMenu();
+  setupWindowVisibility(mainWindow);
   const sendWindowState = ()=>{ if(mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('main-window:state', {maximized:mainWindow.isMaximized()}); };
   mainWindow.on('maximize', sendWindowState);
   mainWindow.on('unmaximize', sendWindowState);

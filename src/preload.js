@@ -1,4 +1,10 @@
 const { contextBridge, ipcRenderer } = require('electron');
+let nativeVisible=true;
+const visibilityListeners=new Set();
+ipcRenderer.on('desktop:visibility',(_event,visible)=>{nativeVisible=visible===true;for(const callback of visibilityListeners) callback(nativeVisible);});
+contextBridge.exposeInMainWorld('desktopVisibility',{
+  onChange:callback=>{visibilityListeners.add(callback);callback(nativeVisible);}
+});
 contextBridge.exposeInMainWorld('folderExport', {
   start: payload => ipcRenderer.invoke('folder-export:start', payload),
   cancel: id => ipcRenderer.send('folder-export:cancel', id),
@@ -17,7 +23,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 });
 let lastLibraryBackdrop=null;
 const libraryBackdropListeners=new Set();
-ipcRenderer.on('library:backdrop',(_event,payload)=>{lastLibraryBackdrop=payload;for(const callback of libraryBackdropListeners) callback(payload);});
+ipcRenderer.on('library:backdrop',(_event,payload)=>{lastLibraryBackdrop={...lastLibraryBackdrop,...payload};for(const callback of libraryBackdropListeners) callback(payload);});
 contextBridge.exposeInMainWorld('libraryPanel', {
   open: kind => ipcRenderer.invoke('library:open', kind),
   hide: () => ipcRenderer.invoke('library:hide'),
