@@ -16,6 +16,8 @@ const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
     app=await electron.launch({executablePath:process.env.GLASS_TEST_PACKAGED || require('electron'),args:process.env.GLASS_TEST_PACKAGED?['--background']:[root,'--background'],env:{...process.env,APPDATA:temporary,LOCALAPPDATA:temporary,LOCAL_API_IMAGE_GENERATOR_DATA_DIR:data}});
     const main=await app.firstWindow();
     await main.waitForURL('http://127.0.0.1:18785/**',{timeout:30000});
+    await main.waitForFunction(()=>window.localAppearance);
+    await main.evaluate(()=>window.localAppearance.setMode('none'));
     for(const kind of ['asset','prompt']) {
       await main.evaluate(kind=>window.libraryPanel.open(kind),kind);
       let page;

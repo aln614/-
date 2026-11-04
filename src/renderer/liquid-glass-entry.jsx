@@ -154,7 +154,7 @@ new MutationObserver(records=>{
 }).observe(document.body,{subtree:true,attributes:true,attributeFilter:['class','style','hidden','open','aria-hidden']});
 function render() {
   document.body.classList.toggle('liquid-glass-enabled',settings.enabled);
-  if(standaloneLibrary) window.libraryPanel?.setGlassEnabled?.(settings.enabled);
+  window.libraryPanel?.setGlassEnabled?.(settings.enabled && document.body.dataset.backgroundMode==='none');
   document.documentElement.style.setProperty('--liquid-opacity',settings.surfaceOpacity);
   document.documentElement.style.setProperty('--liquid-blur',(4+settings.blurAmount*32)+'px');
   document.documentElement.style.setProperty('--library-liquid-blur',(2+settings.blurAmount*10)+'px');
@@ -182,14 +182,15 @@ document.getElementById('liquidSave')?.addEventListener('click',async e=>{
   const snapshot={...settings},button=e.currentTarget;
   button.disabled=true;status('保存中');
   try {
-    const response=await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({liquid_glass:snapshot})});
-    const result=await response.json();
-    if(!response.ok || result.ok===false) throw new Error('save failed');
+    localStorage.setItem(key,JSON.stringify(snapshot));
     status(JSON.stringify(snapshot)===JSON.stringify(settings) ? '已保存' : '未保存');
   } catch { status('保存失败，请重试'); }
   finally { button.disabled=false; }
 });
 window.addEventListener('storage',e=>{if(e.key===key){settings=stored() || {...defaults};render();}});
+window.addEventListener('local-appearance-change',()=>{
+  window.libraryPanel?.setGlassEnabled?.(settings.enabled && document.body.dataset.backgroundMode==='none');
+});
 function updateVisibility() {
   const update=()=>{for(const surface of surfaces.values()) renderSurface(surface);};
   if(document.hidden || nativeHidden) flushSync(update); else update();
@@ -200,16 +201,16 @@ document.addEventListener('scroll',motion,{capture:true,passive:true});
 window.addEventListener('resize',motion,{passive:true});
 let themeSignature='';
 new MutationObserver(()=>{
-  const signature=[document.body.dataset.skin,document.body.classList.contains('theme-dark')].join(':');
+  const signature=String(document.body.classList.contains('theme-dark'));
   if(signature===themeSignature) return;
   themeSignature=signature;
   for(const surface of surfaces.values()) renderSurface(surface);
-}).observe(document.body,{attributes:true,attributeFilter:['class','data-skin']});
+}).observe(document.body,{attributes:true,attributeFilter:['class']});
 window.liquidGlassSettings={
   get:()=>({...settings}),
   motion,
   load:value=>{
-    settings=new URLSearchParams(location.search).has('library') ? (stored() || normalize(value)) : normalize(value);
+    settings=stored() || (window.mainWindowControls ? normalize(value) : {...defaults});
     publish();
   }
 };

@@ -25,10 +25,8 @@ assert(main.includes('不消耗失败重试次数'), 'Network recovery must not 
 assert(app.includes('async function resumePendingVideoTasks(rows = [])'), 'Renderer does not request video task recovery');
 assert(app.includes("api('/api/video_resume_pending'"), 'Renderer video resume API call is missing');
 assert(app.includes('VIDEO_RESUME_ACTIVE_STATUSES'), 'Renderer active video statuses are missing');
-assert(css.includes('#videoDrop::after'), 'Video upload zone does not inherit the active mascot');
-assert(css.includes('.video-mascot-card::after'), 'Video status cards do not inherit the active mascot');
-assert(css.includes('body[data-skin] #page-video>.grid>.card'), 'Video workspace does not inherit the active skin');
+assert(!css.includes('--skin-atlas'), 'Retired mascot artwork must not be rendered');
 assert(css.includes('.video-realtime-panel .video-library>.video-card'), 'Recent video cards need an explicit non-shrinking layout');
 assert(css.includes('flex:0 0 auto'), 'Recent video cards must not collapse inside the scrolling library');
 
-console.log('[verify-video-resume] OK: interrupted polling, Cloudflare readiness recovery, and video UI skin behavior are wired.');
+console.log('[verify-video-resume] OK: interrupted polling, Cloudflare readiness recovery, and video layout are wired.');

@@ -1,8 +1,9 @@
 'use strict';
 // Keep dynamic desktops live while the panel is visible; release tracks when hidden.
 (() => {
-  if(!['asset','prompt'].includes(new URLSearchParams(location.search).get('library')) ||
-     typeof window.libraryPanel?.onBackdropMotion!=='function') return;
+  if(typeof window.libraryPanel?.onBackdropMotion!=='function' || window.lanClient) return;
+  const kind=new URLSearchParams(location.search).get('library');
+  const backdropLayer=()=>kind ? document.querySelector('#'+kind+'LibraryWindow > .liquid-backdrop-static') : document.getElementById('desktopLiveBackdrop');
   let generation=0,stream=null,video=null,sourceId='';
   let drag=null,dragFrame=0;
   function endDrag(event) {
@@ -16,7 +17,7 @@
     if(element.hasPointerCapture(pointerId)) element.releasePointerCapture(pointerId);
     window.libraryPanel.endWindowDrag();
   }
-  for(const element of document.querySelectorAll('.asset-library-drag-region,.prompt-library-drag-region')) {
+  for(const element of kind ? document.querySelectorAll('.asset-library-drag-region,.prompt-library-drag-region') : []) {
     element.addEventListener('pointerdown',event=>{
       if(event.button!==0 || !event.isPrimary || drag) return;
       event.preventDefault();
@@ -43,7 +44,7 @@
     document.body.dataset.libraryBackdropMotion=status;
   }
   async function start(payload) {
-    if(!payload?.active) {stop();return;}
+    if(!payload?.active || document.body.dataset.backgroundMode!=='none') {stop();return;}
     if(!payload.sourceId || !navigator.mediaDevices?.getUserMedia) {stop('unavailable');window.libraryPanel.backdropUnavailable();return;}
     if(sourceId===payload.sourceId && (stream?.active || document.body.dataset.libraryBackdropMotion==='starting')) return;
     stop('starting');
@@ -56,7 +57,7 @@
         audio:false,video:{mandatory:{chromeMediaSource:'desktop',chromeMediaSourceId:payload.sourceId,maxWidth:960,maxHeight:600,maxFrameRate:60}}
       });
       if(token!==generation) {for(const track of next.getTracks()) track.stop();return;}
-      const layer=document.querySelector('body.standalone-library .asset-library-window > .liquid-backdrop-static,body.standalone-library .prompt-library-window > .liquid-backdrop-static');
+      const layer=backdropLayer();
       if(!layer) {for(const track of next.getTracks()) track.stop();stop('unavailable');window.libraryPanel.backdropUnavailable();return;}
       stream=next;
       video=document.createElement('video');
@@ -80,15 +81,17 @@
   }
   window.libraryPanel.onBackdropMotion(start);
   function updateVisibility() {
-    if(document.hidden) {endDrag();stop();}
-    window.libraryPanel.setBackdropVisible(!document.hidden);
+    const visible=!document.hidden && document.body.dataset.backgroundMode==='none';
+    if(!visible) {endDrag();stop();}
+    window.libraryPanel.setBackdropVisible(visible);
   }
   window.addEventListener('library-backdrop-ready',()=>{
-    const layer=document.querySelector('#'+new URLSearchParams(location.search).get('library')+'LibraryWindow > .liquid-backdrop-static');
+    const layer=backdropLayer();
     if(video && layer && video.parentElement!==layer) layer.appendChild(video);
     updateVisibility();
   });
   document.addEventListener('visibilitychange',updateVisibility);
+  window.addEventListener('local-appearance-change',updateVisibility);
   window.addEventListener('pagehide',()=>{endDrag();stop();});
   window.desktopVisibility?.onChange(visible=>{if(!visible){endDrag();stop();}});
   updateVisibility();

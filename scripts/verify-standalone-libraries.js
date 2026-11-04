@@ -40,7 +40,7 @@ fs.writeFileSync(path.join(data, 'config.json'), JSON.stringify({
     await main.evaluate(()=>{const slider=document.querySelector('#liquidDisplacement');slider.value='95';slider.dispatchEvent(new Event('input',{bubbles:true}));});
     await main.waitForFunction(()=>document.querySelector('.topbar feDisplacementMap')?.getAttribute('scale')==='-95');
     assert.equal(await main.locator('.topbar').evaluate(el=>getComputedStyle(el).webkitAppRegion),'no-drag','The full main header must not swallow control clicks');
-    assert.equal(await main.locator('.window-drag-region').evaluate(el=>getComputedStyle(el).webkitAppRegion),'drag','The brand area is the dedicated main window drag handle');
+    assert.equal(await main.locator('.window-drag-region').evaluate(el=>getComputedStyle(el).webkitAppRegion),'no-drag','Pointer dragging keeps header controls interactive');
     assert.equal(await main.locator('#promptLibraryBtn').evaluate(el=>getComputedStyle(el).webkitAppRegion),'no-drag','Top status controls must remain clickable');
     assert.equal(await main.locator('#mainWindowClose').evaluate(el=>getComputedStyle(el).webkitAppRegion),'no-drag','Window controls must remain clickable');
     assert.equal(await instance.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].isMenuBarVisible()),false,'The native menu bar must be removed');
@@ -111,6 +111,7 @@ fs.writeFileSync(path.join(data, 'config.json'), JSON.stringify({
       throw new Error(`Library window did not load: ${kind}`);
     };
 
+    await main.evaluate(()=>window.localAppearance.setMode('none'));
     assert.equal(await main.evaluate(()=>window.libraryPanel.open('asset')), true);
     const asset = await waitForLibrary('asset');
     assert.ok(asset, 'Asset library opens in a separate native window');
@@ -133,7 +134,7 @@ fs.writeFileSync(path.join(data, 'config.json'), JSON.stringify({
     assert.equal(inside(appearance.shape,appearance.bounds.width/2,appearance.bounds.height/2),true);
     assert.equal(await asset.evaluate(()=>getComputedStyle(document.body).backgroundColor),'rgba(0, 0, 0, 0)');
     assert.equal(await asset.locator('#assetLibraryHead').evaluate(el=>getComputedStyle(el).webkitAppRegion),'no-drag','The full asset header must not swallow control clicks');
-    assert.equal(await asset.locator('.asset-library-drag-region').evaluate(el=>getComputedStyle(el).webkitAppRegion),'drag','The asset title is the dedicated native drag handle');
+    assert.equal(await asset.locator('.asset-library-drag-region').evaluate(el=>getComputedStyle(el).webkitAppRegion),'no-drag','The asset title uses controlled pointer dragging');
     assert.equal(await asset.locator('#assetLibrarySearch').evaluate(el=>getComputedStyle(el).webkitAppRegion),'no-drag','Search stays interactive in the draggable header');
     assert.equal(await asset.locator('#assetBatchToggleBtn').evaluate(el=>getComputedStyle(el).webkitAppRegion),'no-drag');
     assert.equal(await asset.locator('#assetUploadTopBtn').evaluate(el=>getComputedStyle(el).webkitAppRegion),'no-drag');
@@ -193,7 +194,7 @@ fs.writeFileSync(path.join(data, 'config.json'), JSON.stringify({
     assert.equal(inside(promptShape.shape,0,0),false);
     assert.equal(inside(promptShape.shape,promptShape.bounds.width-1,promptShape.bounds.height-1),false);
     assert.equal(await prompt.locator('#promptLibraryHead').evaluate(el=>getComputedStyle(el).webkitAppRegion),'no-drag');
-    assert.equal(await prompt.locator('.prompt-library-drag-region').evaluate(el=>getComputedStyle(el).webkitAppRegion),'drag');
+    assert.equal(await prompt.locator('.prompt-library-drag-region').evaluate(el=>getComputedStyle(el).webkitAppRegion),'no-drag');
     assert.equal(await prompt.locator('#promptLibrarySearch').evaluate(el=>getComputedStyle(el).webkitAppRegion),'no-drag');
     assert.equal(await prompt.locator('#newPromptLibraryTemplateBtn').evaluate(el=>getComputedStyle(el).webkitAppRegion),'no-drag');
     assert.equal(await prompt.locator('#promptLibraryWindow').evaluate(el=>getComputedStyle(el).borderTopWidth),'0px');

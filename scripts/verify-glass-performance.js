@@ -38,7 +38,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
       const original=BrowserWindow.prototype.setShape;
       BrowserWindow.prototype.setShape=function(rects){this.__shape=rects;return original.call(this,rects);};
     });
-    await main.evaluate(()=>window.libraryPanel.open('asset'));
+    await main.evaluate(()=>{window.localAppearance.setMode('none');window.libraryPanel.open('asset');});
     let asset;
     for(let i=0;i<100 && !asset;i++){asset=instance.windows().find(p=>p.url().includes('library=asset'));if(!asset)await pause(50);}
     await asset.waitForSelector('#assetLibraryWindow > .liquid-backdrop-static');

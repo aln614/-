@@ -45,5 +45,8 @@ contextBridge.exposeInMainWorld('libraryPanel', {
 });
 contextBridge.exposeInMainWorld('mainWindowControls', {
   action: action => ipcRenderer.invoke('main-window:action', action),
+  startDrag: point => ipcRenderer.send('main-window:drag-start', point),
+  moveDrag: point => ipcRenderer.send('main-window:drag-move', point),
+  endDrag: () => ipcRenderer.send('main-window:drag-end'),
   onState: callback => ipcRenderer.on('main-window:state', (_event, state) => callback(state))
 });

@@ -1,5 +1,5 @@
 'use strict';
-// Validate the real standalone window against a locally controlled backdrop.
+// Validate native transparent windows against a locally controlled backdrop.
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const os=require('node:os');
@@ -17,23 +17,25 @@ const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
     app=await electron.launch({executablePath:process.env.GLASS_TEST_PACKAGED || require('electron'),args:process.env.GLASS_TEST_PACKAGED?['--background']:[root,'--background'],env:{...process.env,APPDATA:temporary,LOCALAPPDATA:temporary,LOCAL_API_IMAGE_GENERATOR_DATA_DIR:data}});
     const main=await app.firstWindow();
     await main.waitForURL('http://127.0.0.1:18782/**',{timeout:30000});
+    await main.waitForFunction(()=>window.localAppearance);
+    await main.evaluate(()=>window.localAppearance.setMode('none'));
     await app.evaluate(async({BrowserWindow,screen})=>{
       const area=screen.getPrimaryDisplay().workArea;
       const background=new BrowserWindow({x:area.x+30,y:area.y+30,width:1100,height:800,frame:false,alwaysOnTop:true,skipTaskbar:true,backgroundColor:'#3060c0'});
       await background.loadURL('data:text/html,'+encodeURIComponent('<style>html,body{margin:0;width:100%;height:100%;background:rgb(48,96,192)}body.green{background:rgb(25,190,80)}</style>'));
       background.show();global.__libraryTestBackground=background;
     });
-    for(const kind of ['asset','prompt']){
+    for(const kind of ['main','asset','prompt']){
       await app.evaluate(()=>global.__libraryTestBackground.webContents.executeJavaScript("document.body.className=''"));
-      await main.evaluate(kind=>window.libraryPanel.open(kind),kind);
-      let page;
+      if(kind!=='main') await main.evaluate(kind=>window.libraryPanel.open(kind),kind);
+      let page=kind==='main' ? main : null;
       for(let attempt=0;attempt<100 && !page;attempt++){page=app.windows().find(item=>item.url().includes('library='+kind));if(!page)await pause(100);}
       assert.ok(page,kind+' window opens');
-      await page.waitForSelector('#'+kind+'LibraryWindow > .liquid-backdrop-static',{timeout:15000});
+      await page.waitForSelector(kind==='main' ? '#desktopLiveBackdrop' : '#'+kind+'LibraryWindow > .liquid-backdrop-static',{timeout:15000});
       await app.evaluate(({BrowserWindow,screen},kind)=>{
-        const win=BrowserWindow.getAllWindows().find(item=>item.webContents.getURL().includes('library='+kind));
+        const win=BrowserWindow.getAllWindows().find(item=>kind==='main' ? item.webContents.getURL().startsWith('http://127.0.0.1:18782/') && !item.webContents.getURL().includes('library=') : item.webContents.getURL().includes('library='+kind));
         const area=screen.getPrimaryDisplay().workArea;
-        win.setBounds({x:area.x+90,y:area.y+90,width:720,height:500});
+        win.setBounds({x:area.x+90,y:area.y+90,width:kind==='main'?1180:720,height:kind==='main'?760:500});
         win.setAlwaysOnTop(true);win.show();win.focus();win.moveTop();
       },kind);
       await pause(500);
@@ -54,7 +56,7 @@ const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
       assert.ok(before.pixel[2]>before.pixel[0]+30,kind+' video must exclude its own window: '+JSON.stringify(before));
       assert.ok(after.settings.frameRate>=15,kind+' video must have a usable frame rate');
       await app.evaluate(({BrowserWindow},kind)=>{
-        const win=BrowserWindow.getAllWindows().find(item=>item.webContents.getURL().includes('library='+kind));
+        const win=BrowserWindow.getAllWindows().find(item=>kind==='main' ? item.webContents.getURL().startsWith('http://127.0.0.1:18782/') && !item.webContents.getURL().includes('library=') : item.webContents.getURL().includes('library='+kind));
         win.emit('moved');
       },kind);
       await pause(700);
@@ -65,10 +67,10 @@ const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
       assert.ok(stationary.pixel[2]>stationary.pixel[1]+30,kind+' must show changing wallpaper while stationary: '+JSON.stringify(stationary));
       assert.equal(stationary.trackId,before.trackId,kind+' must keep the same stream after release');
       console.log(kind+' live while stationary:',JSON.stringify({before:before.pixel,after:after.pixel,stationary:stationary.pixel,fps:after.settings.frameRate}));
-      await app.evaluate(({BrowserWindow},kind)=>BrowserWindow.getAllWindows().find(item=>item.webContents.getURL().includes('library='+kind)).minimize(),kind);
+      await app.evaluate(({BrowserWindow},kind)=>BrowserWindow.getAllWindows().find(item=>kind==='main' ? item.webContents.getURL().startsWith('http://127.0.0.1:18782/') && !item.webContents.getURL().includes('library=') : item.webContents.getURL().includes('library='+kind)).minimize(),kind);
       await page.waitForFunction(()=>document.body.dataset.libraryBackdropMotion==='idle',{timeout:15000});
       assert.equal(await page.locator('.library-live-backdrop').count(),0,kind+' must release screen tracks while minimized');
-      await app.evaluate(({BrowserWindow},kind)=>BrowserWindow.getAllWindows().find(item=>item.webContents.getURL().includes('library='+kind)).restore(),kind);
+      await app.evaluate(({BrowserWindow},kind)=>BrowserWindow.getAllWindows().find(item=>kind==='main' ? item.webContents.getURL().startsWith('http://127.0.0.1:18782/') && !item.webContents.getURL().includes('library=') : item.webContents.getURL().includes('library='+kind)).restore(),kind);
       await page.waitForFunction(()=>document.body.dataset.libraryBackdropMotion==='active',{timeout:15000});
       assert.notEqual((await readPixel()).trackId,before.trackId,kind+' must start a new stream after restore');
       await page.reload();
@@ -77,7 +79,7 @@ const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
       await pause(450);
       assert.ok((await readPixel()).pixel[1]>130,kind+' must keep the backdrop attached after reloading');
       await app.evaluate(({BrowserWindow},kind)=>{
-        const win=BrowserWindow.getAllWindows().find(item=>item.webContents.getURL().includes('library='+kind));
+        const win=BrowserWindow.getAllWindows().find(item=>kind==='main' ? item.webContents.getURL().startsWith('http://127.0.0.1:18782/') && !item.webContents.getURL().includes('library=') : item.webContents.getURL().includes('library='+kind));
         win.setAlwaysOnTop(false);win.hide();
       },kind);
       await page.waitForFunction(()=>document.body.dataset.libraryBackdropMotion==='idle',{timeout:15000});

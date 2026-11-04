@@ -1,0 +1,116 @@
+'use strict';
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const os=require('node:os');
+const path=require('node:path');
+const {_electron:electron,chromium}=require('playwright');
+const root=path.resolve(__dirname,'..');
+const temporary=fs.mkdtempSync(path.join(os.tmpdir(),'tenying-appearance-'));
+const data=path.join(temporary,'runtime');
+fs.mkdirSync(data,{recursive:true});
+fs.writeFileSync(path.join(data,'config.json'),JSON.stringify({port:18789,shortcuts_enabled:false,update_auto_check:false,public_enabled:false,theme_mode:'dark',skin_id:'sakura',asset_library_dir:path.join(temporary,'assets'),output_dir:path.join(temporary,'output')}));
+const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aDAAAAABJRU5ErkJggg==','base64');
+const gif=Buffer.from('47494638396101000100800000ff000000ff0021ff0b4e45545343415045322e30030100000021f904000a0000002c000000000100010000020244010021f904000a0000002c00000000010001000002024c01003b','hex');
+const ready=page=>page.waitForFunction(()=>window.localAppearance && window.liquidGlassSettings && document.getElementById('appVersionText').textContent==='1.0.123');
+const imageReady=page=>page.waitForFunction(()=>document.querySelector('.appearance-custom-media')?.tagName==='IMG' && document.querySelector('.appearance-custom-media').naturalWidth>0);
+async function videoFixture(page) {
+  const bytes=await page.evaluate(async()=>{
+    const canvas=document.createElement('canvas');canvas.width=160;canvas.height=90;
+    const context=canvas.getContext('2d'),stream=canvas.captureStream(15),chunks=[];
+    const mime=['video/mp4;codecs=avc1.42001E','video/mp4'].find(type=>MediaRecorder.isTypeSupported(type));
+    if(!mime) throw new Error('MP4 recording is unavailable for the test fixture');
+    const recorder=new MediaRecorder(stream,{mimeType:mime});
+    const finished=new Promise((resolve,reject)=>{recorder.onstop=resolve;recorder.onerror=reject;});
+    recorder.ondataavailable=event=>{if(event.data.size) chunks.push(event.data);};
+    recorder.start();
+    for(let i=0;i<12;i++) {context.fillStyle=i%2 ? '#20ac73' : '#e64666';context.fillRect(0,0,160,90);await new Promise(resolve=>setTimeout(resolve,70));}
+    recorder.stop();await finished;stream.getTracks().forEach(track=>track.stop());
+    return Array.from(new Uint8Array(await new Blob(chunks,{type:'video/mp4'}).arrayBuffer()));
+  });
+  return Buffer.from(bytes);
+}
+(async()=>{
+  let app,browser;
+  try {
+    app=await electron.launch({executablePath:process.env.GLASS_TEST_PACKAGED || require('electron'),args:process.env.GLASS_TEST_PACKAGED?[]:[root],env:{...process.env,APPDATA:temporary,LOCALAPPDATA:temporary,LOCAL_API_IMAGE_GENERATOR_DATA_DIR:data}});
+    const main=await app.firstWindow(),errors=[],sharedWrites=[];
+    main.on('pageerror',error=>errors.push(error.message));
+    main.on('request',request=>{if(request.url().endsWith('/api/config') && request.method()==='POST') sharedWrites.push(request.postData());});
+    await main.waitForURL('http://127.0.0.1:18789/**',{timeout:30000});await ready(main);
+    assert.equal(await main.evaluate(()=>window.localAppearance.get().mode),'board','Server skin preferences cannot replace the local default');
+    assert.equal(await main.locator('[data-skin]').count(),0);
+    assert.equal(await main.locator('#themeSkinGrid').count(),0);
+    assert.match(await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].getBackgroundColor()),/^#00/i);
+    await main.locator('#themeCycleBtn').click();
+    await main.locator('#themePopover [data-theme="dark"]').click();
+    assert.equal(await main.locator('#localAppearanceBackground').evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(9, 10, 12)');
+    assert.equal(await main.locator('#themePopover [data-background-board-label]').textContent(),'黑板');
+    await main.locator('#themePopover [data-theme="light"]').click();
+    assert.equal(await main.locator('#localAppearanceBackground').evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(255, 255, 255)');
+    await main.locator('#appearanceBackgroundFile').setInputFiles({name:'test.png',mimeType:'image/png',buffer:png});
+    await imageReady(main);
+    await main.locator('#themePopover [data-background-blur]').fill('13');
+    await main.waitForFunction(()=>getComputedStyle(document.querySelector('.appearance-custom-media')).filter==='blur(13px)');
+    assert.equal(await main.locator('#prompts').evaluate(el=>getComputedStyle(el).filter),'none','Background blur leaves controls sharp');
+    await main.reload();await ready(main);await imageReady(main);
+    assert.deepEqual(await main.evaluate(()=>{const {mode,theme,blur}=window.localAppearance.get();return {mode,theme,blur};}),{mode:'custom',theme:'light',blur:13});
+    await main.evaluate(()=>window.libraryPanel.open('asset'));
+    let library;
+    for(let i=0;i<100 && !library;i++){library=app.windows().find(page=>page.url().includes('library=asset'));if(!library) await pause(50);}
+    assert.ok(library);await ready(library);await imageReady(library);
+    const mp4=await videoFixture(main);
+    await main.locator('#appearanceBackgroundFile').setInputFiles({name:'motion.mp4',mimeType:'video/mp4',buffer:mp4});
+    await main.waitForFunction(()=>document.querySelector('.appearance-custom-media')?.tagName==='VIDEO' && document.querySelector('.appearance-custom-media').currentTime>.1);
+    const videoState=await main.locator('.appearance-custom-media').evaluate(el=>({loop:el.loop,muted:el.muted,autoplay:el.autoplay,fit:getComputedStyle(el).objectFit,duration:el.duration}));
+    assert.equal(videoState.loop,true);assert.equal(videoState.muted,true);assert.equal(videoState.autoplay,true);assert.equal(videoState.fit,'fill');
+    await pause(Math.ceil(videoState.duration*2500));
+    assert.equal(await main.locator('.appearance-custom-media').evaluate(el=>!el.ended && !el.paused),true,'MP4 continues after multiple loops');
+    await library.waitForFunction(()=>document.querySelector('.appearance-custom-media')?.tagName==='VIDEO','Independent panels synchronize the same local background');
+    await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().find(win=>!win.webContents.getURL().includes('library=')).hide());
+    await main.waitForFunction(()=>document.querySelector('.appearance-custom-media').paused);
+    await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().find(win=>!win.webContents.getURL().includes('library=')).show());
+    await main.waitForFunction(()=>!document.querySelector('.appearance-custom-media').paused);
+    await main.locator('#appearanceBackgroundFile').setInputFiles({name:'animated.gif',mimeType:'image/gif',buffer:gif});await imageReady(main);
+    await main.locator('#appearanceBackgroundFile').setInputFiles({name:'broken.mp4',mimeType:'video/mp4',buffer:Buffer.from('broken')});
+    await main.waitForFunction(()=>document.querySelector('[data-appearance-status]').classList.contains('is-error'));
+    assert.equal(await main.evaluate(()=>window.localAppearance.get().mode),'custom','Invalid uploads preserve the prior background');
+    await imageReady(main);
+    assert.deepEqual(sharedWrites,[],'Appearance changes must never write shared configuration');
+    await library.evaluate(()=>window.libraryPanel.hide());
+    browser=await chromium.launch({channel:'msedge',headless:true});
+    const browserContext=await browser.newContext({viewport:{width:1280,height:800}});
+    const page=await browserContext.newPage(),second=await browserContext.newPage();
+    for(const tab of [page,second]) {await tab.goto('http://127.0.0.1:18789/');await ready(tab);}
+    assert.equal(await page.evaluate(()=>window.localAppearance.get().mode),'board','Another browser retains the default board');
+    await page.locator('#appearanceBackgroundFile').setInputFiles({name:'browser.mp4',mimeType:'video/mp4',buffer:mp4});
+    await page.waitForFunction(()=>document.querySelector('.appearance-custom-media')?.currentTime>.1);
+    await second.waitForFunction(()=>window.localAppearance.get().mode==='custom');
+    await page.reload();await ready(page);
+    await page.waitForFunction(()=>document.querySelector('.appearance-custom-media')?.currentTime>.1);
+    const other=await browser.newContext({viewport:{width:390,height:844},isMobile:true,hasTouch:true});
+    const mobile=await other.newPage();await mobile.goto('http://127.0.0.1:18789/');await ready(mobile);
+    assert.equal(await mobile.evaluate(()=>window.localAppearance.get().mode),'board','Another user profile keeps the default');
+    await mobile.locator('#mobileAppearanceBtn').click();
+    const fit=await mobile.locator('#themePopover').evaluate(el=>{const r=el.getBoundingClientRect();return r.left>=0 && r.right<=innerWidth && r.top>=0 && r.bottom<=innerHeight && el.scrollWidth<=el.clientWidth;});
+    assert.equal(fit,true,'Appearance panel fits the mobile viewport');
+    fs.mkdirSync(path.join(root,'test-results'),{recursive:true});
+    await mobile.waitForTimeout(200);
+    await mobile.screenshot({path:path.join(root,'test-results','appearance-mobile.png')});
+    await main.locator('#themeCycleBtn').click();await main.mouse.move(900,65);await main.waitForTimeout(300);
+    await main.screenshot({path:path.join(root,'test-results','appearance-desktop.png')});
+    await page.evaluate(()=>window.localAppearance.clearMedia());
+    await second.waitForFunction(()=>window.localAppearance.get().mode==='board');
+    await page.reload();await ready(page);
+    assert.equal(await page.evaluate(()=>window.localAppearance.get().mode),'board');
+    assert.equal(await main.evaluate(()=>window.localAppearance.get().mode),'custom','Browser changes cannot alter the desktop profile');
+    assert.deepEqual(errors,[],'Appearance changes produce no uncaught renderer errors');
+    console.log('Local backgrounds: board/dark mode, image/GIF/MP4 upload, loop/playback lifecycle, blur, reload, invalid files, native panel sync, browser/profile isolation and mobile layout passed.');
+  } finally {
+    if(browser) await browser.close();
+    if(app) await app.close();
+    const relative=path.relative(os.tmpdir(),temporary);
+    if(!relative.startsWith('tenying-appearance-') || relative.includes(path.sep)) throw Error('Unsafe test cleanup');
+    fs.rmSync(temporary,{recursive:true,force:true,maxRetries:6,retryDelay:200});
+  }
+})().catch(error=>{console.error(error);process.exitCode=1;});
