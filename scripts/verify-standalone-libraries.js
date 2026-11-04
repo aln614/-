@@ -35,8 +35,8 @@ fs.writeFileSync(path.join(data, 'config.json'), JSON.stringify({
     await main.waitForFunction(()=>!document.hidden);
     assert.equal(await instance.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].isVisible()),true,'A second launch restores the original main window');
     await main.waitForFunction(()=>document.body.classList.contains('desktop-shell') && document.querySelector('.topbar .glass__warp'));
-    await main.waitForFunction(()=>getComputedStyle(document.querySelector('.topbar .liquid-backdrop')).backdropFilter.includes('url('));
-    assert.match(await main.locator('.topbar .liquid-backdrop').evaluate(el=>getComputedStyle(el).backdropFilter),/url\(/,'The installed glass component must refract the actual backdrop');
+    await main.waitForFunction(()=>getComputedStyle(document.querySelector('.topbar > .liquid-backdrop')).backdropFilter.includes('url('));
+    assert.match(await main.locator('.topbar > .liquid-backdrop').evaluate(el=>getComputedStyle(el).backdropFilter),/url\(/,'The installed glass component must refract the actual backdrop');
     await main.evaluate(()=>{const slider=document.querySelector('#liquidDisplacement');slider.value='95';slider.dispatchEvent(new Event('input',{bubbles:true}));});
     await main.waitForFunction(()=>document.querySelector('.topbar feDisplacementMap')?.getAttribute('scale')==='-95');
     assert.equal(await main.locator('.topbar').evaluate(el=>getComputedStyle(el).webkitAppRegion),'no-drag','The full main header must not swallow control clicks');

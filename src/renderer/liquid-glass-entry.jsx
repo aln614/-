@@ -7,11 +7,25 @@ import glassSettings from '../services/liquidGlassSettings';
 const {DEFAULT_LIQUID_GLASS:defaults,normalizeLiquidGlass:normalize}=glassSettings;
 const key='tenying-liquid-glass-settings';
 const controls={displacementScale:'liquidDisplacement',blurAmount:'liquidBlur',saturation:'liquidSaturation',aberrationIntensity:'liquidAberration',surfaceOpacity:'liquidOpacity'};
+const controlSelector=[
+  '#startBatchBtn','#saveConfigBtn',
+  '#clearMainImagesBtn','#clearRefImagesBtn','#clearAllInputImagesBtn',
+  '.topbar .pill','.desktop-window-controls button',
+  '.page .section-head > button','.right-panel .panel-head button',
+  '.right-panel .stats > div'
+].join(',');
+const interactiveControlSelector=[
+  '#startBatchBtn','#saveConfigBtn',
+  '#clearMainImagesBtn','#clearRefImagesBtn','#clearAllInputImagesBtn',
+  '.topbar .pill','.desktop-window-controls button',
+  '.page .section-head > button','.right-panel .panel-head button'
+].join(',');
 const selector=[
   '.topbar',
   '.asset-library-window','.prompt-library-window','.chat-floating-window','.announcement-panel',
   '#previewModal','.preview-toolbar','.preview-info','.video-preview-info',
-  '.api-balance-dialog','.recent-audio-preview-card','.danger-confirm-card'
+  '.api-balance-dialog','.recent-audio-preview-card','.danger-confirm-card',
+  controlSelector
 ].join(',');
 function stored() {
   try { const value=localStorage.getItem(key); return value ? normalize(JSON.parse(value)) : null; } catch { return null; }
@@ -20,6 +34,7 @@ let settings=stored() || {...defaults};
 const surfaces=new Map();
 const candidates=new Set();
 const pendingHosts=new Set();
+const controlLabels=new Map();
 let frame=0;
 let motionTimer=0;
 let nativeHidden=false;
@@ -63,13 +78,30 @@ function GlassSurface({host,...props}) {
       if(match && backdrop) backdrop.style.setProperty('--liquid-refraction',`url("#${match[1]}")`);
     }
   },[]);
-  return <><div ref={layer} className="liquid-react-layer"><LiquidGlass {...props} /></div>{createPortal(<div className="liquid-backdrop" aria-hidden="true" />,host)}</>;
+  return <><div ref={layer} className="liquid-react-layer"><LiquidGlass {...props} globalMousePos={stationaryMouse} mouseOffset={stationaryMouse} /></div>{createPortal(<div className="liquid-backdrop" aria-hidden="true" />,host)}</>;
+}
+function preserveControlLabel(host) {
+  controlLabels.set(host,host.textContent);
+  const descriptor=Object.getOwnPropertyDescriptor(Node.prototype,'textContent');
+  if(!descriptor?.get || !descriptor?.set) return;
+  Object.defineProperty(host,'textContent',{
+    configurable:true,
+    get(){return controlLabels.get(host) ?? descriptor.get.call(host);},
+    set(value){
+      const text=String(value ?? '');
+      controlLabels.set(host,text);
+      const nodes=[...host.childNodes].filter(node=>!node.matches?.('.liquid-glass-mount,.liquid-backdrop'));
+      const target=nodes.find(node=>node.nodeType===Node.TEXT_NODE) || nodes.find(node=>node.nodeType===Node.ELEMENT_NODE && node.classList?.contains('liquid-control-label'));
+      if(target) target.textContent=text;
+      else host.append(document.createTextNode(text));
+    }
+  });
 }
 
 function renderSurface(surface) {
-  const active=settings.enabled && !document.hidden && !nativeHidden && surface.visible && surface.width>0 && surface.height>0;
+  const active=settings.enabled && !document.hidden && !nativeHidden && (surface.visible || surface.control) && surface.width>0 && surface.height>0;
   const radius=parseFloat(getComputedStyle(surface.host).borderTopLeftRadius) || 0;
-  const signature=surface.staticOnly ? JSON.stringify([active]) : JSON.stringify([active,settings,radius,surface.width,surface.height]);
+  const signature=surface.staticOnly ? JSON.stringify([active]) : JSON.stringify([active,settings,radius,surface.width,surface.height,surface.control,surface.interactive]);
   if(surface.signature===signature) return;
   surface.signature=signature;
   surface.host.classList.toggle('liquid-surface-active',active);
@@ -84,14 +116,25 @@ function renderSurface(surface) {
     return;
   }
   const {enabled,surfaceOpacity,...props}=settings;
+  if(surface.control) {
+    const compact=Math.min(surface.width,surface.height)<=48;
+    props.displacementScale=compact
+      ? Math.min(42,Math.max(22,props.displacementScale*.44))
+      : Math.min(58,Math.max(28,props.displacementScale*.58));
+  }
   // The library measures on mount/window resize; remount on container-only resizes too.
-  surface.root.render(active ? <GlassSurface host={surface.host} key={surface.width+'x'+surface.height} {...props} globalMousePos={stationaryMouse} mouseOffset={stationaryMouse} overLight={false} cornerRadius={radius} elasticity={0} padding="0" style={{position:'absolute',top:'50%',left:'50%',width:'100%',height:'100%'}} /> : null);
+  surface.root.render(active ? <GlassSurface host={surface.host} key={surface.width+'x'+surface.height} {...props} overLight={false} cornerRadius={radius} elasticity={0} mode="standard" padding="0" style={{position:'absolute',top:'50%',left:'50%',width:'100%',height:'100%'}} /> : null);
 }
 function removeSurface(host) {
   const surface=surfaces.get(host);
   if(!surface) return;
   clearTimeout(surface.resizeTimer);surface.root?.unmount();visibility.unobserve(host);resize.unobserve(host);surfaces.delete(host);
   host.classList.remove('liquid-surface-active');delete host.dataset.liquidSurface;
+  host.classList.remove('liquid-control-surface','liquid-interactive-control');
+  if(controlLabels.has(host)) {
+    const label=controlLabels.get(host);
+    controlLabels.delete(host);delete host.textContent;host.textContent=label;
+  }
   host.querySelector(':scope > .liquid-glass-mount')?.remove();
   host.querySelector(':scope > .liquid-backdrop')?.remove();
 }
@@ -116,6 +159,11 @@ function discoverSurfaces() {
     host.dataset.liquidSurface='';
     if(getComputedStyle(host).position==='static') host.classList.add('liquid-static-host');
     const staticOnly=host.id==='previewModal';
+    const control=host.matches(controlSelector);
+    const interactive=control && host.matches(interactiveControlSelector);
+    host.classList.toggle('liquid-control-surface',control);
+    host.classList.toggle('liquid-interactive-control',interactive);
+    if(control) preserveControlLabel(host);
     let root=null;
     if(!staticOnly) {
       const mount=document.createElement('div');
@@ -124,8 +172,10 @@ function discoverSurfaces() {
       host.prepend(mount);
       root=createRoot(mount);
     }
-    const surface={host,root,staticOnly,width:0,height:0,visible:false,signature:''};
+    const rect=host.getBoundingClientRect();
+    const surface={host,root,staticOnly,control,interactive,width:control?Math.round(rect.width):0,height:control?Math.round(rect.height):0,visible:control,signature:''};
     surfaces.set(host,surface);visibility.observe(host);resize.observe(host);
+    if(control) renderSurface(surface);
   }
   pendingHosts.clear();
 }
@@ -210,6 +260,38 @@ document.addEventListener('visibilitychange',updateVisibility);
 window.desktopVisibility?.onChange(visible=>{nativeHidden=!visible;updateVisibility();});
 document.addEventListener('scroll',motion,{capture:true,passive:true});
 window.addEventListener('resize',motion,{passive:true});
+let pointerFrame=0,pointerTarget=null,pointerX=0,pointerY=0,pressedControl=null;
+function clearPointerTarget(target) {
+  if(!target) return;
+  target.classList.remove('liquid-pointer-active');
+  target.style.removeProperty('--liquid-pointer-x');
+  target.style.removeProperty('--liquid-pointer-y');
+}
+function updateControlPointer() {
+  pointerFrame=0;
+  const next=document.elementFromPoint(pointerX,pointerY)?.closest?.('.liquid-interactive-control');
+  if(next!==pointerTarget) {clearPointerTarget(pointerTarget);pointerTarget=next || null;}
+  if(!pointerTarget) return;
+  const rect=pointerTarget.getBoundingClientRect();
+  if(!rect.width || !rect.height) return;
+  const x=Math.max(0,Math.min(100,(pointerX-rect.left)/rect.width*100));
+  const y=Math.max(0,Math.min(100,(pointerY-rect.top)/rect.height*100));
+  pointerTarget.style.setProperty('--liquid-pointer-x',x.toFixed(2)+'%');
+  pointerTarget.style.setProperty('--liquid-pointer-y',y.toFixed(2)+'%');
+  pointerTarget.classList.add('liquid-pointer-active');
+}
+document.addEventListener('pointermove',event=>{
+  pointerX=event.clientX;pointerY=event.clientY;
+  if(!pointerFrame) pointerFrame=requestAnimationFrame(updateControlPointer);
+},{passive:true});
+document.addEventListener('pointerleave',()=>{clearPointerTarget(pointerTarget);pointerTarget=null;});
+document.addEventListener('pointerdown',event=>{
+  pressedControl=event.target.closest?.('.liquid-interactive-control') || null;
+  pressedControl?.classList.add('liquid-control-pressed');
+},{passive:true});
+function releaseControl(){pressedControl?.classList.remove('liquid-control-pressed');pressedControl=null;}
+document.addEventListener('pointerup',releaseControl,{passive:true});
+document.addEventListener('pointercancel',releaseControl,{passive:true});
 let themeSignature='';
 new MutationObserver(()=>{
   const signature=String(document.body.classList.contains('theme-dark'));

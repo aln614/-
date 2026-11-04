@@ -22,7 +22,13 @@ fs.writeFileSync(path.join(data,'config.json'),JSON.stringify({port:18769,output
     await main.waitForURL('http://127.0.0.1:18769/**',{timeout:30000});
     await main.waitForFunction(()=>window.liquidGlassSettings && document.querySelector('.topbar feDisplacementMap'));
     assert.equal(await main.locator('.sidebar .liquid-backdrop').count(),0,'Sidebar uses the lightweight glass surface');
-    assert.equal(await main.locator('#page-home > .grid > .card .liquid-backdrop').count(),0,'Main content avoids per-card displacement filters');
+    assert.equal(await main.locator('#page-home > .grid > .card > .liquid-backdrop').count(),0,'Main cards avoid whole-card displacement filters');
+    assert.equal(await main.locator('#page-home .liquid-control-surface').count(),5,'Only the primary command, three task actions and save action use refractive controls in the home workspace');
+    assert.equal(await main.locator('#page-home .liquid-control-surface feDisplacementMap').count(),15,'Five selected home controls use one three-pass liquid filter each');
+    assert.equal(await main.locator('.topbar .pill.liquid-control-surface').count(),7,'Top status controls use refractive pill surfaces');
+    assert.equal(await main.locator('.desktop-window-controls button.liquid-control-surface').count(),3,'Window controls use compact refractive surfaces');
+    assert.equal(await main.locator('.right-panel .stats>div.liquid-control-surface').count(),4,'Realtime statistics use four refractive tiles');
+    assert.ok(await main.locator('[data-liquid-surface]').count()<=24,'The main page keeps a bounded number of liquid surfaces');
     assert.notEqual(await main.locator('#page-home > .grid > .card').first().evaluate(el=>getComputedStyle(el).backgroundImage),'none','Main content keeps a lightweight glass tint');
     await main.locator('[data-page="settings"]').click();
     await main.mouse.move(1000,120);
@@ -30,7 +36,7 @@ fs.writeFileSync(path.join(data,'config.json'),JSON.stringify({port:18769,output
     await main.locator('#liquidEnabled').scrollIntoViewIfNeeded();
     fs.mkdirSync(path.join(root,'test-results'),{recursive:true});
     await main.screenshot({path:path.join(root,'test-results','liquid-glass-settings.png')});
-    assert.match(await main.locator('.topbar .liquid-backdrop').evaluate(el=>getComputedStyle(el).backdropFilter),/url\(/);
+    assert.match(await main.locator('.topbar > .liquid-backdrop').evaluate(el=>getComputedStyle(el).backdropFilter),/url\(/);
     await main.evaluate(()=>{
       document.getElementById('localAppearanceBackground').style.setProperty('background','repeating-linear-gradient(90deg,#eecc77 0px,#eecc77 18px,#7799cc 18px,#7799cc 36px)','important');
       const slider=document.getElementById('liquidDisplacement');slider.value='0';slider.dispatchEvent(new Event('input',{bubbles:true}));
@@ -69,7 +75,7 @@ fs.writeFileSync(path.join(data,'config.json'),JSON.stringify({port:18769,output
     await main.evaluate(()=>{const el=document.getElementById('liquidDisplacement');el.value='95';el.dispatchEvent(new Event('input',{bubbles:true}));});
     await main.waitForFunction(()=>document.querySelector('.topbar feDisplacementMap')?.getAttribute('scale')==='-95');
     await main.evaluate(()=>{const el=document.getElementById('liquidOpacity');el.value='0.31';el.dispatchEvent(new Event('input',{bubbles:true}));});
-    await main.waitForFunction(()=>Math.abs(parseFloat(getComputedStyle(document.querySelector('.topbar .liquid-backdrop')).backgroundColor.split(',')[3])-.31)<.01);
+    await main.waitForFunction(()=>Math.abs(parseFloat(getComputedStyle(document.querySelector('.topbar > .liquid-backdrop')).backgroundColor.split(',')[3])-.31)<.01);
     const cardOpacity=await main.locator('#page-settings .card').first().evaluate(el=>getComputedStyle(el).backgroundColor);
     await main.evaluate(()=>{const el=document.getElementById('liquidOpacity');el.value='0.8';el.dispatchEvent(new Event('input',{bubbles:true}));});
     assert.notEqual(await main.locator('#page-settings .card').first().evaluate(el=>getComputedStyle(el).backgroundColor),cardOpacity,'Main work surfaces respond to opacity changes');

@@ -879,8 +879,9 @@ function applyNativeWindowAppearance(win, appearance = {}) {
     catch(error) {actual='none';addLog('窗口玻璃材质设置失败：'+error.message,{level:'warn'});}
   }
   win.setBackgroundColor('#00000000');
-  if(nativeTheme.themeSource!==theme) nativeTheme.themeSource=theme;
-  const result={mode,theme,material:actual};
+  const materialTheme=actual==='acrylic' ? 'light' : theme;
+  if(nativeTheme.themeSource!==materialTheme) nativeTheme.themeSource=materialTheme;
+  const result={mode,theme,material:actual,materialTheme};
   nativeWindowAppearances.set(win,result);
   return result;
 }
