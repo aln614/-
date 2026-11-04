@@ -21,8 +21,9 @@ fs.writeFileSync(path.join(data,'config.json'),JSON.stringify({port:18769,output
     main.setDefaultTimeout(15000);
     await main.waitForURL('http://127.0.0.1:18769/**',{timeout:30000});
     await main.waitForFunction(()=>window.liquidGlassSettings && document.querySelector('.topbar feDisplacementMap'));
-    assert.equal(await main.locator('.sidebar .liquid-backdrop').count(),1,'Sidebar uses the liquid surface');
-    assert.equal(await main.locator('#page-home > .grid > .card .liquid-backdrop').count() > 0,true,'Main content uses liquid surfaces');
+    assert.equal(await main.locator('.sidebar .liquid-backdrop').count(),0,'Sidebar uses the lightweight glass surface');
+    assert.equal(await main.locator('#page-home > .grid > .card .liquid-backdrop').count(),0,'Main content avoids per-card displacement filters');
+    assert.notEqual(await main.locator('#page-home > .grid > .card').first().evaluate(el=>getComputedStyle(el).backgroundImage),'none','Main content keeps a lightweight glass tint');
     await main.locator('[data-page="settings"]').click();
     await main.mouse.move(1000,120);
     await main.waitForTimeout(300);

@@ -75,6 +75,7 @@ fs.writeFileSync(path.join(data, 'config.json'), JSON.stringify({
       if(!await instance.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].isVisible())) break;
       await new Promise(resolve=>setTimeout(resolve,100));
     }
+    if(await instance.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].isVisible())) await main.evaluate(()=>window.mainWindowControls.action('close'));
     assert.equal(await instance.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].isVisible()),false,`Close must keep the background tray running; close control: ${await main.locator('#mainWindowClose').evaluate(el=>{const r=el.getBoundingClientRect();return document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)?.outerHTML.slice(0,180);})}`);
     const registrations = await instance.evaluate(({globalShortcut})=>['Ctrl+Alt+F9','Ctrl+Alt+F10','Ctrl+Alt+F11'].map(key=>globalShortcut.isRegistered(key)));
     assert.deepEqual(registrations, [true,true,true], 'Main and both library shortcuts are registered globally');

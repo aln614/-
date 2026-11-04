@@ -4498,6 +4498,23 @@ body.desktop-shell .topbar .pill,body.desktop-shell .nav.active{box-shadow:0 5px
 body.desktop-shell .topbar button:active,body.desktop-shell .nav:active{transform:scale(.97)!important}
 body.desktop-shell .right-panel .stats>div{background:linear-gradient(145deg,rgba(255,255,255,.72),rgba(255,255,255,.42))!important;border:1px solid rgba(255,255,255,.65);box-shadow:0 8px 22px rgba(30,48,70,.07),inset 0 1px 0 rgba(255,255,255,.85)}
 body.desktop-shell.theme-dark .right-panel .stats>div{background:linear-gradient(145deg,rgba(47,58,77,.75),rgba(24,33,47,.64))!important;border-color:rgba(255,255,255,.1);box-shadow:0 8px 22px rgba(0,0,0,.18),inset 0 1px 0 rgba(255,255,255,.1)}
+/* Main content keeps the glass styling as cheap composited tints. Running a full
+   chromatic displacement filter on every card causes large page-switch stalls. */
+body.liquid-glass-enabled .page .card,body.liquid-glass-enabled .bottom-log{
+  background-color:rgba(var(--liquid-tint),.68)!important;
+  background-image:linear-gradient(145deg,rgba(var(--liquid-tint),.18),rgba(var(--liquid-tint),0))!important;
+  border-color:rgba(255,255,255,.5)!important;
+  box-shadow:0 12px 34px rgba(34,52,72,.08),inset 0 1px 0 rgba(255,255,255,.58)!important;
+}
+body.liquid-glass-enabled :is(.sidebar,.right-panel){
+  background:linear-gradient(145deg,rgba(var(--liquid-tint),.72),rgba(var(--liquid-tint),.46))!important;
+  border:1px solid rgba(255,255,255,.48)!important;
+  box-shadow:0 14px 38px rgba(34,52,72,.09),inset 0 1px 0 rgba(255,255,255,.58)!important;
+}
+body.theme-dark.liquid-glass-enabled :is(.sidebar,.right-panel){border-color:rgba(255,255,255,.1)!important;box-shadow:0 14px 38px rgba(0,0,0,.2),inset 0 1px 0 rgba(255,255,255,.08)!important}
+body.theme-dark.liquid-glass-enabled .page .card,body.theme-dark.liquid-glass-enabled .bottom-log{
+  border-color:rgba(255,255,255,.1)!important;box-shadow:0 12px 34px rgba(0,0,0,.18),inset 0 1px 0 rgba(255,255,255,.08)!important;
+}
 @media (max-width:1350px){body.desktop-shell #lanState{max-width:170px;overflow:hidden;text-overflow:ellipsis}body.desktop-shell .top-status{gap:4px}}
 @media (prefers-reduced-motion:reduce){body.desktop-shell .topbar button,body.desktop-shell .nav{transition:none!important}}
 

@@ -8,7 +8,7 @@ const {DEFAULT_LIQUID_GLASS:defaults,normalizeLiquidGlass:normalize}=glassSettin
 const key='tenying-liquid-glass-settings';
 const controls={displacementScale:'liquidDisplacement',blurAmount:'liquidBlur',saturation:'liquidSaturation',aberrationIntensity:'liquidAberration',surfaceOpacity:'liquidOpacity'};
 const selector=[
-  '.topbar','.sidebar','.right-panel','.bottom-log','.page > .card','.page > .grid > .card',
+  '.topbar',
   '.asset-library-window','.prompt-library-window','.chat-floating-window','.announcement-panel',
   '#previewModal','.preview-toolbar','.preview-info','.video-preview-info',
   '.api-balance-dialog','.recent-audio-preview-card','.danger-confirm-card'
@@ -73,15 +73,29 @@ function renderSurface(surface) {
   // The library measures on mount/window resize; remount on container-only resizes too.
   surface.root.render(active ? <GlassSurface host={surface.host} key={surface.width+'x'+surface.height} {...props} globalMousePos={stationaryMouse} mouseOffset={stationaryMouse} overLight={false} cornerRadius={radius} elasticity={0} padding="0" style={{position:'absolute',top:'50%',left:'50%',width:'100%',height:'100%'}} /> : null);
 }
+function removeSurface(host) {
+  const surface=surfaces.get(host);
+  if(!surface) return;
+  clearTimeout(surface.resizeTimer);surface.root.unmount();visibility.unobserve(host);resize.unobserve(host);surfaces.delete(host);
+  host.classList.remove('liquid-surface-active');delete host.dataset.liquidSurface;
+  host.querySelector(':scope > .liquid-glass-mount')?.remove();
+  host.querySelector(':scope > .liquid-backdrop')?.remove();
+}
+function hostDisplayed(host) {
+  if(document.body.classList.contains('standalone-library') && host.matches('.asset-library-window,.prompt-library-window')) return true;
+  const style=getComputedStyle(host);
+  return style.display!=='none' && style.visibility!=='hidden' && host.getClientRects().length>0;
+}
 function collectHosts(node) {
   if(node.nodeType!==1 || node.closest('.liquid-glass-mount,.liquid-backdrop')) return;
-  if(node.matches(selector)) pendingHosts.add(node);
-  for(const host of node.querySelectorAll(selector)) pendingHosts.add(host);
+  const collect=host=>{if(hostDisplayed(host))pendingHosts.add(host);else removeSurface(host);};
+  if(node.matches(selector)) collect(node);
+  for(const host of node.querySelectorAll(selector)) collect(host);
 }
 function discoverSurfaces() {
   frame=0;
   for(const [host,surface] of surfaces) if(!host.isConnected) {
-    clearTimeout(surface.resizeTimer);surface.root.unmount();visibility.unobserve(host);resize.unobserve(host);surfaces.delete(host);
+    removeSurface(host);
   }
   for(const host of pendingHosts) {
     if(!host.isConnected || surfaces.has(host) || host.closest('.liquid-glass-mount')) continue;
@@ -106,6 +120,7 @@ new MutationObserver(records=>{
   }
   if(pendingHosts.size || removed) scheduleDiscover();
 }).observe(document.body,{subtree:true,childList:true});
+new MutationObserver(records=>{for(const record of records)collectHosts(record.target);if(pendingHosts.size)scheduleDiscover();}).observe(document.body,{subtree:true,attributes:true,attributeFilter:['class','style','hidden','open','aria-hidden']});
 function render() {
   document.body.classList.toggle('liquid-glass-enabled',settings.enabled);
   document.documentElement.style.setProperty('--liquid-opacity',settings.surfaceOpacity);
