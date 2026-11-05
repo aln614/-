@@ -5,6 +5,7 @@ const os=require('node:os');
 const path=require('node:path');
 const {_electron:electron}=require('playwright');
 const root=path.resolve(__dirname,'..');
+const clearMode=process.env.GLASS_TEST_CLEAR==='1';
 const temporary=fs.mkdtempSync(path.join(os.tmpdir(),'tenying-main-glass-perf-'));
 const data=path.join(temporary,'runtime');
 fs.mkdirSync(data);
@@ -16,6 +17,10 @@ fs.writeFileSync(path.join(data,'config.json'),JSON.stringify({port:18777,output
   const page=await app.firstWindow();page.setDefaultTimeout(15000);
   await page.waitForURL('http://127.0.0.1:18777/**');
   await page.waitForFunction(()=>document.querySelector('.topbar feDisplacementMap'));
+  if(clearMode) {
+    await page.evaluate(()=>window.localAppearance.setMode('none'));
+    await page.waitForSelector('#page-home .card>.liquid-backdrop',{state:'attached'});
+  }
   const before=await page.evaluate(()=>({
     surfaces:document.querySelectorAll('[data-liquid-surface]').length,
     filters:document.querySelectorAll('feDisplacementMap').length,
@@ -38,14 +43,14 @@ fs.writeFileSync(path.join(data,'config.json'),JSON.stringify({port:18777,output
   const metrics=await page.evaluate(()=>{cancelAnimationFrame(window.__mainPerf.raf);const f=window.__mainPerf.frames.sort((a,b)=>a-b);return{frames:f.length,p95:f[Math.floor(f.length*.95)],p99:f[Math.floor(f.length*.99)],longTasks:window.__mainPerf.longTasks,mounts:window.__mainPerf.mounts,surfaces:document.querySelectorAll('[data-liquid-surface]').length,filters:document.querySelectorAll('feDisplacementMap').length};});
   const result={before,metrics};console.log(JSON.stringify(result,null,2));
   fs.mkdirSync(path.join(root,'test-results'),{recursive:true});
-  const label=process.env.MAIN_GLASS_BASELINE?'before':'after';fs.writeFileSync(path.join(root,'test-results','main-glass-perf-'+label+'.json'),JSON.stringify(result,null,2));
+  const label=clearMode?'clear':process.env.MAIN_GLASS_BASELINE?'before':'after';fs.writeFileSync(path.join(root,'test-results','main-glass-perf-'+label+'.json'),JSON.stringify(result,null,2));
   await page.screenshot({path:path.join(root,'test-results','main-glass-perf-'+label+'.png')});
   if(!process.env.MAIN_GLASS_BASELINE){
-    assert.ok(metrics.filters<=3,'One visible liquid-glass component uses three chromatic displacement passes');
+    assert.ok(metrics.filters<=(clearMode?15:6),'Refraction stays bounded to major visible surfaces');
     assert.ok(before.large<=4,'Main interface must limit large refracted surfaces');
-    assert.ok(metrics.mounts<=4,'Page switching must not rebuild many glass components');
+    assert.ok(metrics.mounts<=(clearMode?16:4),'Page switching must not rebuild many glass components');
     assert.match(await page.locator('.topbar > .liquid-backdrop').evaluate(el=>getComputedStyle(el).backdropFilter),/url\(/);
-    assert.equal(await page.locator('#page-home .card').first().evaluate(el=>getComputedStyle(el).backgroundColor!=='rgba(0, 0, 0, 0)' || getComputedStyle(el).backgroundImage!=='none'),true,'Content cards keep a lightweight glass tint');
+    assert.equal(await page.locator('#page-home .card').first().evaluate(el=>!!el.querySelector(':scope>.liquid-backdrop') || getComputedStyle(el).backgroundColor!=='rgba(0, 0, 0, 0)' || getComputedStyle(el).backgroundImage!=='none'),true,'Content cards keep a lightweight glass tint');
   }
  }finally{if(app)await app.close();const rel=path.relative(os.tmpdir(),temporary);if(!rel.startsWith('tenying-main-glass-perf-')||rel.includes(path.sep))throw Error('Unsafe cleanup');fs.rmSync(temporary,{recursive:true,force:true});}
 })().catch(e=>{console.error(e);process.exitCode=1});

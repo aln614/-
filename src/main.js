@@ -851,7 +851,10 @@ function setupWindowVisibility(win) {
   win.webContents.on('did-finish-load',sendVisibility);
 }
 
+const nativeBackdropSupported=process.platform==='win32' && Number(os.release().split('.')[2])>=22621;
 function applyLibraryWindowShape(win) {
+  // DWM rounds non-layered Windows 11 windows. A custom region disables that.
+  if(nativeBackdropSupported) return;
   if (process.platform !== 'win32' || !win || win.isDestroyed()) return;
   const [width, height] = win.getSize();
   const radius = Math.min(20, Math.floor(width / 2), Math.floor(height / 2));
@@ -869,10 +872,9 @@ function applyNativeWindowAppearance(win, appearance = {}) {
   if(!win || win.isDestroyed()) return {material:'none'};
   const mode=['board','none','custom'].includes(appearance.mode) ? appearance.mode : 'board';
   const theme=appearance.theme==='dark' ? 'dark' : 'light';
-  // The Windows acrylic layer adds an opaque gray tint and square outer pixels
-  // before Chromium paints our rounded liquid surface. Keep the native window
-  // transparent and let the bounded web material own the refraction and shape.
-  const material='none';
+  // CSS backdrop-filter cannot sample other Windows applications. DWM owns
+  // desktop blur; the renderer adds the bounded, in-app liquid refraction.
+  const material=mode==='none' && appearance.enabled!==false && nativeBackdropSupported ? 'acrylic' : 'none';
   const previous=nativeWindowAppearances.get(win);
   // Desktop capture exclusion also hides windows from remote desktop and screen sharing.
   win.setContentProtection(false);
@@ -882,8 +884,9 @@ function applyNativeWindowAppearance(win, appearance = {}) {
     catch(error) {actual='none';addLog('窗口玻璃材质设置失败：'+error.message,{level:'warn'});}
   }
   win.setBackgroundColor('#00000000');
+  if(process.platform==='win32' && !win.isMaximized()) applyLibraryWindowShape(win);
   if(nativeTheme.themeSource!==theme) nativeTheme.themeSource=theme;
-  const result={mode,theme,material:actual,materialTheme:theme};
+  const result={mode,theme,material:actual,materialTheme:theme,shape:nativeBackdropSupported?'native':'custom'};
   nativeWindowAppearances.set(win,result);
   return result;
 }
@@ -901,7 +904,7 @@ function showLibraryWindow(kind, toggle = false) {
   win = new BrowserWindow({
     width:kind === 'asset' ? 1200 : 1050, height:760, minWidth:720, minHeight:500,
     title:kind === 'asset' ? '资产库' : '提示词库', show:false, frame:false,
-    transparent:true, backgroundColor:'#00000000', thickFrame:false, hasShadow:false,
+    transparent:!nativeBackdropSupported, backgroundColor:'#00000000', thickFrame:nativeBackdropSupported, hasShadow:false,
     icon:path.join(__dirname, '..', 'assets', 'rocket.ico'),
     webPreferences:{contextIsolation:true, nodeIntegration:false, sandbox:false, webSecurity:true, allowRunningInsecureContent:false, preload:path.join(__dirname,'preload.js')}
   });
@@ -9963,7 +9966,7 @@ function createWindow() {
   const cfg = readConfig();
   mainWindow = new BrowserWindow({
     width: 1480, height: 960, minWidth: 1180, minHeight: 760, show:!process.argv.includes('--background'), frame:false,
-    transparent:true,backgroundColor:'#00000000',thickFrame:false,hasShadow:false,
+    transparent:!nativeBackdropSupported,backgroundColor:'#00000000',thickFrame:nativeBackdropSupported,hasShadow:false,
     title: (cfg.app_name || APP_DISPLAY_NAME),
     icon: path.join(__dirname, '..', 'assets', 'rocket.ico'),
     webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: false, webSecurity: true, allowRunningInsecureContent: false, preload: path.join(__dirname, 'preload.js') }
@@ -9971,6 +9974,7 @@ function createWindow() {
   mainWindow.removeMenu();
   applyNativeWindowAppearance(mainWindow);
   const applyMainShape=()=>{
+    if(nativeBackdropSupported) return;
     if(mainWindow.isMaximized()) {try {mainWindow.setShape([]);} catch {}}
     else applyLibraryWindowShape(mainWindow);
   };

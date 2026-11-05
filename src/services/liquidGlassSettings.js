@@ -1,11 +1,11 @@
 'use strict';
 const DEFAULT_LIQUID_GLASS = Object.freeze({
   enabled:true, displacementScale:70, blurAmount:0.0625,
-  saturation:140, aberrationIntensity:2, surfaceOpacity:0.48
+  saturation:140, aberrationIntensity:2, surfaceOpacity:0.48, elasticity:0.2
 });
 const LIQUID_GLASS_LIMITS = Object.freeze({
   displacementScale:[0,150], blurAmount:[0,1], saturation:[50,250],
-  aberrationIntensity:[0,10], surfaceOpacity:[0.15,0.9]
+  aberrationIntensity:[0,10], surfaceOpacity:[0.15,0.9], elasticity:[0,0.5]
 });
 function normalizeLiquidGlass(value) {
   const source=value && typeof value==='object' ? value : {};

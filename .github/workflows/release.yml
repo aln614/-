@@ -26,6 +26,15 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Check release version
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ($env:GITHUB_REF_TYPE -eq "tag" -and $env:GITHUB_REF_NAME -ne "v$version") {
+            throw "Release tag must match package.json version v$version."
+          }
+          Write-Host "Building TENYING_AI $version"
+
       - name: Validate JavaScript
         run: npm run check
 
@@ -42,12 +51,12 @@ jobs:
       - name: Verify release EXE
         shell: pwsh
         run: |
-          $exe = Get-ChildItem -Path dist -Filter *.exe -File | Select-Object -First 1
-          if (-not $exe) { throw "Build finished but dist/*.exe was not created." }
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $lanVersion = (Get-Content lan-client/package.json -Raw | ConvertFrom-Json).version
+          $exe = Get-Item -LiteralPath "dist/TENYING_AI-$version-win-x64.exe"
           if ($exe.Length -lt 1000000) { throw "Release EXE is unexpectedly small: $($exe.Length) bytes." }
           Write-Host "Release EXE: $($exe.FullName) ($($exe.Length) bytes)"
-          $lanClientExe = Get-ChildItem -Path lan-client/dist -Filter *.exe -File | Select-Object -First 1
-          if (-not $lanClientExe) { throw "Build finished but lan-client/dist/*.exe was not created." }
+          $lanClientExe = Get-Item -LiteralPath "lan-client/dist/TENYING_AI_LAN_Client-$lanVersion-win-x64.exe"
           if ($lanClientExe.Length -lt 1000000) { throw "LAN client EXE is unexpectedly small: $($lanClientExe.Length) bytes." }
           Write-Host "LAN client EXE: $($lanClientExe.FullName) ($($lanClientExe.Length) bytes)"
 

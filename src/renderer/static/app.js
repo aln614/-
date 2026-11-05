@@ -4174,7 +4174,12 @@ function setPage(name){
     // Midjourney always opens on Imagine; each tab's saved form values remain intact.
     mjState.tab = 'imagine';
   }
-  $$('.nav').forEach(n => n.classList.toggle('active', n.dataset.page === name));
+  $$('.nav').forEach(n => {
+    const active = n.dataset.page === name;
+    n.classList.toggle('active', active);
+    if(active) n.setAttribute('aria-current', 'page');
+    else n.removeAttribute('aria-current');
+  });
   $$('.page').forEach(p => p.classList.toggle('active', p.id === 'page-' + name));
   repairMobileBottomNav();
   setRealtimePanelMode((name === 'video' || name === 'video-manage') ? 'video' : 'image');
@@ -4191,6 +4196,7 @@ function setPage(name){
   if(name === 'midjourney') renderMidjourneyTab();
 }
 
+$$('#sidebar .nav').forEach(btn => btn.setAttribute('aria-label', btn.title || btn.textContent.trim()));
 $$('.nav[data-page]').forEach(btn => btn.addEventListener('click', () => setPage(btn.dataset.page === 'batches' ? 'history' : btn.dataset.page)));
 $$('[data-appearance-open]').forEach(button=>button.addEventListener('click',cycleThemeMode));
 $$('#themePopover [data-theme]').forEach(btn=>btn.addEventListener('click',()=>setThemeModeAndSave(btn.dataset.theme)));

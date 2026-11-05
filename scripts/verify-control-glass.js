@@ -30,8 +30,9 @@ fs.writeFileSync(path.join(data,'config.json'),JSON.stringify({port:18790,shortc
     const sidebar=await page.locator('.sidebar').evaluate(el=>{const s=getComputedStyle(el);return{radius:parseFloat(s.borderRadius),shadow:s.boxShadow,backdrop:s.backdropFilter,liquid:!!el.querySelector(':scope>.liquid-backdrop')};});
     assert.ok(sidebar.radius>=20,'Sidebar has a continuous Apple-style corner');
     assert.notEqual(sidebar.shadow,'none','Sidebar has material depth');
-    assert.match(sidebar.backdrop,/blur/,'Sidebar keeps lightweight live backdrop blur');
-    assert.equal(sidebar.liquid,false,'Sidebar avoids a second chromatic refraction stack');
+    assert.equal(sidebar.backdrop,'none','Sidebar does not double-blur the upstream material');
+    assert.equal(sidebar.liquid,true,'Sidebar uses the upstream liquid glass component');
+    assert.match(await page.locator('.sidebar>.liquid-backdrop').evaluate(el=>getComputedStyle(el).backdropFilter),/url\(/,'Sidebar applies real refraction');
     for(const selector of ['#page-home .card','.right-panel','.recent-upload-panel','.right-panel .stats>div']) {
       const style=await page.locator(selector).first().evaluate(el=>{const s=getComputedStyle(el);return {radius:parseFloat(s.borderRadius),background:s.backgroundColor,shadow:s.boxShadow};});
       assert.ok(style.radius>=17,selector+' keeps concentric rounded corners');

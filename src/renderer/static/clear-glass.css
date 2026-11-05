@@ -1,0 +1,109 @@
+/* Desktop blur comes from DWM, never from transparent CSS or a screenshot loop. */
+body[data-native-window-shape="native"] {--ios-radius-window:8px}
+body.standalone-library[data-native-window-shape="native"] :is(.asset-library-window,.prompt-library-window) {
+  border-radius:8px!important;clip-path:inset(0 round 8px);border:0!important;
+}
+/* Chromium's standard scrollbar properties otherwise restore native arrow buttons. */
+@supports selector(::-webkit-scrollbar) {
+  body :is(.main,.right-panel) {scrollbar-width:auto!important;scrollbar-color:auto!important}
+}
+body[data-background-mode="none"] .app-shell {
+  background:transparent!important;background-image:none!important;box-shadow:none!important;
+}
+body[data-background-mode="none"].liquid-glass-enabled {
+  --clear-control:rgba(var(--liquid-tint),calc(.24 + var(--liquid-opacity)*.24));
+  --clear-surface:rgba(var(--liquid-tint),calc(.28 + var(--liquid-opacity)*.32));
+  --clear-edge:rgba(112,120,133,.16);
+  --ios-muted:#555c66;--muted:var(--ios-muted);
+}
+body.theme-dark[data-background-mode="none"].liquid-glass-enabled {
+  --ios-muted:#bcc1ca;--clear-edge:rgba(221,226,235,.12);
+}
+/* A readable fallback is essential when native desktop blur is unavailable. */
+body[data-background-mode="none"] #localAppearanceBackground {
+  background:rgba(var(--liquid-tint),.94);border-radius:var(--ios-radius-window,28px);
+}
+body[data-background-mode="none"][data-native-glass-material="acrylic"] #localAppearanceBackground {
+  background:rgba(var(--liquid-tint),.10);
+}
+body[data-background-mode="none"] :is(h1,h2,h3,label,.brand,.section-head p,.panel-head strong) {
+  text-shadow:none!important;letter-spacing:0!important;
+}
+body[data-background-mode="none"].liquid-glass-enabled :is(.main,.right-panel.glass) {
+  border-radius:24px!important;background:transparent!important;background-image:none!important;
+  backdrop-filter:none!important;-webkit-backdrop-filter:none!important;
+}
+body[data-background-mode="none"].liquid-glass-enabled :is(.main .card,.right-panel,.topbar,#sidebar,.asset-library-window,.prompt-library-window)>.liquid-backdrop {
+  background:linear-gradient(145deg,rgba(255,255,255,.12),rgba(255,255,255,.015)),var(--clear-surface)!important;
+}
+body[data-background-mode="none"].liquid-glass-enabled :is(.main .card,.right-panel) .liquid-react-layer>span {
+  inset:0!important;width:100%!important;height:100%!important;transform:none!important;transition:none!important;
+  opacity:.12!important;
+}
+body[data-background-mode="none"].liquid-glass-enabled .main :is(.card,.recent-upload-panel,.recent-video-upload-panel,.batch-card,.table-wrap) {
+  background:var(--clear-surface)!important;
+  background-image:none!important;border-color:var(--clear-edge)!important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.20),0 4px 16px rgba(0,0,0,.03)!important;
+  backdrop-filter:none!important;-webkit-backdrop-filter:none!important;
+}
+body[data-background-mode="none"].liquid-glass-enabled .main .card.liquid-surface-active {
+  background:transparent!important;box-shadow:0 4px 16px rgba(0,0,0,.03)!important;
+}
+/* Keep live transparency during scrolling; restore the heavier edge optics when settled. */
+html.liquid-in-motion body[data-background-mode="none"].liquid-glass-enabled :is(.main .card,.right-panel)>.liquid-backdrop {
+  backdrop-filter:blur(var(--liquid-blur)) saturate(var(--liquid-saturation))!important;
+  -webkit-backdrop-filter:blur(var(--liquid-blur)) saturate(var(--liquid-saturation))!important;
+}
+body[data-background-mode="none"].liquid-glass-enabled :is(.main,.right-panel) :is(.dropzone,.stats>div,.recent-upload-item,.mini-batch,.calc-box,.size-hint,.estimate,input:not([type=checkbox]):not([type=radio]):not([type=range]),select,textarea) {
+  background:var(--clear-control)!important;background-image:none!important;
+  border-color:var(--clear-edge)!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;
+}
+body[data-background-mode="none"].liquid-glass-enabled :is(.main,.right-panel) :is(.secondary,.chip,.platform-btn,.panel-head button) {
+  background:var(--clear-control)!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;
+}
+body.standalone-library[data-background-mode="none"] {
+  --standalone-ink:var(--ios-text);--standalone-muted:var(--ios-muted);
+}
+body.standalone-library[data-background-mode="none"] :is(.asset-library-head,.prompt-library-head,.asset-library-sidebar,.prompt-library-groups,.prompt-sidebar-content) {
+  color:var(--ios-text)!important;background:rgba(var(--liquid-tint),.18)!important;
+}
+body.standalone-library[data-background-mode="none"] :is(.asset-library-head input,.asset-library-head select,.prompt-library-head input,.prompt-library-head select,.pl-card pre) {
+  color:var(--ios-text)!important;background:var(--clear-control)!important;
+}
+body #themePopover {
+  border-radius:24px!important;overflow-x:hidden!important;
+  color:var(--ios-text)!important;letter-spacing:0;
+}
+body #themePopover :is(.appearance-background-options button,.theme-mode-segment) {border-radius:14px!important}
+body #themePopover .theme-mode-segment button {border-radius:11px!important}
+body #themePopover .appearance-background-options button.active,
+body #themePopover .theme-mode-segment button.active {
+  color:var(--ios-blue)!important;background:rgba(10,132,255,.13)!important;
+  border-color:rgba(10,132,255,.30)!important;box-shadow:inset 0 0 0 1px rgba(10,132,255,.22)!important;
+}
+body #themePopover input[type=range] {
+  appearance:none;-webkit-appearance:none;border:0!important;border-radius:0!important;
+  height:22px;background:transparent!important;cursor:pointer;outline-offset:3px;
+}
+body #themePopover input[type=range]::-webkit-slider-runnable-track {height:4px;border-radius:999px;background:rgba(128,140,150,.30)}
+body #themePopover input[type=range]::-webkit-slider-thumb {
+  appearance:none;-webkit-appearance:none;width:16px;height:16px;margin-top:-6px;
+  border:1px solid rgba(255,255,255,.72);border-radius:50%;background:var(--ios-blue);
+  box-shadow:0 2px 5px rgba(0,0,0,.16);
+}
+body #themePopover input[type=range]::-moz-range-track {height:4px;border-radius:999px;background:rgba(128,140,150,.30)}
+body #themePopover input[type=range]::-moz-range-thumb {width:16px;height:16px;border:1px solid rgba(255,255,255,.72);border-radius:50%;background:var(--ios-blue)}
+body #themePopover input[type=range]:focus-visible {outline:2px solid var(--ios-blue)!important}
+
+/* Individual transforms leave layout geometry untouched and avoid React renders on pointer moves. */
+body.liquid-glass-enabled [data-liquid-elastic] {
+  translate:var(--elastic-x,0px) var(--elastic-y,0px);
+  scale:var(--elastic-sx,1) var(--elastic-sy,1);
+  transform:none!important;
+  transition:translate var(--elastic-time,180ms) cubic-bezier(.2,1.35,.35,1),
+    scale var(--elastic-time,180ms) cubic-bezier(.2,1.35,.35,1),
+    background-color .14s ease,color .14s ease,box-shadow .14s ease!important;
+}
+@media(prefers-reduced-motion:reduce) {
+  body.liquid-glass-enabled [data-liquid-elastic] {translate:none;scale:none;transition:none!important}
+}

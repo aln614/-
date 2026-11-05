@@ -1,0 +1,82 @@
+/* Keep the browser's native select semantics while matching the app surfaces. */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] { appearance: textfield; }
+
+@supports (appearance: base-select) {
+  select:not([multiple]):not([size]) {
+    appearance: base-select;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  select:not([multiple]):not([size]) selectedcontent {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  select:not([multiple]):not([size])::picker(select) {
+    appearance: base-select;
+    border: 1px solid rgba(255,255,255,.58);
+    border-radius: 14px;
+    padding: 5px;
+    margin-block: 5px;
+    max-height: min(360px, 55vh);
+    overflow-y: auto;
+    background: rgba(245,247,249,.95);
+    color: #1c2027;
+    box-shadow: 0 14px 34px rgba(0,0,0,.20), inset 0 1px rgba(255,255,255,.8);
+    backdrop-filter: blur(24px) saturate(140%);
+    -webkit-backdrop-filter: blur(24px) saturate(140%);
+  }
+  select:not([multiple]):not([size]) option {
+    min-height: 32px;
+    padding: 7px 10px;
+    gap: 10px;
+    border-radius: 8px;
+    color: inherit;
+    background: transparent;
+  }
+  select:not([multiple]):not([size]) option:hover,
+  select:not([multiple]):not([size]) option:focus {
+    background: rgba(10,132,255,.12);
+  }
+  select:not([multiple]):not([size]) option:checked {
+    color: #0868c9;
+    background: rgba(10,132,255,.14);
+    font-weight: 600;
+  }
+  select:not([multiple]):not([size]) option::checkmark {
+    order: 1;
+    margin-inline-start: auto;
+    color: #0879e8;
+  }
+  select:not([multiple]):not([size]) optgroup {
+    color: #626a75;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  select:not([multiple]):not([size]) optgroup option {
+    color: #1c2027;
+    font-size: 13px;
+    font-weight: 400;
+  }
+  .theme-dark select:not([multiple]):not([size])::picker(select) {
+    border-color: rgba(255,255,255,.15);
+    background: rgba(38,42,48,.96);
+    color: #f4f5f7;
+    box-shadow: 0 14px 34px rgba(0,0,0,.42), inset 0 1px rgba(255,255,255,.12);
+  }
+  .theme-dark select:not([multiple]):not([size]) optgroup { color: #adb4be; }
+  body.theme-dark select:not([multiple]):not([size]) optgroup,
+  body.theme-dark select:not([multiple]):not([size]) option { background: transparent; }
+  body.theme-dark select:not([multiple]):not([size]) option:hover,
+  body.theme-dark select:not([multiple]):not([size]) option:focus,
+  body.theme-dark select:not([multiple]):not([size]) option:checked { background: rgba(10,132,255,.18); }
+  .theme-dark select:not([multiple]):not([size]) optgroup option { color: #f4f5f7; }
+  .theme-dark select:not([multiple]):not([size]) option:checked { color: #82c4ff; }
+}

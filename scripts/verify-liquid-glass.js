@@ -5,7 +5,7 @@ const os=require('node:os');
 const path=require('node:path');
 const {PNG}=require('pngjs');
 const {normalizeLiquidGlass}=require('../src/services/liquidGlassSettings');
-assert.deepEqual(normalizeLiquidGlass({displacementScale:-200,blurAmount:7,saturation:'not-a-number',surfaceOpacity:0}),{enabled:true,displacementScale:0,blurAmount:1,saturation:140,aberrationIntensity:2,surfaceOpacity:.15});
+assert.deepEqual(normalizeLiquidGlass({displacementScale:-200,blurAmount:7,saturation:'not-a-number',surfaceOpacity:0}),{enabled:true,displacementScale:0,blurAmount:1,saturation:140,aberrationIntensity:2,surfaceOpacity:.15,elasticity:.2});
 const { _electron:electron }=require('playwright');
 const root=path.resolve(__dirname,'..');
 const temporary=fs.mkdtempSync(path.join(os.tmpdir(),'tenying-glass-test-'));
@@ -21,7 +21,8 @@ fs.writeFileSync(path.join(data,'config.json'),JSON.stringify({port:18769,output
     main.setDefaultTimeout(15000);
     await main.waitForURL('http://127.0.0.1:18769/**',{timeout:30000});
     await main.waitForFunction(()=>window.liquidGlassSettings && document.querySelector('.topbar feDisplacementMap'));
-    assert.equal(await main.locator('.sidebar > .liquid-backdrop').count(),0,'Sidebar avoids a second chromatic refraction stack');
+    await main.waitForSelector('.sidebar > .liquid-backdrop',{state:'attached'});
+    assert.equal(await main.locator('.sidebar > .liquid-backdrop').count(),1,'Sidebar has one upstream optical layer');
     assert.equal(await main.locator('#page-home > .grid > .card > .liquid-backdrop').count(),0,'Main cards avoid whole-card displacement filters');
     assert.equal(await main.locator('#page-home .liquid-backdrop').count(),0,'Home controls avoid nested displacement filters');
     assert.ok(await main.locator('[data-liquid-surface]').count()<=12,'The main page keeps a bounded number of liquid surfaces');

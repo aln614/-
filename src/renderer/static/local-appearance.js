@@ -58,7 +58,7 @@
     const hour=new Date().getHours();
     return settings.theme==='auto' ? (hour>=7 && hour<19 ? 'light' : 'dark') : settings.theme;
   }
-  function render() {
+  function render({activateGlass=false}={}) {
     const body=document.body,actual=themeActual();
     body.classList.remove('theme-light','theme-dark','theme-auto','theme-auto-light','theme-auto-dark','theme-auto-auto');
     body.classList.add('theme-'+actual,'theme-auto-'+settings.theme);
@@ -71,13 +71,17 @@
     for(const label of document.querySelectorAll('[data-background-board-label]')) label.textContent=actual==='dark' ? '黑板' : '白板';
     for(const button of document.querySelectorAll('#themePopover [data-theme]')) button.classList.toggle('active',button.dataset.theme===settings.theme);
     for(const select of document.querySelectorAll('#themeMode,#themeModeQuick')) select.value=settings.theme;
-    for(const input of document.querySelectorAll('[data-background-blur]')) input.value=String(settings.blur);
+    for(const input of document.querySelectorAll('[data-background-blur]')) {
+      input.value=String(settings.blur);
+      input.disabled=settings.mode!=='custom';
+    }
     for(const output of document.querySelectorAll('[data-background-blur-value]')) output.textContent=settings.blur+' px';
+    for(const note of document.querySelectorAll('[data-native-blur-note]')) note.hidden=settings.mode!=='none';
     const name={board:actual==='dark' ? '黑板' : '白板',none:'无 · 液态玻璃',custom:'自定义背景'}[settings.mode];
     const summary=document.getElementById('themePanelCurrent');
     if(summary) summary.textContent=name+' · '+({light:'日间',dark:'深色',auto:'自动'}[settings.theme]);
     playback();
-    window.dispatchEvent(new CustomEvent('local-appearance-change',{detail:{...settings,actual}}));
+    window.dispatchEvent(new CustomEvent('local-appearance-change',{detail:{...settings,actual,activateGlass}}));
   }
   function persist() {
     clearTimeout(saveTimer);saveTimer=0;
@@ -107,7 +111,7 @@
   function update(next,{defer=false}={}) {
     const previous=settings;
     settings=normalize({...settings,...next});
-    render();
+    render({activateGlass:next.mode==='none'});
     if(previous.mode!==settings.mode || previous.revision!==settings.revision) restoreMedia();
     if(defer) {clearTimeout(saveTimer);saveTimer=setTimeout(persist,120);}
     else persist();

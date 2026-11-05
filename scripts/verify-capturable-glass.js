@@ -57,10 +57,15 @@ const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
         const source=sources.find(item=>item.display_id===String(display.id)),size=source.thumbnail.getSize(),bitmap=source.thumbnail.toBitmap();
         const scale=size.width/display.bounds.width;
         const pixel=(x,y)=>{const offset=(Math.round((bounds.y-display.bounds.y+y)*scale)*size.width+Math.round((bounds.x-display.bounds.x+x)*scale))*4;return [bitmap[offset+2],bitmap[offset+1],bitmap[offset]];};
-        return {marker:pixel(145,135),desktop:pixel(bounds.width-5,bounds.height/2),bounds};
+        return {marker:pixel(145,135),desktop:pixel(bounds.width-5,bounds.height/2),outside:pixel(-10,-10),corners:[pixel(0,0),pixel(bounds.width-1,0),pixel(0,bounds.height-1),pixel(bounds.width-1,bounds.height-1)],bounds};
       });
       await app.evaluate(()=>global.__visibleGlassBackground.webContents.executeJavaScript("document.body.className=''"));
       await pause(1000);const before=await sample();
+      for(const corner of before.corners) {
+        const ratios=corner.map((value,i)=>value/Math.max(1,before.outside[i]));
+        // DWM's rounded shadow may dim the backdrop, but must not replace it with acrylic gray.
+        assert.ok(Math.min(...ratios)>.65 && Math.max(...ratios)-Math.min(...ratios)<.10,kind+' must clip native acrylic at every corner: '+JSON.stringify(before));
+      }
       assert.ok(before.marker[0]>before.marker[1]*3 && before.marker[2]>before.marker[1]*3 && before.marker[0]>50 && before.marker[2]>40,kind+' remains visible to screen sharing even when the OS dims the screen: '+JSON.stringify(before));
       await app.evaluate(()=>global.__visibleGlassBackground.webContents.executeJavaScript("document.body.className='green'"));
       await pause(1000);const after=await sample();
@@ -76,7 +81,7 @@ const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
     const instrumentation=await app.evaluate(()=>({captures:global.__applicationScreenCaptures,protection:global.__protectionCalls}));
     assert.equal(instrumentation.captures,0,'Application never records the desktop');
     assert.ok(instrumentation.protection.length>=3 && instrumentation.protection.every(value=>value===false),'Appearance changes never exclude the window from sharing');
-    console.log('Main/asset/prompt windows remain capturable; native live glass, mode changes and zero desktop capture passed.');
+    console.log('Main/asset/prompt windows: rounded native blur, live backdrop updates, screen sharing and zero application desktop capture passed.');
     await app.evaluate(()=>global.__visibleGlassBackground.destroy());
   } finally {
     if(app) await app.close();

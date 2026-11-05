@@ -4,7 +4,11 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>TENYING_AI 1.0</title>
-  <link rel="stylesheet" href="/static/style.css?v=1.0.127" />
+  <link rel="stylesheet" href="/static/style.css?v=1.0.132" />
+  <link rel="stylesheet" href="/static/sidebar.css?v=1.0.128" />
+  <link rel="stylesheet" href="/static/clear-glass.css?v=1.0.130" />
+  <link rel="stylesheet" href="/static/recent-media.css?v=1.0.130" />
+  <link rel="stylesheet" href="/static/form-controls.css?v=1.0.132" />
 </head>
 <body>
   <div class="app-shell">
@@ -32,9 +36,9 @@
       </div>
     </header>
 
-    <aside class="sidebar glass" id="sidebar">
+    <aside class="sidebar glass" id="sidebar" aria-label="主导航">
       <div class="nav-stack">
-        <button class="nav active" data-page="home" title="首页生成"><span class="nav-icon icon-home"></span><span class="nav-label">首页生成</span></button>
+        <button class="nav active" data-page="home" title="首页生成" aria-current="page"><span class="nav-icon icon-home"></span><span class="nav-label">首页生成</span></button>
         <button class="nav nav-midjourney" data-page="midjourney" title="Midjourney"><span class="nav-icon mj-nav-icon-wrap"><img class="sidebar-mj-icon" src="/static/assets/mj-logo.png" alt="" /></span><span class="nav-label">Midjourney</span></button>
         <button class="nav" data-page="history" title="历史记录"><span class="nav-icon icon-history"></span><span class="nav-label">历史记录</span></button>
         <button class="nav" data-page="images" title="图片管理"><span class="nav-icon icon-images"></span><span class="nav-label">图片管理</span></button>
@@ -72,7 +76,10 @@
       <div class="appearance-upload-row"><button class="secondary" data-background-upload type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m-4 4 4-4 4 4M4 16v4h16v-4"/></svg>上传背景</button><button class="appearance-remove" data-background-clear type="button" title="移除自定义背景" aria-label="移除自定义背景"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 10v7M14 10v7"/></svg></button></div>
       <span class="appearance-filename" data-background-filename>未选择文件</span>
       <small class="appearance-format">图片 / GIF / MP4 · 仅此设备</small>
-      <label class="appearance-blur-label">背景模糊度 <output data-background-blur-value>0 px</output><input data-background-blur type="range" min="0" max="40" step="1" value="0" /></label>
+      <label class="appearance-blur-label">自定义背景模糊 <output data-background-blur-value>0 px</output><input data-background-blur type="range" min="0" max="40" step="1" value="0" /></label>
+      <label class="appearance-blur-label">玻璃层模糊 <output></output><input data-liquid-quick="blurAmount" type="range" min="0" max="1" step="0.0025" /></label>
+      <label class="appearance-blur-label">玻璃折射强度 <output></output><input data-liquid-quick="displacementScale" type="range" min="0" max="150" step="1" /></label>
+      <small class="appearance-format" data-native-blur-note hidden>桌面模糊强度由 Windows 系统控制</small>
       <div class="appearance-status" data-appearance-status role="status" aria-live="polite"></div>
     </div>
     <input id="appearanceBackgroundFile" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/avif,image/bmp,video/mp4,.mp4,.gif" hidden />
@@ -635,7 +642,7 @@
           <div class="appearance-settings">
             <div class="row"><div><label>显示模式</label><select id="themeMode"><option value="light">日间模式</option><option value="dark">深色模式</option><option value="auto">自动（按时间）</option></select></div><div><label>背景</label><div class="appearance-background-options" role="group" aria-label="设置背景类型"><button data-background-mode="board" type="button"><i class="background-swatch board-swatch" aria-hidden="true"></i><span data-background-board-label>白板</span></button><button data-background-mode="none" type="button"><i class="background-swatch clear-swatch" aria-hidden="true"></i><span>无</span></button><button data-background-mode="custom" type="button"><i class="background-swatch custom-swatch" aria-hidden="true"></i><span>自定义</span></button></div></div></div>
             <div class="appearance-upload-row"><button class="secondary" data-background-upload type="button">上传背景（图片 / GIF / MP4）</button><button class="appearance-remove" data-background-clear type="button" title="移除自定义背景" aria-label="移除自定义背景"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 10v7M14 10v7"/></svg></button><span class="appearance-filename" data-background-filename>未选择文件</span></div>
-            <label class="appearance-blur-label">背景模糊度 <output data-background-blur-value>0 px</output><input data-background-blur type="range" min="0" max="40" step="1" value="0" /></label>
+            <label class="appearance-blur-label">自定义背景模糊 <output data-background-blur-value>0 px</output><input data-background-blur type="range" min="0" max="40" step="1" value="0" /></label>
             <div class="appearance-status" data-appearance-status role="status" aria-live="polite"></div>
           </div>
           <div class="liquid-settings">
@@ -647,6 +654,7 @@
               <label>饱和度 <output id="liquidSaturationValue"></output><input id="liquidSaturation" type="range" min="50" max="250" step="1" /></label>
               <label>色散强度 <output id="liquidAberrationValue"></output><input id="liquidAberration" type="range" min="0" max="10" step="0.1" /></label>
               <label>材质不透明度 <output id="liquidOpacityValue"></output><input id="liquidOpacity" type="range" min="0.15" max="0.9" step="0.01" /></label>
+              <label>弹性拉伸 <output id="liquidElasticityValue"></output><input id="liquidElasticity" type="range" min="0" max="0.5" step="0.01" /></label>
             </div>
             <button class="secondary" id="liquidReset" type="button">恢复默认</button>
             <button class="primary" id="liquidSave" type="button">保存玻璃设置</button>
@@ -1060,9 +1068,9 @@
   <script src="/static/agent-stream.js?v=1.0.107"></script>
   <script src="/static/prompt-mention-core.js?v=1.0.109"></script>
   <script src="/static/prompt-mentions.js?v=1.0.109"></script>
-  <script src="/static/local-appearance.js?v=1.0.127"></script>
-  <script src="/static/liquid-glass-bundle.js?v=1.0.127"></script>
-  <script src="/static/app.js?v=1.0.127"></script>
+  <script src="/static/local-appearance.js?v=1.0.131"></script>
+  <script src="/static/liquid-glass-bundle.js?v=1.0.131"></script>
+  <script src="/static/app.js?v=1.0.132"></script>
   <script src="/static/library-backdrop-motion.js?v=1.0.127"></script>
   <script src="/static/main-window-drag.js?v=1.0.127"></script>
 </body>

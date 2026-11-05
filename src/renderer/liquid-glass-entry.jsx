@@ -2,21 +2,27 @@ import React, {useLayoutEffect,useRef} from 'react';
 import { createRoot } from 'react-dom/client';
 import { createPortal, flushSync } from 'react-dom';
 import LiquidGlass from 'liquid-glass-react';
+import {setupLiquidGlassMotion} from './liquid-glass-motion';
 import glassSettings from '../services/liquidGlassSettings';
 
 const {DEFAULT_LIQUID_GLASS:defaults,normalizeLiquidGlass:normalize}=glassSettings;
 const key='tenying-liquid-glass-settings';
-const controls={displacementScale:'liquidDisplacement',blurAmount:'liquidBlur',saturation:'liquidSaturation',aberrationIntensity:'liquidAberration',surfaceOpacity:'liquidOpacity'};
+const controls={displacementScale:'liquidDisplacement',blurAmount:'liquidBlur',saturation:'liquidSaturation',aberrationIntensity:'liquidAberration',surfaceOpacity:'liquidOpacity',elasticity:'liquidElasticity'};
 const selector=[
-  '.topbar',
+  '.topbar','.sidebar','.appearance-panel',
   '.asset-library-window','.prompt-library-window','.chat-floating-window','.announcement-panel',
   '#previewModal','.preview-toolbar','.preview-info','.video-preview-info',
   '.api-balance-dialog','.recent-audio-preview-card','.danger-confirm-card'
 ].join(',');
+const clearSelector='.page > .grid > .card,.page > .card,.right-panel';
+const hostSelector=selector+','+clearSelector;
 function stored() {
   try { const value=localStorage.getItem(key); return value ? normalize(JSON.parse(value)) : null; } catch { return null; }
 }
 let settings=stored() || {...defaults};
+let appearanceMode=document.body.dataset.backgroundMode || 'board';
+if(appearanceMode==='none') settings={...settings,enabled:true};
+const elasticMotion=setupLiquidGlassMotion(()=>settings);
 const surfaces=new Map();
 const candidates=new Set();
 const pendingHosts=new Set();
@@ -68,8 +74,11 @@ function GlassSurface({host,...props}) {
 
 function renderSurface(surface) {
   const active=settings.enabled && !document.hidden && !nativeHidden && surface.visible && surface.width>0 && surface.height>0;
-  const radius=parseFloat(getComputedStyle(surface.host).borderTopLeftRadius) || 0;
-  const signature=surface.staticOnly ? JSON.stringify([active]) : JSON.stringify([active,settings,radius,surface.width,surface.height]);
+  const computed=getComputedStyle(surface.host);
+  const radius=parseFloat(computed.borderTopLeftRadius) || 0;
+  const radii=[computed.borderTopLeftRadius,computed.borderTopRightRadius,computed.borderBottomRightRadius,computed.borderBottomLeftRadius].join(' ');
+  if(surface.host.style.getPropertyValue('--liquid-clip-radius')!==radii) surface.host.style.setProperty('--liquid-clip-radius',radii);
+  const signature=surface.staticOnly ? JSON.stringify([active,radii]) : JSON.stringify([active,settings,radii,surface.width,surface.height]);
   if(surface.signature===signature) return;
   surface.signature=signature;
   surface.host.classList.toggle('liquid-surface-active',active);
@@ -84,6 +93,11 @@ function renderSurface(surface) {
     return;
   }
   const {enabled,surfaceOpacity,...props}=settings;
+  // Content panels need a gentler lens than compact navigation and popovers.
+  if(surface.host.matches(clearSelector)) {
+    props.displacementScale*=.25;
+    props.aberrationIntensity*=.25;
+  }
   // The library measures on mount/window resize; remount on container-only resizes too.
   surface.root.render(active ? <GlassSurface host={surface.host} key={surface.width+'x'+surface.height} {...props} globalMousePos={stationaryMouse} mouseOffset={stationaryMouse} overLight={false} cornerRadius={radius} elasticity={0} padding="0" style={{position:'absolute',top:'50%',left:'50%',width:'100%',height:'100%'}} /> : null);
 }
@@ -92,10 +106,12 @@ function removeSurface(host) {
   if(!surface) return;
   clearTimeout(surface.resizeTimer);surface.root?.unmount();visibility.unobserve(host);resize.unobserve(host);surfaces.delete(host);
   host.classList.remove('liquid-surface-active');delete host.dataset.liquidSurface;
+  host.style.removeProperty('--liquid-clip-radius');
   host.querySelector(':scope > .liquid-glass-mount')?.remove();
   host.querySelector(':scope > .liquid-backdrop')?.remove();
 }
 function hostDisplayed(host) {
+  if(host.matches(clearSelector) && appearanceMode!=='none') return false;
   if(document.body.classList.contains('standalone-library') && host.matches('.asset-library-window,.prompt-library-window')) return true;
   const style=getComputedStyle(host);
   return style.display!=='none' && style.visibility!=='hidden' && host.getClientRects().length>0;
@@ -103,8 +119,8 @@ function hostDisplayed(host) {
 function collectHosts(node) {
   if(node.nodeType!==1 || node.closest('.liquid-glass-mount,.liquid-backdrop')) return;
   const collect=host=>{candidates.add(host);pendingHosts.add(host);};
-  if(node.matches(selector)) collect(node);
-  for(const host of node.querySelectorAll(selector)) collect(host);
+  if(node.matches(hostSelector)) collect(node);
+  for(const host of node.querySelectorAll(hostSelector)) collect(host);
 }
 function discoverSurfaces() {
   frame=0;
@@ -147,7 +163,7 @@ new MutationObserver(records=>{
     if(!record.target.closest('.liquid-glass-mount,.liquid-backdrop')) targets.add(record.target);
   }
   for(const target of targets) {
-    if(target.matches(selector)) candidates.add(target);
+    if(target.matches(hostSelector)) candidates.add(target);
     for(const host of candidates) if(target===host || target.contains(host)) pendingHosts.add(host);
   }
   if(pendingHosts.size) scheduleDiscover();
@@ -160,10 +176,16 @@ function syncNativeAppearance() {
   nativeAppearanceSignature=signature;
   const revision=++nativeAppearanceRevision;
   window.desktopAppearance.apply(appearance).then(result=>{
-    if(revision===nativeAppearanceRevision) document.body.dataset.nativeGlassMaterial=result?.material || 'none';
+    if(revision===nativeAppearanceRevision) {
+      const previousShape=document.body.dataset.nativeWindowShape;
+      document.body.dataset.nativeGlassMaterial=result?.material || 'none';
+      document.body.dataset.nativeWindowShape=result?.shape || 'custom';
+      if(previousShape!==document.body.dataset.nativeWindowShape) for(const surface of surfaces.values()) renderSurface(surface);
+    }
   }).catch(()=>{if(revision===nativeAppearanceRevision) nativeAppearanceSignature='';});
 }
 function render() {
+  elasticMotion.refresh();
   document.body.classList.toggle('liquid-glass-enabled',settings.enabled);
   syncNativeAppearance();
   document.documentElement.style.setProperty('--liquid-opacity',settings.surfaceOpacity);
@@ -179,6 +201,12 @@ function render() {
     const output=document.getElementById(id+'Value');
     if(output) output.textContent=name==='surfaceOpacity' ? Math.round(settings[name]*100)+'%' : String(settings[name]);
   }
+  for(const input of document.querySelectorAll('[data-liquid-quick]')) {
+    const name=input.dataset.liquidQuick;
+    input.value=String(settings[name]);input.disabled=!settings.enabled;
+    const output=input.parentElement.querySelector('output');
+    if(output) output.textContent=name==='blurAmount' ? Math.round((4+settings[name]*32)*10)/10+' px' : String(settings[name]);
+  }
 }
 function status(text) { const element=document.getElementById('liquidSaveStatus');if(element) element.textContent=text; }
 function publish(dirty=false) {
@@ -188,6 +216,9 @@ function publish(dirty=false) {
 }
 document.getElementById('liquidEnabled')?.addEventListener('change',e=>{settings.enabled=e.target.checked;publish(true);});
 for(const [name,id] of Object.entries(controls)) document.getElementById(id)?.addEventListener('input',e=>{settings=normalize({...settings,[name]:e.target.value});publish(true);});
+for(const input of document.querySelectorAll('[data-liquid-quick]')) input.addEventListener('input',e=>{
+  settings=normalize({...settings,[input.dataset.liquidQuick]:e.target.value});publish(true);
+});
 document.getElementById('liquidReset')?.addEventListener('click',()=>{settings={...defaults};publish(true);});
 document.getElementById('liquidSave')?.addEventListener('click',async e=>{
   const snapshot={...settings},button=e.currentTarget;
@@ -199,7 +230,16 @@ document.getElementById('liquidSave')?.addEventListener('click',async e=>{
   finally { button.disabled=false; }
 });
 window.addEventListener('storage',e=>{if(e.key===key){settings=stored() || {...defaults};render();}});
-window.addEventListener('local-appearance-change',()=>{
+window.addEventListener('local-appearance-change',event=>{
+  const nextMode=document.body.dataset.backgroundMode || 'board';
+  if(nextMode!==appearanceMode) {
+    appearanceMode=nextMode;
+    for(const host of candidates) pendingHosts.add(host);
+    scheduleDiscover();
+  }
+  if(event.detail?.activateGlass && nextMode==='none' && !settings.enabled) {
+    settings={...settings,enabled:true};publish();
+  }
   syncNativeAppearance();
 });
 function updateVisibility() {
@@ -222,6 +262,7 @@ window.liquidGlassSettings={
   motion,
   load:value=>{
     settings=stored() || (window.mainWindowControls ? normalize(value) : {...defaults});
+    if(appearanceMode==='none') settings={...settings,enabled:true};
     publish();
   }
 };

@@ -126,12 +126,16 @@ fs.writeFileSync(path.join(data, 'config.json'), JSON.stringify({
     assert.match(appearance.background,/^#00/i,'Independent panels must have a transparent native background');
     assert.equal(appearance.resizable,true,'Independent panels must remain resizable');
     const inside=(shape,x,y)=>shape.some(rect=>x>=rect.x && y>=rect.y && x<rect.x+rect.width && y<rect.y+rect.height);
+    const nativeShape=await asset.evaluate(()=>document.body.dataset.nativeWindowShape==='native');
+    if(nativeShape) assert.equal(appearance.shape,undefined,'Native rounded acrylic must not use a layered window region');
+    else {
     assert.ok(appearance.shape?.length > 1,'A rounded native window shape is applied');
     assert.equal(inside(appearance.shape,0,0),false,'The upper-left corner must not draw a square background');
     assert.equal(inside(appearance.shape,appearance.bounds.width-1,0),false,'The upper-right corner must not draw a square background');
     assert.equal(inside(appearance.shape,0,appearance.bounds.height-1),false,'The lower-left corner must not draw a square background');
     assert.equal(inside(appearance.shape,appearance.bounds.width-1,appearance.bounds.height-1),false,'The lower-right corner must not draw a square background');
     assert.equal(inside(appearance.shape,appearance.bounds.width/2,appearance.bounds.height/2),true);
+    }
     assert.equal(await asset.evaluate(()=>getComputedStyle(document.body).backgroundColor),'rgba(0, 0, 0, 0)');
     assert.equal(await asset.locator('#assetLibraryHead').evaluate(el=>getComputedStyle(el).webkitAppRegion),'no-drag','The full asset header must not swallow control clicks');
     assert.equal(await asset.locator('.asset-library-drag-region').evaluate(el=>getComputedStyle(el).webkitAppRegion),'no-drag','The asset title uses controlled pointer dragging');
@@ -151,8 +155,11 @@ fs.writeFileSync(path.join(data, 'config.json'), JSON.stringify({
     const resized=await instance.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().find(item=>item.webContents.getURL().includes('library=asset')).getBounds());
     assert.ok(resized.width > appearance.bounds.width && resized.height > appearance.bounds.height,`The resize grip must change the native window size: ${JSON.stringify({before:appearance.bounds,after:resized,grip,element:await handle.evaluate(el=>{const r=el.getBoundingClientRect();return document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)?.outerHTML.slice(0,160)})})}`);
     const resizedShape=await instance.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().find(item=>item.webContents.getURL().includes('library=asset')).__testShape);
+    if(nativeShape) assert.equal(resizedShape,undefined,'DWM owns rounded clipping during resize');
+    else {
     assert.equal(inside(resizedShape,resized.width-1,resized.height-1),false,'Rounded clipping must follow the resized window');
     assert.equal(inside(resizedShape,resized.width/2,resized.height/2),true);
+    }
     fs.mkdirSync(path.join(root,'test-results'),{recursive:true});
     await asset.screenshot({path:path.join(root,'test-results','standalone-asset-library.png')});
     await asset.locator('.asset-card').first().click();
@@ -191,9 +198,13 @@ fs.writeFileSync(path.join(data, 'config.json'), JSON.stringify({
       const win=BrowserWindow.getAllWindows().find(item=>item.webContents.getURL().includes('library=prompt'));
       return {bounds:win.getBounds(),shape:win.__testShape};
     });
-    assert.ok(promptShape.shape?.length > 1,'The prompt window also has rounded native clipping');
-    assert.equal(inside(promptShape.shape,0,0),false);
-    assert.equal(inside(promptShape.shape,promptShape.bounds.width-1,promptShape.bounds.height-1),false);
+    if(await prompt.evaluate(()=>document.body.dataset.nativeWindowShape==='native')) {
+      assert.equal(promptShape.shape,undefined,'The prompt window preserves DWM rounded clipping');
+    } else {
+      assert.ok(promptShape.shape?.length > 1,'The prompt window also has rounded native clipping');
+      assert.equal(inside(promptShape.shape,0,0),false);
+      assert.equal(inside(promptShape.shape,promptShape.bounds.width-1,promptShape.bounds.height-1),false);
+    }
     assert.equal(await prompt.locator('#promptLibraryHead').evaluate(el=>getComputedStyle(el).webkitAppRegion),'no-drag');
     assert.equal(await prompt.locator('.prompt-library-drag-region').evaluate(el=>getComputedStyle(el).webkitAppRegion),'no-drag');
     assert.equal(await prompt.locator('#promptLibrarySearch').evaluate(el=>getComputedStyle(el).webkitAppRegion),'no-drag');

@@ -4340,6 +4340,7 @@ body.liquid-glass-enabled .liquid-surface-active[data-liquid-surface]{
   background:transparent!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;
 }
 .liquid-glass-mount{position:absolute!important;inset:0;display:block;margin:0!important;padding:0!important;overflow:hidden;border-radius:inherit;z-index:-1;pointer-events:none!important}
+.liquid-glass-mount,.liquid-backdrop{clip-path:inset(0 round var(--liquid-clip-radius,0px))}
 .liquid-glass-mount *{pointer-events:none!important}
 .liquid-react-layer{position:absolute;inset:0}
 .liquid-react-layer>span{opacity:.28!important}
@@ -4469,7 +4470,7 @@ body[data-background-mode] .app-shell{position:relative;z-index:1;background:tra
 #localAppearanceBackground{position:fixed;inset:0;z-index:0;overflow:hidden;pointer-events:none;background:#fff}
 body.theme-dark #localAppearanceBackground{background:#090a0c}
 body[data-background-mode="none"] #localAppearanceBackground{background:transparent}
-body[data-background-mode="none"] #localAppearanceBackground::after{content:"";position:absolute;inset:0;background:rgba(var(--liquid-tint),.12);pointer-events:none}
+body[data-background-mode="none"] #localAppearanceBackground::after{content:none}
 body[data-background-mode="none"] :is(h1,h2,h3,label,.brand,.asset-main-head,.asset-library-head,.prompt-library-head){text-shadow:0 1px 3px rgba(var(--liquid-tint),.45)}
 body.liquid-glass-enabled .topbar.glass{border-radius:18px!important}
 body.liquid-glass-enabled .topbar>.liquid-glass-mount .liquid-react-layer>span{opacity:.35!important}
@@ -4493,8 +4494,7 @@ body[data-background-mode] #mainDrop,body[data-background-mode] #videoDrop,body[
 body[data-background-mode] .task-progress-item{padding-right:12px!important}
 body[data-background-mode] .video-pending{padding:12px!important}
 
-/* Independent libraries use one light native acrylic base. Dark mode changes
-   content contrast, not the Windows material, so the window stays glassy. */
+/* Independent libraries share native desktop blur beneath the web material. */
 body.standalone-library[data-background-mode="none"]{--standalone-glass-rgb:238,244,247;--standalone-ink:#f7fafc;--standalone-muted:#c7d1da}
 body.standalone-library[data-background-mode="none"] :is(.asset-library-window,.prompt-library-window){
   background:transparent!important;border:0!important;
@@ -4526,11 +4526,16 @@ body.standalone-library[data-background-mode="none"] :is(.asset-library-tools bu
 
 .theme-popover.appearance-panel{
   left:78px;bottom:18px;width:min(350px,calc(100vw - 96px));min-width:0;max-height:calc(100dvh - 36px);
-  padding:18px;border-radius:8px;overflow-y:auto;background:rgba(255,255,255,.94)!important;
-  border:1px solid rgba(128,140,150,.2)!important;box-shadow:0 12px 38px rgba(0,0,0,.14)!important;
-  backdrop-filter:blur(18px)!important;-webkit-backdrop-filter:blur(18px)!important;
+  padding:18px;border-radius:24px;overflow-y:auto;background:var(--ios-glass-raised)!important;
+  border:1px solid var(--ios-edge)!important;box-shadow:var(--ios-depth)!important;
+  backdrop-filter:none!important;-webkit-backdrop-filter:none!important;
 }
-body.theme-dark .theme-popover.appearance-panel{background:rgba(22,24,28,.94)!important}
+#themePopover.liquid-surface-active{background:transparent!important}
+#themePopover>.liquid-backdrop{
+  background:linear-gradient(145deg,rgba(255,255,255,.16),rgba(255,255,255,.02)),rgba(var(--liquid-tint),calc(.16 + var(--liquid-opacity)*.42))!important;
+}
+#themePopover>:not(.liquid-glass-mount):not(.liquid-backdrop){position:relative;z-index:1}
+#themePopover .liquid-react-layer>span{inset:0!important;width:100%!important;height:100%!important;transform:none!important;transition:none!important}
 .theme-panel-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:14px}
 .theme-panel-head>div{display:grid;gap:5px;min-width:0}
 .theme-panel-head strong{font-size:16px;line-height:1.4}
@@ -4558,6 +4563,7 @@ body.theme-dark .board-swatch{background:#090a0c}
 .appearance-upload-row svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
 .appearance-filename{display:block;font-size:11px;line-height:1.5;color:var(--muted);overflow-wrap:anywhere;min-width:0}
 .appearance-format{display:block;font-size:10px;line-height:1.6;color:var(--muted);margin-top:4px}
+.appearance-format[hidden]{display:none}
 .appearance-blur-label{display:block;font-size:12px;color:var(--text);margin:16px 0 0}
 .appearance-blur-label output{float:right;color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums}
 .appearance-blur-label input{display:block;width:100%;margin:8px 0 0;padding:0;height:22px;accent-color:var(--skin-primary);box-shadow:none!important}
@@ -4614,16 +4620,6 @@ body.desktop-shell .brand{font-size:16px!important;font-weight:750;letter-spacin
 body.desktop-shell .subtitle{font-size:9px!important;opacity:.58;margin-top:0}
 body.desktop-shell .top-status{gap:6px}
 
-body.desktop-shell .sidebar.glass{
-  width:54px!important;min-width:54px!important;max-width:54px!important;padding:8px 5px!important;border-radius:22px!important;border:1px solid var(--apple-stroke)!important;
-  background:transparent!important;box-shadow:var(--apple-shadow-soft)!important;overflow:hidden;isolation:isolate;
-}
-body.desktop-shell .sidebar.glass:hover{width:54px!important;min-width:54px!important;max-width:54px!important;align-items:center!important;background:transparent!important;box-shadow:var(--apple-shadow-soft)!important}
-body.desktop-shell .sidebar :is(.nav-stack,.nav-bottom),body.desktop-shell .sidebar:hover :is(.nav-stack,.nav-bottom){align-items:center!important}
-body.desktop-shell .sidebar .nav,body.desktop-shell .sidebar:hover .nav{width:44px!important;padding:0!important;justify-content:center!important;transform:none!important}
-body.desktop-shell .sidebar .nav-label,body.desktop-shell .sidebar:hover .nav-label{display:none!important;opacity:0!important;transform:none!important}
-body.desktop-shell .sidebar>.liquid-backdrop{background:linear-gradient(155deg,rgba(255,255,255,.22),rgba(255,255,255,.035)),rgba(var(--liquid-tint),calc(.10 + var(--liquid-opacity)*.20))!important}
-body.desktop-shell .sidebar>.liquid-glass-mount .liquid-react-layer>span{opacity:.18!important}
 body.desktop-shell .nav{
   width:44px!important;height:44px!important;min-height:44px!important;padding:0!important;margin:0 auto;
   border-radius:14px!important;color:var(--muted)!important;background:transparent!important;
@@ -4823,23 +4819,9 @@ body.desktop-shell .topbar .pill{
   border:1px solid var(--ios-edge-soft)!important;background:var(--ios-glass-control)!important;color:var(--ios-text)!important;
   box-shadow:var(--ios-depth-soft)!important;backdrop-filter:blur(16px) saturate(150%)!important;-webkit-backdrop-filter:blur(16px) saturate(150%)!important;
 }
-body.desktop-shell .sidebar.glass,body.desktop-shell .sidebar.glass:hover{
-  width:54px!important;min-width:54px!important;max-width:54px!important;padding:7px 5px!important;border-radius:22px!important;overflow:hidden!important;
-  background:linear-gradient(150deg,rgba(255,255,255,.20),rgba(255,255,255,.025) 58%,rgba(96,190,255,.06)),var(--ios-glass)!important;
-  box-shadow:var(--ios-depth-soft)!important;backdrop-filter:blur(20px) saturate(150%)!important;-webkit-backdrop-filter:blur(20px) saturate(150%)!important;
-}
-body.desktop-shell .nav,body.desktop-shell .sidebar:hover .nav{
-  width:42px!important;height:42px!important;min-height:42px!important;padding:0!important;margin:0 auto!important;border:1px solid transparent!important;
-  border-radius:14px!important;background:transparent!important;color:var(--ios-muted)!important;box-shadow:none!important;
-}
-body.desktop-shell .nav:hover{background:var(--ios-fill)!important;color:var(--ios-text)!important;border-color:var(--ios-edge-soft)!important;transform:scale(1.035)!important}
-body.desktop-shell .nav.active{
-  background:var(--ios-glass-raised)!important;color:var(--ios-blue)!important;border-color:var(--ios-edge)!important;
-  box-shadow:0 7px 18px rgba(35,45,65,.10),inset 0 1px 0 rgba(255,255,255,.76)!important;
-}
 body.desktop-shell .main{padding:2px 2px 20px 4px!important;scrollbar-gutter:stable}
 body.desktop-shell .section-head{margin:6px 2px 16px!important;align-items:center!important}
-body.desktop-shell .section-head h1{font-size:25px!important;font-weight:760!important;color:var(--ios-text)!important;letter-spacing:-.025em!important}
+body.desktop-shell .section-head h1{font-size:25px!important;font-weight:760!important;color:var(--ios-text)!important;letter-spacing:0!important}
 body.desktop-shell .section-head p{font-size:12px!important;color:var(--ios-muted)!important}
 body.desktop-shell .grid{gap:12px!important}
 body.desktop-shell .page .card,body.desktop-shell .recent-upload-panel,body.desktop-shell .recent-video-upload-panel,body.desktop-shell .table-wrap,body.desktop-shell .batch-card{border-radius:var(--ios-radius-panel)!important}
@@ -4866,7 +4848,7 @@ body.desktop-shell .dropzone{
   box-shadow:inset 0 1px 0 rgba(255,255,255,.30)!important;color:var(--ios-muted)!important;
 }
 body.desktop-shell .dropzone strong{color:var(--ios-text)!important}
-body.desktop-shell :is(button,.primary,.secondary,.danger,.pill,.chip,.platform-btn,.panel-head button,.recent-upload-settings-btn){border-radius:999px!important}
+body.desktop-shell :is(button,.primary,.secondary,.danger,.pill,.chip,.platform-btn,.panel-head button,.recent-upload-settings-btn):not(:where(.recent-upload-item,.recent-video-upload-item,.asset-card,.pl-card)){border-radius:999px!important}
 body.desktop-shell :is(.secondary,.chip,.platform-btn,.panel-head button,.recent-upload-settings-btn){
   border:1px solid var(--ios-edge-soft)!important;background:var(--ios-glass-control)!important;color:var(--ios-text)!important;box-shadow:var(--ios-depth-soft)!important;
 }
