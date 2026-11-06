@@ -82,6 +82,19 @@ body.standalone-library.liquid-glass-enabled :is(.asset-library-window,.prompt-l
 }
 body .asset-tree-title {color:var(--ios-text)!important}
 body .asset-tree-title span {color:var(--ios-muted)!important}
+body .asset-main-head {
+  height:auto;min-height:70px;gap:10px;flex-wrap:wrap;
+}
+body .asset-main-actions {min-width:0;max-width:100%;margin-left:auto}
+body .asset-drop-status {
+  max-width:100%;padding:7px 12px;border:1px solid rgba(40,55,70,.16);
+  border-radius:14px;background:rgba(255,255,255,.82);
+  color:#263440;font-size:12px;line-height:1.45;overflow-wrap:anywhere;
+  backdrop-filter:blur(10px) saturate(140%);-webkit-backdrop-filter:blur(10px) saturate(140%);
+}
+body.theme-dark .asset-drop-status {
+  color:#eef2f6;background:rgba(30,34,41,.86);border-color:rgba(255,255,255,.18);
+}
 body :is(#restorePanel,.asset-sidebar-rail,.prompt-sidebar-rail) {
   border:1px solid var(--ios-edge-soft)!important;
   background:var(--ios-glass-raised)!important;color:var(--ios-text)!important;

@@ -27,7 +27,18 @@ const css = ['style.css', 'sidebar.css', 'clear-glass.css', 'recent-media.css', 
       </div>
       <button class="panel-restore show" id="restorePanel"><span>展开实时面板</span></button>
       <div id="ordinary"><div class="liquid-backdrop" style="--liquid-refraction:url('#fixture')"></div></div>
+      <div class="asset-main-head" id="statusHead"><div><h2>资产库</h2><p>53 个素材</p></div>
+        <div class="asset-main-actions"><div class="asset-drop-status" id="assetDropStatus"></div></div>
+      </div>
+      <aside class="sidebar liquid-surface-active" id="sidebar">
+        <div class="liquid-backdrop" style="--liquid-refraction:url('#fixture')"></div>
+        <div class="nav-stack"><button class="nav"><span class="nav-icon"></span><span class="nav-label">首页生成</span></button></div>
+      </aside>
       </body></html>`);
+    await page.evaluate(() => {
+      document.documentElement.style.setProperty('--liquid-blur', '10px');
+      document.documentElement.style.setProperty('--liquid-saturation', '140%');
+    });
     for (const theme of ['light', 'dark']) {
       for (const mode of ['board', 'none']) {
         for (const library of ['asset', 'prompt']) {
@@ -71,6 +82,40 @@ const css = ['style.css', 'sidebar.css', 'clear-glass.css', 'recent-media.css', 
     await button.click();
     assert.equal(await button.getAttribute('data-clicked'), 'yes');
     assert.match(await page.locator('#ordinary > .liquid-backdrop').evaluate(el => getComputedStyle(el).backdropFilter), /url\(/, 'Other glass retains lens optics');
+    const statusTexts = ['拖入文件到右侧任意位置即可上传', '共享资产为只读，只能查看、下载、复制资产和使用', '请先新建或选择一个资产库'];
+    for (const theme of ['light', 'dark']) {
+      await page.evaluate(theme => {
+        document.body.className = `desktop-shell liquid-glass-enabled ${theme === 'dark' ? 'theme-dark' : ''}`;
+        document.body.dataset.backgroundMode = 'none';
+      }, theme);
+      for (const width of [720, 250]) {
+        await page.locator('#statusHead').evaluate((el, width) => el.style.width = width + 'px', width);
+        for (const text of statusTexts) {
+          await page.locator('#assetDropStatus').evaluate((el, text) => el.textContent = text, text);
+          const status = await page.locator('#assetDropStatus').evaluate(el => {
+            const style = getComputedStyle(el), rect = el.getBoundingClientRect();
+            const parent = el.closest('.asset-main-head').getBoundingClientRect();
+            return {color: style.color, background: style.backgroundColor, filter: style.backdropFilter,
+              fits: rect.left >= parent.left && rect.right <= parent.right && rect.bottom <= parent.bottom && el.scrollWidth <= el.clientWidth};
+          });
+          assert.equal(status.color, theme === 'dark' ? 'rgb(238, 242, 246)' : 'rgb(38, 52, 64)');
+          assert.match(status.background, /0\.(82|86)\)/);
+          assert.match(status.filter, /blur\(/);
+          assert.equal(status.fits, true, `${theme} ${width}px status remains inside its heading`);
+        }
+      }
+      const sidebar = page.locator('#sidebar');
+      await page.mouse.move(800, 100);
+      assert.match(await sidebar.locator('.liquid-backdrop').evaluate(el => getComputedStyle(el).backdropFilter), /url\(/, 'Collapsed sidebar keeps refraction');
+      await sidebar.hover();
+      const expanded = await sidebar.locator('.liquid-backdrop').evaluate(el => {
+        const style = getComputedStyle(el);
+        return {filter: style.backdropFilter, background: style.backgroundColor};
+      });
+      assert.match(expanded.filter, /blur\(/);
+      assert.doesNotMatch(expanded.filter, /url\(/, 'Expanded sidebar does not refract text behind it');
+      assert.match(expanded.background, /0\.94\)/);
+    }
     console.log('Library title colors, neutral window edges and edge buttons passed.');
   } finally {
     await browser.close();
