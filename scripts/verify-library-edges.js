@@ -55,8 +55,8 @@ const css = ['style.css', 'sidebar.css', 'clear-glass.css', 'recent-media.css', 
             return {filter: backdrop.backdropFilter, opacity: highlight.opacity, title: title.color, subtitle: subtitle.color};
           }, library);
           assert.match(result.filter, /blur\(/);
-          assert.doesNotMatch(result.filter, /url\(/);
-          assert.equal(result.opacity, '0');
+          assert.match(result.filter, /url\(/, 'Standalone library retains refraction');
+          assert.ok(Number(result.opacity) > 0, 'Standalone library retains glass highlights');
           assert.equal(result.title, theme === 'dark' ? 'rgb(245, 245, 247)' : 'rgb(17, 18, 20)');
           assert.notEqual(result.subtitle, result.title);
         }
@@ -113,8 +113,8 @@ const css = ['style.css', 'sidebar.css', 'clear-glass.css', 'recent-media.css', 
         return {filter: style.backdropFilter, background: style.backgroundColor};
       });
       assert.match(expanded.filter, /blur\(/);
-      assert.doesNotMatch(expanded.filter, /url\(/, 'Expanded sidebar does not refract text behind it');
-      assert.match(expanded.background, /0\.94\)/);
+      assert.match(expanded.filter, /url\(/, 'Expanded sidebar retains refraction');
+      assert.notEqual(expanded.background, theme === 'dark' ? 'rgba(28, 29, 32, 0.94)' : 'rgba(250, 252, 255, 0.94)');
     }
     console.log('Library title colors, neutral window edges and edge buttons passed.');
   } finally {

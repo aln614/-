@@ -71,15 +71,6 @@ body.standalone-library[data-background-mode="none"] :is(.asset-library-head,.pr
 body.standalone-library[data-background-mode="none"] :is(.asset-library-head input,.asset-library-head select,.prompt-library-head input,.prompt-library-head select,.pl-card pre) {
   color:var(--ios-text)!important;background:var(--clear-control)!important;
 }
-/* Keep the full-window glass neutral: the chromatic lens makes colored bands
-   at the screen edge, where there is no neighboring backdrop to refract. */
-body.standalone-library.liquid-glass-enabled :is(.asset-library-window,.prompt-library-window) > .liquid-backdrop {
-  backdrop-filter:blur(var(--liquid-blur,6px)) saturate(var(--liquid-saturation,140%))!important;
-  -webkit-backdrop-filter:blur(var(--liquid-blur,6px)) saturate(var(--liquid-saturation,140%))!important;
-}
-body.standalone-library.liquid-glass-enabled :is(.asset-library-window,.prompt-library-window) > .liquid-glass-mount .liquid-react-layer > span {
-  opacity:0!important;
-}
 body .asset-tree-title {color:var(--ios-text)!important}
 body .asset-tree-title span {color:var(--ios-muted)!important}
 body .asset-main-head {

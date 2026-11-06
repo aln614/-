@@ -26,13 +26,6 @@ body:not(.mobile-ui) #sidebar>.liquid-backdrop {
   border-radius:inherit!important;
   box-shadow:inset 0 1px 0 rgba(255,255,255,.55),inset 0 -1px 0 rgba(255,255,255,.10);
 }
-/* Expanded navigation overlays live form text; keep it readable without
-   refracting the underlying interface into the labels. */
-body:not(.mobile-ui) #sidebar:is(:hover,:has(.nav:focus-visible))>.liquid-backdrop {
-  background:rgba(var(--ios-glass-rgb),.94)!important;
-  backdrop-filter:blur(var(--liquid-blur)) saturate(var(--liquid-saturation))!important;
-  -webkit-backdrop-filter:blur(var(--liquid-blur)) saturate(var(--liquid-saturation))!important;
-}
 /* Upstream highlights follow CSS geometry during expansion, not a stale measured size. */
 #sidebar>.liquid-glass-mount .liquid-react-layer>span {
   inset:0!important;width:100%!important;height:100%!important;transform:none!important;
