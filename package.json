@@ -1,6 +1,6 @@
 {
   "name": "local-api-image-generator-webui",
-  "version": "1.0.136",
+  "version": "1.0.137",
   "description": "TENYING AI APIMart image and video generator with batch management",
   "main": "src/main.js",
   "scripts": {
@@ -9,6 +9,7 @@
     "check:sidebar": "npm run build:glass && node scripts/verify-sidebar.js",
     "check:clear-glass": "npm run build:glass && node scripts/verify-clear-glass.js",
     "check:glass-legibility": "npm run build:glass && node scripts/verify-glass-legibility.js",
+    "check:library-edges": "node scripts/verify-library-edges.js",
     "precheck": "npm run build:glass && node scripts/verify-prompt-mentions.js && node scripts/verify-media-storage.js && node scripts/verify-seedance-draft.js && node --check src/renderer/static/agent-stream.js && node scripts/verify-agent-stream.js && node --check src/renderer/static/folder-download.js && node --check lan-client/folderExport.js && node scripts/verify-folder-export.js",
     "start:docker": "node src/docker-server.js",
     "docker:build": "docker build -t tenying-ai:1.0.46 .",
