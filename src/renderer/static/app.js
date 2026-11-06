@@ -12344,12 +12344,12 @@ function mjPromptCommonFields(){
       { type:'text', name:'seed', label:'随机种子（可选）', placeholder:'例如 123456', tip:'--seed，用于复现相似结果。' },
       { type:'number', name:'stop', label:'Stop (10-100)', placeholder:'例如 60', min:10, max:100, requires:'stop_v5_6', tip:'在百分比进度前停止 --stop，仅 v5-6.1 / niji5-6 可用。' }
     ]},
-    { type:'hybrid_image', name:'cref_images', uploadName:'cref_images', urlName:'cref', label:'角色参考（--cref）', accept:'image/*', multiple:false, defaultMode:'url', placeholder:'https://...', dropLabel:'上传角色参考图', tip:'角色参考图，用于保持人物/角色一致。上传或 URL 二选一。' },
+    { type:'hybrid_image', name:'cref_images', uploadName:'cref_images', urlName:'cref', label:'角色参考（--cref）', accept:'image/*', multiple:false, defaultMode:'url', placeholder:'https://...', dropLabel:'上传角色参考图', help:'角色参考与角色权重仅支持 Midjourney 6 / 6.1 或 Niji 6；其他版本请移除这两项。', tip:'角色参考图，用于保持人物/角色一致。上传或 URL 二选一。' },
     { type:'hybrid_image', name:'sref_images', uploadName:'sref_images', urlName:'sref', label:'风格参考（--sref）', accept:'image/*', multiple:false, defaultMode:'url', placeholder:'https://...', dropLabel:'上传风格参考图', tip:'风格参考图，用于保持整体画风。上传或 URL 二选一。' },
     { type:'hybrid_image', name:'dref_images', uploadName:'dref_images', urlName:'dref', label:'深度参考（--dref）', accept:'image/*', multiple:false, defaultMode:'url', placeholder:'https://...', dropLabel:'上传深度参考图', tip:'深度参考图，用于保持构图/空间深度。上传或 URL 二选一。' },
     { type:'row', columns:3, fields:[
       { type:'number', name:'iw', label:'图片权重 iw', placeholder:'0-3', min:0, max:3, step:0.1, tip:'参考图对结果的影响强度，范围 0-3。' },
-      { type:'number', name:'cw', label:'角色权重 cw', placeholder:'0-100', min:0, max:100, tip:'角色参考权重，范围 0-100。' },
+      { type:'number', name:'cw', label:'角色权重 cw', placeholder:'0-100', min:0, max:100, tip:'角色参考权重，范围 0-100；仅支持 Midjourney 6 / 6.1 或 Niji 6。' },
       { type:'number', name:'sw', label:'风格权重 sw', placeholder:'0-1000', min:0, max:1000, tip:'风格参考权重，范围 0-1000。' }
     ]},
     { type:'row', columns:3, fields:[
@@ -12794,6 +12794,15 @@ async function loadMjDescribeOutput(){
   }catch(e){ box.innerHTML = `<div class="mj-inline-note">加载图生文记录失败：${escapeHtml(e.message || e)}</div>`; }
 }
 
+function mjFailureText(row={}){
+  const candidates = [row.error_message, row.fail_reason, row.error, row.progress_text, row.raw?.fail_reason, row.raw?.error_message, row.raw?.error, row.raw?.reason];
+  for(const value of candidates){
+    if(value == null) continue;
+    const text = typeof value === 'string' ? value.trim() : (typeof value === 'object' ? JSON.stringify(value) : String(value).trim());
+    if(text) return text;
+  }
+  return '';
+}
 function mjDescribeResultText(row={}){
   const outputs = Array.isArray(row.text_outputs) ? row.text_outputs.map(v=>String(v || '').trim()).filter(Boolean) : [];
   if(outputs.length) return outputs.join('\n\n');
@@ -12801,12 +12810,8 @@ function mjDescribeResultText(row={}){
   const statusLower = status.toLowerCase();
   const terminalError = /失败|fail|error|cancel|取消|超时|timeout/.test(statusLower);
   if(terminalError){
-    const candidates = [row.error_message, row.fail_reason, row.error, row.progress_text, row.raw?.fail_reason, row.raw?.error_message, row.raw?.error, row.raw?.reason];
-    for(const value of candidates){
-      if(value == null) continue;
-      const text = typeof value === 'string' ? value.trim() : (typeof value === 'object' ? JSON.stringify(value) : String(value).trim());
-      if(text) return text;
-    }
+    const reason = mjFailureText(row);
+    if(reason) return reason;
     return /cancel|取消/.test(statusLower) ? '任务已取消，未返回文本结果。' : '任务失败，未返回文本结果。';
   }
   if(/已完成|success|succeed|completed|done|finish/.test(statusLower)) return '任务已完成，但接口未返回文本结果。';
@@ -12846,7 +12851,7 @@ async function collectMjFormData(){
 }
 async function submitMjAction(action, extra={}){
   try{
-    updateMjStatus('submitting', 0, '提交中...');
+    updateMjStatus('submitting', 0, '提交中...', '', '-');
     const body = await collectMjFormData();
     Object.assign(body, extra || {});
     body.action = action;
@@ -12873,7 +12878,7 @@ async function submitMjAction(action, extra={}){
     if(mjState.tab === 'describe') loadMjDescribeOutput();
     refreshAll();
   }catch(e){
-    updateMjStatus('failed', 0, e.message || '提交失败');
+    updateMjStatus('failed', 0, '提交失败', '', '-', e.message || '提交失败');
     toast(e.message || 'Midjourney 提交失败');
   }
 }
@@ -12895,12 +12900,14 @@ function mjStatusProgress(status='', progress=0){
   if(/completed|succeeded|success|done|finish|failed|fail|error|cancel|已完成|失败|取消/.test(st)) return 100;
   return Math.max(0, Math.min(100, Number(progress || 0)));
 }
-function updateMjStatus(status='pending', progress=0, label='', batchLabel='', taskId=''){
+function updateMjStatus(status='pending', progress=0, label='', batchLabel='', taskId='', error=''){
   const safeProgress = mjStatusProgress(status, progress);
   const safeLabel = label || mjStatusLabel(status, safeProgress);
   if($('#mjTaskStatus')) $('#mjTaskStatus').textContent = `状态：${safeLabel}`;
   if($('#mjTaskProgress')) $('#mjTaskProgress').textContent = `进度：${safeProgress.toFixed(0)}%`;
   if($('#mjTaskBatch')) $('#mjTaskBatch').textContent = `任务ID：${taskId || mjState.lastTaskId || '-'}`;
+  const errorBox = $('#mjTaskError');
+  if(errorBox){ errorBox.textContent = String(error || ''); errorBox.hidden = !error; }
 }
 function mjStatusFinished(status=''){
   return /completed|succeeded|success|done|finish|failed|fail|error|cancel|modal|等待补充参数|已完成|失败|取消/i.test(String(status||''));
@@ -12912,7 +12919,8 @@ async function queryMjTask(taskId, localTaskId='', opts={}){
     if(ret.local_task_id) mjState.lastLocalTaskId = ret.local_task_id;
     if(ret.batch_id) mjState.lastBatchId = ret.batch_id;
     const displayProgress = mjStatusProgress(ret.status || 'processing', ret.progress || 0);
-    updateMjStatus(ret.status || 'processing', displayProgress, mjStatusLabel(ret.status || 'processing', displayProgress), ret.batch_name || ret.batch_id || '', ret.task_id || taskId || '');
+    const failed = /failed|fail|error|cancel|失败|取消/i.test(String(ret.status || ''));
+    updateMjStatus(ret.status || 'processing', displayProgress, mjStatusLabel(ret.status || 'processing', displayProgress), ret.batch_name || ret.batch_id || '', ret.task_id || taskId || '', failed ? mjFailureText(ret) : '');
     mjState.lastJson = ret;
     if(mjState.tab === 'inpaint' && /modal|等待补充参数/i.test(String(ret.status || ''))){
       const modalTaskInput = $('#mjFormContainer [data-mj-field="modal_task_id"]');
@@ -12923,7 +12931,7 @@ async function queryMjTask(taskId, localTaskId='', opts={}){
     if(!opts.skipRefresh) refreshAll();
     return ret;
   }catch(e){
-    updateMjStatus('failed', 0, e.message || '查询失败');
+    updateMjStatus('failed', 0, '查询失败', '', taskId || '', e.message || '查询失败');
     throw e;
   }
 }

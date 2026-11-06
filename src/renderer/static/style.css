@@ -1623,6 +1623,7 @@ body.chat-context-fullscreen .chat-context-fullscreen-btn{
 .mj-inline-status{padding:14px 16px;border:1px solid var(--border);border-radius:16px;background:rgba(255,255,255,.03);margin-bottom:16px}
 .mj-status-main{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .mj-status-main .pill{white-space:nowrap}
+.mj-task-error:not([hidden]){color:#e55b64;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}
 .mj-field-hybrid{display:flex;flex-direction:column;gap:10px}
 .mj-input-switch{display:inline-flex;gap:6px;background:rgba(255,255,255,.04);padding:4px;border:1px solid var(--border);border-radius:12px;align-self:flex-start}
 .mj-input-switch button{border:0;background:transparent;color:var(--muted);padding:8px 12px;border-radius:10px;cursor:pointer;font-weight:700}

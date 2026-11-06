@@ -8172,6 +8172,26 @@ function buildMidjourneyStructuredFields(body={}) {
   return out;
 }
 
+function validateMidjourneyCharacterReference(body={}) {
+  const text = [body.prompt, body.modal_prompt, body.extra, body.extra_flag].filter(Boolean).join(' ');
+  const hasReference = (Array.isArray(body.cref) ? body.cref.some(value => String(value || '').trim()) : !!String(body.cref || '').trim())
+    || (Array.isArray(body.cref_images) && body.cref_images.length > 0)
+    || (body.cw !== undefined && body.cw !== null && String(body.cw).trim() !== '')
+    || /--(?:cref|cw)(?:\s|=|$)/i.test(text);
+  if (!hasReference) return;
+  const versions = [];
+  const rawVersion = String(body.version || '').trim().toLowerCase().replace(/\s+/g, '').replace(/^v/, '');
+  const niji = body.niji === true || String(body.niji || '').toLowerCase() === 'true';
+  if (rawVersion) versions.push(rawVersion.startsWith('niji') ? rawVersion : niji ? `niji${rawVersion}` : rawVersion);
+  for (const match of text.matchAll(/--(v|version|niji)(?:\s+|=)(\d+(?:\.\d+)?)/gi)) {
+    versions.push((match[1].toLowerCase() === 'niji' ? 'niji' : '') + match[2]);
+  }
+  if (!versions.length) versions.push(niji ? 'niji7' : '7');
+  if (versions.some(version => !['6', '6.1', 'niji6'].includes(version))) {
+    throw new Error('角色参考 --cref / --cw 仅支持 Midjourney 6、6.1 或 Niji 6。请切换到兼容版本，或移除角色参考图片和角色权重后继续使用当前版本；其他参数仍需符合所选版本要求。');
+  }
+}
+
 function compressImageFileToMaxMiB(filePath, maxMiB = 12) {
   const maxBytes = Math.max(1, Number(maxMiB || 12)) * 1024 * 1024;
   try {
@@ -8869,6 +8889,7 @@ async function submitMidjourneyAction(body={}, owner='local') {
   const cfg=readConfig(); const apiKey=String(body.api_key || cfg.api_key || cfg.apiKey || '').trim(); if(!apiKey) throw new Error('请先在首页填写并保存 APIMart API Key');
   let action=String(body.action || 'imagine').trim().toLowerCase();
   if(action==='button'){ const meta=buttonActionFromMeta(body.button_label || body.label || '', body.custom_id || ''); action=meta.action; body.index=body.index || meta.index || ''; body.direction=body.direction || meta.direction || ''; body.zoom_ratio=body.zoom_ratio || meta.zoom_ratio || ''; body.remix_strength=body.remix_strength || meta.remix_strength || ''; body.motion=body.motion || meta.motion || ''; }
+  if (action === 'imagine' || action === 'edits') validateMidjourneyCharacterReference(body);
   if(action === 'describe' && (body.describe_multi || String(body.describe_mode || '').toLowerCase() === 'multi')){
     const urlEntries = [...new Set(parseMjUrlText(body.image_urls_text || body.image_url || '').map(String))].map(url => ({url}));
     const fileEntries = (Array.isArray(body.describe_images) ? body.describe_images : (Array.isArray(body.images) ? body.images : [])).map(item => ({item}));

@@ -100,7 +100,7 @@ const submitSandbox = {
 };
 vm.runInNewContext(`${mainJs.slice(payloadHelpersStart, structuredEnd)}\n${mainJs.slice(submitStart, submitEnd)}`, submitSandbox);
 async function verifyReferenceSubmissions() {
-  await submitSandbox.submitMidjourneyAction({action:'imagine', prompt:'test', dref:' https://example.com/depth.png ', cref:'https://example.com/character.png', sref:'https://example.com/style.png'});
+  await submitSandbox.submitMidjourneyAction({action:'imagine', prompt:'test', version:'6.1', dref:' https://example.com/depth.png ', cref:'https://example.com/character.png', sref:'https://example.com/style.png'});
   let result = submitted.pop();
   if (JSON.stringify(result.payload.dref) !== JSON.stringify(['https://example.com/depth.png'])) fail('Imagine depth URL is not submitted as a string array');
   if (result.payload.cref !== 'https://example.com/character.png' || result.payload.sref !== 'https://example.com/style.png') fail('Other reference fields changed unexpectedly');
@@ -120,6 +120,29 @@ async function verifyReferenceSubmissions() {
   await submitSandbox.submitMidjourneyAction({action:'imagine', prompt:'test', dref:'https://example.com/direct.png', dref_images:['ignored.png']});
   result = submitted.pop();
   if (JSON.stringify(result.payload.dref) !== JSON.stringify(['https://example.com/direct.png']) || uploaded.slice(uploadsBefore).some(items => items.includes('ignored.png'))) fail('Explicit depth URL no longer takes precedence over uploads');
+  for (const body of [
+    {action:'imagine', version:'8.2', cref_images:['character.png'], dref_images:['depth.png'], cw:'90'},
+    {action:'edits', version:'7', cref:'https://example.com/character.png'},
+    {action:'imagine', version:'7', niji:true, cw:'0'},
+    {action:'imagine', cref:'https://example.com/character.png'},
+    {action:'imagine', version:'6.1', prompt:'test --v 8.2 --cref https://example.com/character.png'},
+    {action:'imagine', version:'5.2', extra_flag:'--cw 90'}
+  ]) {
+    const uploadCount = uploaded.length;
+    const submitCount = submitted.length;
+    let message = '';
+    try { await submitSandbox.submitMidjourneyAction({prompt:'test', ...body}); }
+    catch (error) { message = error.message; }
+    if (!message.includes('--cref / --cw') || uploaded.length !== uploadCount || submitted.length !== submitCount) fail('Incompatible character references must fail before upload or submission');
+  }
+  for (const body of [
+    {version:'6.1', cref_images:['character.png'], cw:'90'},
+    {version:'6', niji:true, cref:'https://example.com/character.png', cw:'0'},
+    {prompt:'test --v 6.1', cref:'https://example.com/character.png'}
+  ]) {
+    await submitSandbox.submitMidjourneyAction({action:'imagine', prompt:'test', ...body});
+    submitted.pop();
+  }
 }
 verifyReferenceSubmissions().catch(error => fail(`Mock submission failed: ${error.stack || error}`));
 if (!/payload=\{ prompt, image_urls:imageUrls, speed, \.\.\.structured \}/.test(mainJs)) fail('Imagine/Edits no longer submit structured image_urls payloads');
@@ -202,7 +225,7 @@ if (!mainJs.includes('texts = normalizeDescribePromptTexts(texts.length ? texts 
 if (!mainJs.includes('error_message: errorMessage') || !mainJs.includes('fail_reason: errorMessage')) fail('Describe recent-history endpoint does not expose terminal failure reasons');
 if (!mainJs.includes("appCode ? 'no-cache, no-store, must-revalidate'")) fail('Updated renderer code can remain hidden behind stale browser caching');
 if (!indexHtml.includes(`/static/app.js?v=${releaseVersion}`) || !indexHtml.includes(`/static/style.css?v=${releaseVersion}`)) fail('Renderer assets do not carry the current release cache key');
-const describeResultTextStart = appJs.indexOf('function mjDescribeResultText');
+const describeResultTextStart = appJs.indexOf('function mjFailureText');
 const describeResultTextEnd = appJs.indexOf('\nasync function collectMjFormData', describeResultTextStart);
 if (describeResultTextStart < 0 || describeResultTextEnd < 0) fail('Describe terminal-state text renderer is missing');
 const describeResultTextSandbox = {};
@@ -210,6 +233,16 @@ vm.runInNewContext(`${appJs.slice(describeResultTextStart, describeResultTextEnd
 if (describeResultTextSandbox.failedText !== '上游服务器内部错误') fail('Describe failed tasks still hide the actual failure reason');
 if (describeResultTextSandbox.pendingText !== '等待返回文本结果...') fail('Describe active tasks no longer show the pending state');
 if (describeResultTextSandbox.emptySuccessText !== '任务已完成，但接口未返回文本结果。') fail('Describe successful tasks without text are mislabeled as pending');
+const statusStart = appJs.indexOf('function mjStatusLabel');
+const statusEnd = appJs.indexOf('\nfunction mjStatusFinished', statusStart);
+if (statusStart < 0 || statusEnd < 0 || !indexHtml.includes('id="mjTaskError"')) fail('MJ failure status display is missing');
+const statusElements = Object.fromEntries(['mjTaskStatus','mjTaskProgress','mjTaskBatch','mjTaskError'].map(id=>[id,{textContent:'',hidden:true}]));
+const statusSandbox = {$:selector=>statusElements[selector.slice(1)], mjState:{lastTaskId:'previous'}};
+vm.runInNewContext(`${appJs.slice(statusStart, statusEnd)}\nupdateMjStatus('FAILURE',100,'失败','','task-test','<error> reason');`, statusSandbox);
+if (statusElements.mjTaskError.hidden || statusElements.mjTaskError.textContent !== '<error> reason') fail('MJ failure reason is not exposed as plain text');
+vm.runInNewContext(`updateMjStatus('processing',10,'生成中','','task-test');`, statusSandbox);
+if (!statusElements.mjTaskError.hidden || statusElements.mjTaskError.textContent) fail('MJ failure reason is not cleared for a new status');
+if (!appJs.includes("failed ? mjFailureText(ret) : ''")) fail('MJ polling does not display upstream failure reasons');
 if (!mainJs.includes('if (isReferencedServedFile(resolved, cfg)) return resolved;')) fail('Describe source images referenced by task rows are blocked by the media route');
 if (!mainJs.includes('thumb_url: localThumb || localFull || remoteSource')) fail('Describe recent-history thumbnails do not fall back to a valid local/remote source');
 if (!appJs.includes('function bindDescribeImageFallback')) fail('Describe cards do not retry the full image when a thumbnail fails');
