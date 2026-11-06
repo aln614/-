@@ -8114,7 +8114,12 @@ function buildMidjourneyStructuredFields(body={}) {
   putString('negative_prompt', body.negative_prompt);
   putString('cref', body.cref);
   putString('sref', body.sref);
-  putString('dref', body.dref);
+  // The live API expects an array here despite documenting dref as a string.
+  const depthRefs = (Array.isArray(body.dref) ? body.dref : [body.dref])
+    .filter(value => typeof value === 'string')
+    .map(value => value.trim())
+    .filter(Boolean);
+  if (depthRefs.length) out.dref = depthRefs;
   putString('extra', body.extra || body.extra_flag);
   putNumber('seed', body.seed, true);
   putNumber('stylize', body.stylize, true);

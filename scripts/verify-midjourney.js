@@ -75,6 +75,53 @@ if (structuredStart < 0 || structuredEnd < 0) fail('MJ structured request-field 
 const structuredSandbox = {};
 vm.runInNewContext(`${mainJs.slice(structuredStart, structuredEnd)}\nstructuredResult = buildMidjourneyStructuredFields({version:'niji7'});`, structuredSandbox);
 if (structuredSandbox.structuredResult?.version !== '7' || structuredSandbox.structuredResult?.niji !== true) fail('Legacy niji7/niji6 settings are not normalized to niji=true');
+const submitStart = mainJs.indexOf('async function submitMidjourneyAction');
+const submitEnd = mainJs.indexOf('\nasync function submitPendingMidjourneyModal', submitStart);
+const payloadHelpersStart = mainJs.indexOf('function sanitizeMjPayload');
+if (submitStart < 0 || submitEnd < 0 || payloadHelpersStart < 0) fail('MJ submission code cannot be evaluated');
+const submitted = [];
+const uploaded = [];
+const submitSandbox = {
+  readConfig: () => ({api_key:'test-key'}),
+  uploadMidjourneyItemsToUrls: async items => {
+    uploaded.push(items);
+    return items.map(item => `https://upload.example/${item}`);
+  },
+  ensureMjBatchAndTask: () => ({batch:{id:'batch'}, task:{id:'task'}}),
+  getDB: () => ({_save(){}}),
+  nowISO: () => 'test-time',
+  addLog(){},
+  compactJsonForLog: () => '',
+  postJsonApimart: async (endpoint, key, payload) => {
+    submitted.push({endpoint, key, payload:JSON.parse(JSON.stringify(payload))});
+    return {task_id:'remote-task'};
+  },
+  pickTaskIdFromApimart: raw => raw.task_id
+};
+vm.runInNewContext(`${mainJs.slice(payloadHelpersStart, structuredEnd)}\n${mainJs.slice(submitStart, submitEnd)}`, submitSandbox);
+async function verifyReferenceSubmissions() {
+  await submitSandbox.submitMidjourneyAction({action:'imagine', prompt:'test', dref:' https://example.com/depth.png ', cref:'https://example.com/character.png', sref:'https://example.com/style.png'});
+  let result = submitted.pop();
+  if (JSON.stringify(result.payload.dref) !== JSON.stringify(['https://example.com/depth.png'])) fail('Imagine depth URL is not submitted as a string array');
+  if (result.payload.cref !== 'https://example.com/character.png' || result.payload.sref !== 'https://example.com/style.png') fail('Other reference fields changed unexpectedly');
+  await submitSandbox.submitMidjourneyAction({action:'imagine', prompt:'test', dref_images:['depth.png']});
+  result = submitted.pop();
+  if (JSON.stringify(result.payload.dref) !== JSON.stringify(['https://upload.example/depth.png'])) fail('Uploaded Imagine depth reference is not submitted as an array');
+  await submitSandbox.submitMidjourneyAction({action:'edits', prompt:'test', image_urls_text:'https://example.com/source.png', dref_images:['edit-depth.png']});
+  result = submitted.pop();
+  if (result.endpoint !== '/midjourney/generations/edits' || JSON.stringify(result.payload.dref) !== JSON.stringify(['https://upload.example/edit-depth.png'])) fail('Edits depth reference is not submitted as an array');
+  await submitSandbox.submitMidjourneyAction({action:'imagine', prompt:'test', dref:[' ', 'https://example.com/one.png', 'https://example.com/two.png']});
+  result = submitted.pop();
+  if (JSON.stringify(result.payload.dref) !== JSON.stringify(['https://example.com/one.png','https://example.com/two.png'])) fail('Depth reference arrays are not preserved and normalized');
+  await submitSandbox.submitMidjourneyAction({action:'imagine', prompt:'test', dref:'  ', cref:'', sref:''});
+  result = submitted.pop();
+  if ('dref' in result.payload || 'cref' in result.payload || 'sref' in result.payload) fail('Empty reference fields must be omitted');
+  const uploadsBefore = uploaded.length;
+  await submitSandbox.submitMidjourneyAction({action:'imagine', prompt:'test', dref:'https://example.com/direct.png', dref_images:['ignored.png']});
+  result = submitted.pop();
+  if (JSON.stringify(result.payload.dref) !== JSON.stringify(['https://example.com/direct.png']) || uploaded.slice(uploadsBefore).some(items => items.includes('ignored.png'))) fail('Explicit depth URL no longer takes precedence over uploads');
+}
+verifyReferenceSubmissions().catch(error => fail(`Mock submission failed: ${error.stack || error}`));
 if (!/payload=\{ prompt, image_urls:imageUrls, speed, \.\.\.structured \}/.test(mainJs)) fail('Imagine/Edits no longer submit structured image_urls payloads');
 if (!appJs.includes("{ value:'7', label:'niji 7' }") || !appJs.includes("{ value:'6', label:'niji 6' }")) fail('Niji versions must submit version 7/6 with niji=true');
 if (!appJs.includes("name:'iw'") || !appJs.includes("name:'cw'") || !appJs.includes("name:'sw'") || !appJs.includes("name:'dw'")) fail('MJ reference-weight controls are incomplete');
