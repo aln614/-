@@ -1,6 +1,6 @@
 {
   "name": "tenying-ai-lan-client",
-  "version": "1.0.58",
+  "version": "1.0.64",
   "description": "TENYING AI LAN access client",
   "main": "main.js",
   "private": true,
@@ -13,7 +13,8 @@
     },
     "files": [
       "**/*",
-      "!dist/**"
+      "!dist/**",
+      "!dist-*/**"
     ],
     "extraResources": [
       {
@@ -31,5 +32,8 @@
       "verifyUpdateCodeSignature": false
     },
     "forceCodeSigning": false
+  },
+  "dependencies": {
+    "koffi": "3.3.6"
   }
 }

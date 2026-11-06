@@ -1,13 +1,14 @@
 'use strict';
 (() => {
   const key='tenying-local-appearance-v1';
-  const defaults={mode:'board',theme:'auto',blur:0,revision:''};
+  const defaults={mode:'board',theme:'auto',blur:0,shellBlur:12,revision:''};
   const modes=['board','none','custom'];
   const themes=['light','dark','auto'];
   const normalize=value=>({
     mode:modes.includes(value?.mode) ? value.mode : defaults.mode,
     theme:themes.includes(value?.theme) ? value.theme : defaults.theme,
     blur:Number.isFinite(Number(value?.blur)) ? Math.max(0,Math.min(40,Number(value.blur))) : 0,
+    shellBlur:Number.isFinite(Number(value?.shellBlur)) ? Math.max(0,Math.min(40,Number(value.shellBlur))) : defaults.shellBlur,
     revision:typeof value?.revision==='string' ? value.revision : ''
   });
   function stored() { try { return normalize(JSON.parse(localStorage.getItem(key) || '{}')); } catch { return {...defaults}; } }
@@ -76,7 +77,11 @@
       input.disabled=settings.mode!=='custom';
     }
     for(const output of document.querySelectorAll('[data-background-blur-value]')) output.textContent=settings.blur+' px';
-    for(const note of document.querySelectorAll('[data-native-blur-note]')) note.hidden=settings.mode!=='none';
+    const adjustable=body.dataset.nativeGlassMaterial==='native-blur';
+    for(const note of document.querySelectorAll('[data-native-blur-note]')) note.hidden=settings.mode!=='none' || adjustable;
+    for(const control of document.querySelectorAll('[data-shell-blur-control]')) control.hidden=settings.mode!=='none' || !adjustable;
+    for(const input of document.querySelectorAll('[data-shell-blur]')) input.value=String(settings.shellBlur);
+    for(const output of document.querySelectorAll('[data-shell-blur-value]')) output.textContent=settings.shellBlur+' px';
     const name={board:actual==='dark' ? '黑板' : '白板',none:'无 · 液态玻璃',custom:'自定义背景'}[settings.mode];
     const summary=document.getElementById('themePanelCurrent');
     if(summary) summary.textContent=name+' · '+({light:'日间',dark:'深色',auto:'自动'}[settings.theme]);
@@ -183,6 +188,11 @@
     input.addEventListener('input',()=>update({blur:input.value},{defer:true}));
     input.addEventListener('change',persist);
   }
+  for(const input of document.querySelectorAll('[data-shell-blur]')) {
+    input.addEventListener('input',()=>update({shellBlur:input.value},{defer:true}));
+    input.addEventListener('change',persist);
+  }
+  window.addEventListener('native-glass-material-change',()=>render());
   fileInput?.addEventListener('change',async()=>{const file=fileInput.files?.[0];fileInput.value='';if(file) await importFile(file).catch(()=>{});});
   layer.addEventListener('click',playback);
   window.addEventListener('storage',event=>{

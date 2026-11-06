@@ -170,7 +170,7 @@ new MutationObserver(records=>{
 }).observe(document.body,{subtree:true,attributes:true,attributeFilter:['class','style','hidden','open','aria-hidden']});
 function syncNativeAppearance() {
   if(!window.desktopAppearance?.apply) return;
-  const appearance={mode:document.body.dataset.backgroundMode || 'board',theme:document.body.dataset.themeActual || 'light',enabled:settings.enabled};
+  const appearance={mode:document.body.dataset.backgroundMode || 'board',theme:document.body.dataset.themeActual || 'light',enabled:settings.enabled,shellBlur:window.localAppearance?.get().shellBlur ?? 12};
   const signature=JSON.stringify(appearance);
   if(signature===nativeAppearanceSignature) return;
   nativeAppearanceSignature=signature;
@@ -178,8 +178,11 @@ function syncNativeAppearance() {
   window.desktopAppearance.apply(appearance).then(result=>{
     if(revision===nativeAppearanceRevision) {
       const previousShape=document.body.dataset.nativeWindowShape;
-      document.body.dataset.nativeGlassMaterial=result?.material || 'none';
+      const material=result?.material || 'none';
+      const previousMaterial=document.body.dataset.nativeGlassMaterial;
+      document.body.dataset.nativeGlassMaterial=material;
       document.body.dataset.nativeWindowShape=result?.shape || 'custom';
+      if(previousMaterial!==material) window.dispatchEvent(new Event('native-glass-material-change'));
       if(previousShape!==document.body.dataset.nativeWindowShape) for(const surface of surfaces.values()) renderSurface(surface);
     }
   }).catch(()=>{if(revision===nativeAppearanceRevision) nativeAppearanceSignature='';});

@@ -20,10 +20,11 @@ body.theme-dark[data-background-mode="none"].liquid-glass-enabled {
   --ios-muted:#bcc1ca;--clear-edge:rgba(221,226,235,.12);
 }
 /* A readable fallback is essential when native desktop blur is unavailable. */
+[data-shell-blur-control][hidden] {display:none!important}
 body[data-background-mode="none"] #localAppearanceBackground {
   background:rgba(var(--liquid-tint),.94);border-radius:var(--ios-radius-window,28px);
 }
-body[data-background-mode="none"][data-native-glass-material="acrylic"] #localAppearanceBackground {
+body[data-background-mode="none"]:is([data-native-glass-material="acrylic"],[data-native-glass-material="native-blur"]) #localAppearanceBackground {
   background:rgba(var(--liquid-tint),.10);
 }
 body[data-background-mode="none"] :is(h1,h2,h3,label,.brand,.section-head p,.panel-head strong) {
@@ -103,6 +104,14 @@ body.liquid-glass-enabled [data-liquid-elastic] {
   transition:translate var(--elastic-time,180ms) cubic-bezier(.2,1.35,.35,1),
     scale var(--elastic-time,180ms) cubic-bezier(.2,1.35,.35,1),
     background-color .14s ease,color .14s ease,box-shadow .14s ease!important;
+}
+/* Hover deformation belongs to controls only. The glass lens must keep the
+   exact host geometry or its transformed edge can expose square corners. */
+body.liquid-glass-enabled [data-liquid-surface] > .liquid-backdrop {
+  translate:none!important;
+  scale:none!important;
+  transform:none!important;
+  transition:none!important;
 }
 @media(prefers-reduced-motion:reduce) {
   body.liquid-glass-enabled [data-liquid-elastic] {translate:none;scale:none;transition:none!important}

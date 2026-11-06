@@ -3,7 +3,7 @@ export function setupLiquidGlassMotion(getSettings) {
   const selector='button:not(:disabled),[role="button"]:not([aria-disabled="true"]),.dropzone,.asset-card,.pl-card,.image-card';
   const reduced=matchMedia('(prefers-reduced-motion: reduce)');
   const records=new Map();
-  let control=null,surface=null,point=null,frame=0,pressed=false;
+  let control=null,point=null,frame=0,pressed=false;
   const enabled=()=>getSettings().enabled && getSettings().elasticity>0 && !reduced.matches && !document.hidden;
   function remove(element) {
     const record=records.get(element);if(!record) return;
@@ -24,7 +24,7 @@ export function setupLiquidGlassMotion(getSettings) {
   function reset(immediate=false) {
     if(frame) cancelAnimationFrame(frame);frame=0;pressed=false;point=null;
     for(const element of records.keys()) neutral(element,immediate);
-    control=null;surface=null;
+    control=null;
   }
   function target(element) {
     if(!element) return null;
@@ -35,24 +35,21 @@ export function setupLiquidGlassMotion(getSettings) {
   }
   function select(event) {
     const nextControl=event.target.closest?.(selector) || null;
-    const host=event.target.closest?.('[data-liquid-surface]');
-    const nextSurface=host?.querySelector(':scope>.liquid-backdrop') || null;
     if(nextControl!==control) {neutral(control);control=target(nextControl);}
-    if(nextSurface!==surface) {neutral(surface);surface=target(nextSurface);}
   }
-  function paint(element,material) {
+  function paint(element) {
     if(!element?.isConnected) {remove(element);return;}
-    const box=(material?element.parentElement:element).getBoundingClientRect();
+    const box=element.getBoundingClientRect();
     const dx=point.x-(box.left+box.width/2),dy=point.y-(box.top+box.height/2);
     const distance=Math.hypot(dx,dy),nx=distance?dx/distance:0,ny=distance?dy/distance:0;
-    const strength=getSettings().elasticity*(material ? .18 : 1);
+    const strength=getSettings().elasticity;
     const intensity=Math.min(distance/120,1)*strength;
-    const compression=pressed ? (material ? .996 : .96) : 1;
-    const maxScale=material?1.012:box.width>240?1.025:1.06;
+    const compression=pressed ? .96 : 1;
+    const maxScale=box.width>240?1.025:1.06;
     const clamp=(value,min,max)=>Math.max(min,Math.min(max,value));
     const sx=clamp((1+Math.abs(nx)*intensity*.3-Math.abs(ny)*intensity*.15)*compression,.94,maxScale);
     const sy=clamp((1+Math.abs(ny)*intensity*.3-Math.abs(nx)*intensity*.15)*compression,.94,maxScale);
-    const limit=material ? .6 : 2;
+    const limit=2;
     element.style.setProperty('--elastic-time',pressed?'90ms':'180ms');
     element.style.setProperty('--elastic-x',clamp(dx*strength*.06,-limit,limit)+'px');
     element.style.setProperty('--elastic-y',clamp(dy*strength*.06,-limit,limit)+'px');
@@ -63,7 +60,7 @@ export function setupLiquidGlassMotion(getSettings) {
     if(!frame) frame=requestAnimationFrame(()=>{
       frame=0;
       if(!enabled() || !point) {reset(true);return;}
-      if(control) paint(control,false);if(surface) paint(surface,true);
+      if(control) paint(control);
     });
   }
   document.addEventListener('pointerover',event=>{
@@ -71,7 +68,7 @@ export function setupLiquidGlassMotion(getSettings) {
     select(event);schedule(event);
   },{passive:true});
   document.addEventListener('pointermove',event=>{
-    if(!control && !surface) return;
+    if(!control) return;
     if(!enabled() || event.buttons && !pressed) {reset(true);return;}
     schedule(event);
   },{passive:true});

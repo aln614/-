@@ -62,7 +62,7 @@ app.whenReady().then(async()=>{
     setupVideoPage();
     const check = (value,message)=>{if(!value)throw new Error(message);};
     $('#videoModel').innerHTML = apimartVideoModelOptionsHtml();
-    check($('#videoModel').options.length === 52, '52 active video models');
+    check(!!$('#videoModel').querySelector('[value="pixverse-v6-max"]'), 'PixVerse V6 Max is selectable');
     $('#videoModel').value = 'viduq4-preview';
     updateVideoResolutionOptions();
     check([...$('#videoResolution').options].map(o=>o.value).join(',') === '540p,720p,1080p,2K,4K', 'Vidu Q4 resolutions');

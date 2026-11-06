@@ -42,6 +42,20 @@ for (const resolution of getApimartImageRule('flux-3-image').resolutions) {
 }
 assert.equal(sanitize({size:'1024x1024'},'flux-3-image').aspect_ratio,'auto');
 assert.throws(()=>sanitize({image_urls:refs.slice(0,11)},'flux-3-image'),/10/);
+for (const resolution of getApimartImageRule('flux-3-image-klein').resolutions) {
+  const klein = sanitize({prompt:'test',size:'16:9',resolution,n:4,image_urls:refs.slice(0,10),
+    grounding:true,output_format:'png',steps:16,seed:42},'flux-3-image-klein');
+  assert.equal(klein.model,'flux-3-image-klein');
+  assert.equal(klein.aspect_ratio,'16:9');
+  assert.equal(klein.resolution,resolution);
+  assert.equal(klein.n,1);
+  assert.equal(klein.output_format,'png');
+  assert.equal(klein.steps,16);
+  assert.equal(klein.seed,42);
+  assert.ok(!('grounding' in klein));
+}
+assert.throws(()=>sanitize({image_urls:refs.slice(0,11)},'flux-3-image-klein'),/10/);
+assert.ok(!('output_format' in sanitize({output_format:'webp'},'flux-3-image-klein')));
 for (const model of ['mai-image-2.6','mai-image-2.6-flash']) {
   for (const size of ['1536x1024','2048x1152','3072x768','1000x1000','7:5','4:1','1:4']) {
     assert.equal(sanitize({size:sizeToAspect(size,model)},model).size,size);
@@ -75,6 +89,7 @@ function extract(name, async = false) {
 async function verify() {
   // Image limits must reject before attempting to read/upload fake paths.
   await assert.rejects(generateOne({cfg:{model:'flux-3-image'},prompt:'test',refImages:Array(11).fill('not-a-file')}),/10/);
+  await assert.rejects(generateOne({cfg:{model:'flux-3-image-klein'},prompt:'test',refImages:Array(11).fill('not-a-file')}),/10/);
   await assert.rejects(generateOne({cfg:{model:'mai-image-2.6'},prompt:'test',refImages:Array(6).fill('not-a-file')}),/5/);
   const store = {video_tasks:[]}, submitted = [];
   let uploads = 0;
@@ -144,6 +159,27 @@ async function verify() {
   assert.equal(multi.count,2);
   assert.ok(multi.rows.every(x=>x.status === '已提交'));
   assert.ok(submitted.slice(-2).every(x=>x.image_with_roles.length === 1 && x.image_with_roles[0].role === 'first_frame'));
+  const maxBody = {api_key:'mock-key',video_model:'pixverse-v6-max',prompt:'test',retry_times:0};
+  const text = await context.createApimartVideoTask(maxBody,'owner',{},{});
+  assert.equal(text.status,'已提交',text.error_message);
+  assert.deepEqual(submitted.at(-1),{model:'pixverse-v6-max',prompt:'test',resolution:'540p',aspect_ratio:'16:9',duration:5,audio:false});
+  const image = await context.createApimartVideoTask({...maxBody,ref_image_urls:[refs[0]],duration:15},'owner',{},{});
+  assert.equal(image.status,'已提交',image.error_message);
+  assert.deepEqual(submitted.at(-1),{model:'pixverse-v6-max',prompt:'test',resolution:'540p',image_urls:[refs[0]],duration:15,audio:false});
+  const beforeInvalid = submitted.length;
+  for (const input of [
+    {ref_image_urls:refs.slice(0,2)},
+    {ref_image_urls:[refs[0]],prompt:'x'.repeat(2049)},
+    {prompt:'x'.repeat(5001)},
+    {ref_image_urls:[refs[0]],video_mode:'multi_reference'}
+  ]) {
+    const invalid = await context.createApimartVideoTask({...maxBody,...input},'owner',{},{});
+    assert.notEqual(invalid.status,'已提交');
+  }
+  assert.equal(submitted.length,beforeInvalid,'Invalid PixVerse V6 Max tasks are not submitted');
+  const uploadsBeforeMax = uploads;
+  await assert.rejects(context.createApimartVideoBatch({...maxBody,ref_images:[{name:'a.png'},{name:'b.png'}]},'owner',{},{}),/1/);
+  assert.equal(uploads,uploadsBeforeMax,'Invalid PixVerse batches are rejected before upload');
   console.log('October model contracts passed: five image variants, Vidu Q4 real task/batch assembly, limits, pricing and GPT Image 2 fields (mocked API, no charges).');
 }
 verify().catch(error=>{console.error(error);process.exitCode=1;});

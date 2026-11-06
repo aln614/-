@@ -852,6 +852,14 @@ function setupWindowVisibility(win) {
 }
 
 const nativeBackdropSupported=process.platform==='win32' && Number(os.release().split('.')[2])>=22621;
+let experimentalNativeGlass=null;
+if(process.env.TENYING_EXPERIMENTAL_NATIVE_GLASS) experimentalNativeGlass={
+  apply(...args) {
+    if(!this.bridge && !args[1]) return false;
+    if(!this.bridge) this.bridge=require('../lan-client/native-glass').createNativeGlass();
+    return this.bridge.apply(...args);
+  }
+};
 function applyLibraryWindowShape(win) {
   // DWM rounds non-layered Windows 11 windows. A custom region disables that.
   if(nativeBackdropSupported) return;
@@ -872,6 +880,15 @@ function applyNativeWindowAppearance(win, appearance = {}) {
   if(!win || win.isDestroyed()) return {material:'none'};
   const mode=['board','none','custom'].includes(appearance.mode) ? appearance.mode : 'board';
   const theme=appearance.theme==='dark' ? 'dark' : 'light';
+  if(experimentalNativeGlass) {
+    let material='none';
+    try {
+      if(experimentalNativeGlass.apply(win,mode==='none' && appearance.enabled!==false,appearance.shellBlur)) material='native-blur';
+    } catch(error) {console.error('Experimental native glass failed:',error);}
+    if(!win.isMaximized()) applyLibraryWindowShape(win);
+    if(nativeTheme.themeSource!==theme) nativeTheme.themeSource=theme;
+    return {mode,theme,material,shape:'custom'};
+  }
   // CSS backdrop-filter cannot sample other Windows applications. DWM owns
   // desktop blur; the renderer adds the bounded, in-app liquid refraction.
   const material=mode==='none' && appearance.enabled!==false && nativeBackdropSupported ? 'acrylic' : 'none';
@@ -904,7 +921,7 @@ function showLibraryWindow(kind, toggle = false) {
   win = new BrowserWindow({
     width:kind === 'asset' ? 1200 : 1050, height:760, minWidth:720, minHeight:500,
     title:kind === 'asset' ? '资产库' : '提示词库', show:false, frame:false,
-    transparent:!nativeBackdropSupported, backgroundColor:'#00000000', thickFrame:nativeBackdropSupported, hasShadow:false,
+    transparent:!!experimentalNativeGlass || !nativeBackdropSupported, backgroundColor:'#00000000', thickFrame:nativeBackdropSupported && !experimentalNativeGlass, hasShadow:false,
     icon:path.join(__dirname, '..', 'assets', 'rocket.ico'),
     webPreferences:{contextIsolation:true, nodeIntegration:false, sandbox:false, webSecurity:true, allowRunningInsecureContent:false, preload:path.join(__dirname,'preload.js')}
   });
@@ -3032,6 +3049,7 @@ registerApimartVideoRules([
   { model:'grok-imagine-video', label:'Grok Imagine Video Official', resolutions:['480p','720p'], defaultResolution:'480p', aspectRatios:['auto','1:1','16:9','9:16','4:3','3:4','3:2','2:3'], defaultAspectRatio:'auto', durationRange:[1,15], defaultDuration:8, supportsImageUrls:true, supportsVideoUrls:true, videoParam:'video_object', maxVideoCount:1, durationWithVideo:false, omitResolutionWithVideo:true, omitAspectWithVideo:true, videoDisallowsImages:true, promptMaxLength:8000 },
   { model:'grok-imagine-video-1.5', label:'Grok Imagine Video 1.5 Official', resolutions:['480p','720p','1080p'], defaultResolution:'480p', aspectRatios:['auto','1:1','16:9','9:16','4:3','3:4','3:2','2:3'], defaultAspectRatio:'auto', durationRange:[1,15], defaultDuration:8, supportsImageUrls:true, supportsVideoUrls:false, promptMaxLength:8000 },
   { model:'pixverse-v6', label:'Pixverse v6', resolutions:['360p','540p','720p','1080p'], defaultResolution:'540p', aspectRatios:['16:9','4:3','1:1','3:4','9:16','2:3','3:2','21:9'], aspectParam:'size', durationRange:[1,15], firstLastDurations:[5,8], supportsImageUrls:true, imageParam:'pixverse', maxImageCount:7, omitAspectWithImageModes:['first_frame','first_last_frame'], audioParam:'audio', defaultAudio:false, watermarkParam:'watermark', negativePromptParam:'negative_prompt', motionModeParam:'motion_mode' },
+  { model:'pixverse-v6-max', label:'PixVerse V6 Max', resolutions:['360p','540p','720p','1080p'], defaultResolution:'540p', aspectRatios:['16:9','4:3','1:1','3:4','9:16','2:3','3:2','21:9'], durationRange:[1,15], defaultDuration:5, supportsImageUrls:true, maxImageCount:1, omitAspectWithImages:true, audioParam:'audio', defaultAudio:false, promptMaxLength:5000, imagePromptMaxLength:2048, allowedModes:['text_to_video','first_frame'] },
   { model:'Omni-Flash-Ext', apiModel:'gemini-omni-1.1-flash-ext', label:'Gemini Omni 1.1 Flash Ext', resolutions:['360p','720p','1080p','4k'], defaultResolution:'720p', aspectRatios:['16:9','9:16'], defaultAspectRatio:'16:9', durations:[4,6,8,10], defaultDuration:6, supportsImageUrls:true, supportsVideoUrls:true, videoParam:'video_urls', allowedImageCounts:[0,1,3], generationTypeParam:'generation_type', supportsReferenceGeneration:true, supportsSeed:false, durationWithVideo:false }
 ]);
 const APIMART_VIDEO_MODEL_ALIASES = Object.freeze({
@@ -4414,6 +4432,12 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
   getDB()._save();
   try {
     row.status = '提交中'; row.progress = 2; row.progress_text = '正在提交到 APIMart'; row.updated_at = nowISO(); getDB()._save();
+    if (videoModel === 'pixverse-v6-max') {
+      if (initialImageCount > 1) throw new Error('PixVerse V6 Max 最多支持 1 张参考图。');
+      if (!rule.allowedModes.includes(requestedMode)) throw new Error('PixVerse V6 Max 仅支持文生视频或单图首帧生成。');
+      const limit = initialImageCount ? rule.imagePromptMaxLength : rule.promptMaxLength;
+      if (Array.from(prompt).length > limit) throw new Error(`PixVerse V6 Max 的提示词最多支持 ${limit} 个字符。`);
+    }
     const viduMode = videoModel === 'viduq4-preview' ? validateViduQ4Input({
       mode: normalizeVideoMode(body.video_mode), imageCount: initialImageCount,
       audioCount: Math.max(audioItems.length, prebuiltLocalAudioPaths.length) + directAudioUrls.length,
@@ -4464,6 +4488,7 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
       throw new Error(`${rule.label || videoModel} 参考图最多支持 ${rule.maxImageCount} 张，当前为 ${imageUrls.length} 张。`);
     }
     let mode = viduMode || resolveApimartVideoMode(body.video_mode, { imageCount: imageUrls.length, hasVideo: videoUrls.length > 0, hasAudio: audioUrls.length > 0 });
+    if (rule.allowedModes && !rule.allowedModes.includes(mode)) throw new Error(`${rule.label || videoModel} 仅支持文生视频或单图首帧生成。`);
     const hasReferenceFamilyInputs = Boolean(videoUrls.length || audioUrls.length || documentFileUrl || linkUrl);
     if (rule.referenceFamilyInputsForceReferenceImages && hasReferenceFamilyInputs && imageUrls.length && ['first_frame', 'first_last_frame'].includes(mode)) {
       if (normalizeVideoMode(body.video_mode) !== 'auto') {
@@ -4535,8 +4560,9 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
     if (!prompt && !draftSettings.taskId && !(rule.promptOptionalWithMedia && (imageUrls.length || videoUrls.length || audioUrls.length || documentFileUrl || linkUrl)) && !promptOptionalForMode) {
       throw new Error('请输入视频提示词；当前模型只有在已上传参考素材时才能省略提示词。');
     }
-    if (prompt && Number(rule.promptMaxLength || 0) > 0 && Array.from(prompt).length > Number(rule.promptMaxLength)) {
-      throw new Error(`${rule.label || videoModel} 的提示词最多支持 ${rule.promptMaxLength} 个字符。`);
+    const promptLimit = imageUrls.length && rule.imagePromptMaxLength ? rule.imagePromptMaxLength : rule.promptMaxLength;
+    if (prompt && Number(promptLimit || 0) > 0 && Array.from(prompt).length > Number(promptLimit)) {
+      throw new Error(`${rule.label || videoModel} 的提示词最多支持 ${promptLimit} 个字符。`);
     }
     const forceAutomaticDuration = (rule.forceAutoDurationForVideoEdit === true && mode === 'video_edit')
       || (rule.supportsAutoDuration === true && body.auto_duration === true);
@@ -4832,6 +4858,16 @@ async function createApimartVideoBatch(body, ownerId, req, cfg) {
   const documentUrl = multiFirstFrame ? '' : String(body.file_url || '').trim();
   const linkUrl = multiFirstFrame ? '' : String(body.link_url || '').trim();
   if (multiFirstFrame && !refImages.length) throw new Error('多首帧模式至少需要在“上传参考图”区域添加 1 张图片。');
+  if (canonicalApimartVideoModel(body.video_model) === 'pixverse-v6-max') {
+    const imageCount = multiFirstFrame ? 1 : refImages.length;
+    const mode = multiFirstFrame ? 'first_frame' : resolveApimartVideoMode(body.video_mode, {
+      imageCount, hasVideo: !!(videoFiles.length || videoUrlInput), hasAudio: !!audioFiles.length
+    });
+    if (imageCount > 1) throw new Error('PixVerse V6 Max 最多支持 1 张参考图。');
+    if (!['text_to_video','first_frame'].includes(mode)) throw new Error('PixVerse V6 Max 仅支持文生视频或单图首帧生成。');
+    const limit = imageCount ? 2048 : 5000;
+    if (prompts.some(prompt => Array.from(prompt).length > limit)) throw new Error(`PixVerse V6 Max 的提示词最多支持 ${limit} 个字符。`);
+  }
   const viduMode = canonicalApimartVideoModel(body.video_model) === 'viduq4-preview' ? validateViduQ4Input({
     mode: multiFirstFrame ? 'first_frame' : normalizeVideoMode(body.video_mode),
     imageCount: multiFirstFrame ? 1 : refImages.length,
@@ -9971,7 +10007,7 @@ function createWindow() {
   const cfg = readConfig();
   mainWindow = new BrowserWindow({
     width: 1480, height: 960, minWidth: 1180, minHeight: 760, show:!process.argv.includes('--background'), frame:false,
-    transparent:!nativeBackdropSupported,backgroundColor:'#00000000',thickFrame:nativeBackdropSupported,hasShadow:false,
+    transparent:!!experimentalNativeGlass || !nativeBackdropSupported,backgroundColor:'#00000000',thickFrame:nativeBackdropSupported && !experimentalNativeGlass,hasShadow:false,
     title: (cfg.app_name || APP_DISPLAY_NAME),
     icon: path.join(__dirname, '..', 'assets', 'rocket.ico'),
     webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: false, webSecurity: true, allowRunningInsecureContent: false, preload: path.join(__dirname, 'preload.js') }

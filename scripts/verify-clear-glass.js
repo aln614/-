@@ -41,6 +41,7 @@ async function optics(page,selector) {
     const page=await app.firstWindow(),errors=[];
     page.on('pageerror',error=>errors.push(error.message));page.setDefaultTimeout(15000);
     await page.waitForURL('http://127.0.0.1:18793/**',{timeout:30000});await ready(page);
+    await page.evaluate(()=>window.localAppearance.setTheme('light'));
     await app.evaluate(({desktopCapturer})=>{
       global.__clearDesktopCaptures=0;
       const original=desktopCapturer.getSources.bind(desktopCapturer);
@@ -53,6 +54,8 @@ async function optics(page,selector) {
     await change(page,'liquidEnabled',false);
     await page.locator('#themePopover [data-background-mode="none"]').click();
     await page.waitForFunction(()=>window.localAppearance.get().mode==='none' && window.liquidGlassSettings.get().enabled);
+    assert.match(await page.locator('#liquidBlur').locator('..').textContent(),/侧栏及内部玻璃模糊/);
+    assert.match(await page.locator('#page-settings [data-native-blur-note]').textContent(),/无法调节外壳模糊强度/);
     assert.equal(await page.evaluate(()=>window.liquidGlassSettings.get().displacementScale),95,'Selecting none preserves optical parameters');
     assert.equal(await page.evaluate(()=>window.liquidGlassSettings.get().surfaceOpacity),.31);
     for(const selector of ['#page-home .card','.right-panel','#themePopover']) {

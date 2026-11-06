@@ -4,9 +4,9 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>TENYING_AI 1.0</title>
-  <link rel="stylesheet" href="/static/style.css?v=1.0.132" />
+  <link rel="stylesheet" href="/static/style.css?v=1.0.134" />
   <link rel="stylesheet" href="/static/sidebar.css?v=1.0.128" />
-  <link rel="stylesheet" href="/static/clear-glass.css?v=1.0.130" />
+  <link rel="stylesheet" href="/static/clear-glass.css?v=1.0.134-hover1" />
   <link rel="stylesheet" href="/static/recent-media.css?v=1.0.130" />
   <link rel="stylesheet" href="/static/form-controls.css?v=1.0.132" />
 </head>
@@ -77,9 +77,10 @@
       <span class="appearance-filename" data-background-filename>未选择文件</span>
       <small class="appearance-format">图片 / GIF / MP4 · 仅此设备</small>
       <label class="appearance-blur-label">自定义背景模糊 <output data-background-blur-value>0 px</output><input data-background-blur type="range" min="0" max="40" step="1" value="0" /></label>
-      <label class="appearance-blur-label">玻璃层模糊 <output></output><input data-liquid-quick="blurAmount" type="range" min="0" max="1" step="0.0025" /></label>
+      <label class="appearance-blur-label" data-shell-blur-control hidden>窗口外壳模糊 <output data-shell-blur-value>12 px</output><input data-shell-blur type="range" min="0" max="40" step="1" value="12" /></label>
+      <label class="appearance-blur-label">侧栏及内部玻璃模糊 <output></output><input data-liquid-quick="blurAmount" type="range" min="0" max="1" step="0.0025" /></label>
       <label class="appearance-blur-label">玻璃折射强度 <output></output><input data-liquid-quick="displacementScale" type="range" min="0" max="150" step="1" /></label>
-      <small class="appearance-format" data-native-blur-note hidden>桌面模糊强度由 Windows 系统控制</small>
+      <small class="appearance-format" data-native-blur-note hidden>窗口外壳使用系统材质，当前版本无法调节外壳模糊强度。</small>
       <div class="appearance-status" data-appearance-status role="status" aria-live="polite"></div>
     </div>
     <input id="appearanceBackgroundFile" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/avif,image/bmp,video/mp4,.mp4,.gif" hidden />
@@ -649,13 +650,15 @@
             <h2>液态玻璃</h2>
             <label class="switch-line"><input id="liquidEnabled" type="checkbox" checked /> 启用液态玻璃</label>
             <div class="liquid-settings-grid">
+              <label data-shell-blur-control hidden>窗口外壳模糊 <output data-shell-blur-value>12 px</output><input data-shell-blur type="range" min="0" max="40" step="1" value="12" /></label>
               <label>折射强度 <output id="liquidDisplacementValue"></output><input id="liquidDisplacement" type="range" min="0" max="150" step="1" /></label>
-              <label>模糊程度 <output id="liquidBlurValue"></output><input id="liquidBlur" type="range" min="0" max="1" step="0.0025" /></label>
+              <label>侧栏及内部玻璃模糊 <output id="liquidBlurValue"></output><input id="liquidBlur" type="range" min="0" max="1" step="0.0025" /></label>
               <label>饱和度 <output id="liquidSaturationValue"></output><input id="liquidSaturation" type="range" min="50" max="250" step="1" /></label>
               <label>色散强度 <output id="liquidAberrationValue"></output><input id="liquidAberration" type="range" min="0" max="10" step="0.1" /></label>
               <label>材质不透明度 <output id="liquidOpacityValue"></output><input id="liquidOpacity" type="range" min="0.15" max="0.9" step="0.01" /></label>
               <label>弹性拉伸 <output id="liquidElasticityValue"></output><input id="liquidElasticity" type="range" min="0" max="0.5" step="0.01" /></label>
             </div>
+            <div class="field-help" data-native-blur-note hidden>窗口外壳使用系统材质，当前版本无法调节外壳模糊强度。</div>
             <button class="secondary" id="liquidReset" type="button">恢复默认</button>
             <button class="primary" id="liquidSave" type="button">保存玻璃设置</button>
             <span id="liquidSaveStatus" role="status"></span>
@@ -1068,9 +1071,9 @@
   <script src="/static/agent-stream.js?v=1.0.107"></script>
   <script src="/static/prompt-mention-core.js?v=1.0.109"></script>
   <script src="/static/prompt-mentions.js?v=1.0.109"></script>
-  <script src="/static/local-appearance.js?v=1.0.131"></script>
-  <script src="/static/liquid-glass-bundle.js?v=1.0.131"></script>
-  <script src="/static/app.js?v=1.0.132"></script>
+  <script src="/static/local-appearance.js?v=1.0.133"></script>
+  <script src="/static/liquid-glass-bundle.js?v=1.0.134-hover1"></script>
+  <script src="/static/app.js?v=1.0.134-hover1"></script>
   <script src="/static/library-backdrop-motion.js?v=1.0.127"></script>
   <script src="/static/main-window-drag.js?v=1.0.127"></script>
 </body>

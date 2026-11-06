@@ -354,7 +354,7 @@ async function jsonRequestWithFallback(url, apiKey, payload = null, method = 'GE
 }
 const APIMART_IMAGE_MODELS = [
   'gemini-nano-banana-2.1','gemini-nano-banana-2.1-ext',
-  'flux-3-image','mai-image-2.6','mai-image-2.6-flash',
+  'flux-3-image','flux-3-image-klein','mai-image-2.6','mai-image-2.6-flash',
   'gemini-3.1-flash-image-preview','gemini-3.1-flash-image-preview-official',
   'gemini-3.1-flash-lite-image','gemini-3.1-flash-lite-image-ext',
   'nano-banana-2-ext','nano-banana-2','nano-banana-2-lite','nano-banana-2-lite-ext',
@@ -404,6 +404,12 @@ const FLUX3_IMAGE_RULE = {
   resolutions: ['768sq','1k','1.5k','2k','4k'], defaultResolution: '1k',
   allowSafetyTolerance: true, safetyToleranceMin: 0, safetyToleranceMax: 4,
   booleanParams: ['grounding']
+};
+const FLUX3_IMAGE_KLEIN_RULE = {
+  ...FLUX3_IMAGE_RULE, booleanParams: [],
+  outputFormats: ['jpeg','png'], defaultOutputFormat: 'jpeg', allowOutputFormat: true,
+  allowOutputCompression: false, allowSeed: true, allowSteps: true,
+  stepsMin: 1, stepsMax: 16, defaultSteps: 16
 };
 const MAI_IMAGE_26_RULE = {
   endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 5,
@@ -580,6 +586,7 @@ const APIMART_MODEL_RULES = {
   'gemini-nano-banana-2.1': NANO_BANANA_21_RULE,
   'gemini-nano-banana-2.1-ext': NANO_BANANA_21_EXT_RULE,
   'flux-3-image': FLUX3_IMAGE_RULE,
+  'flux-3-image-klein': FLUX3_IMAGE_KLEIN_RULE,
   'mai-image-2.6': MAI_IMAGE_26_RULE,
   'mai-image-2.6-flash': MAI_IMAGE_26_RULE,
   'gemini-3.1-flash-image-preview': GEMINI_31_RULE,
