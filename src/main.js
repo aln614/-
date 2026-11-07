@@ -8,7 +8,7 @@ const crypto = require('crypto');
 const zlib = require('zlib');
 const { Transform } = require('stream');
 const { pipeline } = require('stream/promises');
-const { app, BrowserWindow, Tray, shell, Menu, clipboard, nativeImage, ipcMain, globalShortcut, nativeTheme, screen } = require('electron');
+const { app, BrowserWindow, Tray, shell, Menu, clipboard, ClipboardItem, nativeImage, ipcMain, globalShortcut, nativeTheme, screen } = require('electron');
 const { spawn } = require('child_process');
 const { initDB, getDB, addLog, listBatches, listImages, listLogs, nowISO, uuid, setNetworkTimeOffset, getNetworkTimeInfo } = require('./services/db');
 const { TaskQueue } = require('./services/taskQueue');
@@ -9828,6 +9828,11 @@ function mediaCacheStatus(req, parsed) {
   return { ok:true, ready:false, url:`/file?path=${encodeURIComponent(file)}` };
 }
 function setupImageContextMenu(win) {
+  const notify = message => {
+    if (!win.isDestroyed()) {
+      win.webContents.executeJavaScript('window.__copyImageToast && window.__copyImageToast(' + JSON.stringify(message) + ')').catch(()=>{});
+    }
+  };
   win.webContents.on('context-menu', (event, params) => {
     if (!params.srcURL) return;
     const imgSrc = params.srcURL;
@@ -9842,32 +9847,35 @@ function setupImageContextMenu(win) {
           else if (localPath) img = nativeImage.createFromPath(localPath);
           else if (/^https?:\/\//i.test(info.remoteUrl || imgSrc)) {
             const r = await fetch(info.remoteUrl || imgSrc);
+            if (!r.ok) throw new Error('图片读取失败：' + r.status);
             const b = Buffer.from(await r.arrayBuffer());
             img = nativeImage.createFromBuffer(b);
           }
           if (!img || img.isEmpty()) throw new Error('图片读取失败');
-          clipboard.writeImage(img);
-          if (win && !win.isDestroyed()) win.webContents.executeJavaScript("window.__copyImageToast && window.__copyImageToast('原图已复制到剪贴板')").catch(()=>{});
+          await clipboard.write([new ClipboardItem({
+            'image/png': new Blob([img.toPNG()], { type:'image/png' })
+          })]);
+          notify('原图已复制到剪贴板');
         } catch (e) {
-          if (win && !win.isDestroyed()) win.webContents.executeJavaScript("window.__copyImageToast && window.__copyImageToast('复制失败：" + String(e.message || e).replace(/'/g, "\'") + "')").catch(()=>{});
+          notify('复制失败：' + String(e.message || e));
         }
       }
     }, {
       label: '复制图片链接（返回 url）',
-      click: () => {
+      click: async () => {
         try {
           const link = info.remoteUrl || imgSrc;
-          clipboard.writeText(link);
-          if (win && !win.isDestroyed()) win.webContents.executeJavaScript("window.__copyImageToast && window.__copyImageToast('图片链接已复制')").catch(()=>{});
-        } catch {}
+          await clipboard.writeText(link);
+          notify('图片链接已复制');
+        } catch (e) { notify('复制失败：' + String(e.message || e)); }
       }
     }, {
       label: '复制提示词',
-      click: () => {
+      click: async () => {
         try {
-          clipboard.writeText(info.prompt || '');
-          if (win && !win.isDestroyed()) win.webContents.executeJavaScript("window.__copyImageToast && window.__copyImageToast('提示词已复制')").catch(()=>{});
-        } catch {}
+          await clipboard.writeText(info.prompt || '');
+          notify('提示词已复制');
+        } catch (e) { notify('复制失败：' + String(e.message || e)); }
       }
     }, { type:'separator' }, { label:'在新窗口打开原图', click:()=>{ try { shell.openExternal(info.remoteUrl || imgSrc); } catch {} } }];
     Menu.buildFromTemplate(template).popup({ window: win });
