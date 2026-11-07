@@ -34,6 +34,13 @@ body[data-background-mode="none"].liquid-glass-enabled :is(.main,.right-panel.gl
   border-radius:24px!important;background:transparent!important;background-image:none!important;
   backdrop-filter:none!important;-webkit-backdrop-filter:none!important;
 }
+/* Paint docked glass before the workspace so its card edges are not sampled. */
+body:not(.mobile-ui)[data-background-mode="none"].liquid-glass-enabled .app-shell > .main {
+  position:relative;z-index:1;
+}
+body:not(.mobile-ui)[data-background-mode="none"].liquid-glass-enabled #sidebar:not(:hover,:has(.nav:focus-visible)) {
+  z-index:0;
+}
 body[data-background-mode="none"].liquid-glass-enabled :is(.main .card,.right-panel,.topbar,#sidebar,.asset-library-window,.prompt-library-window)>.liquid-backdrop {
   background:linear-gradient(145deg,rgba(255,255,255,.12),rgba(255,255,255,.015)),var(--clear-surface)!important;
 }

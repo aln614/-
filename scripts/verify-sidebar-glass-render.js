@@ -57,6 +57,56 @@ const server=http.createServer((req,res)=>{
       return {host:{x:host.x,y:host.y,width:host.width,height:host.height},back:{x:back.x,y:back.y,width:back.width,height:back.height},nav:{bottom:nav.bottom},bottom:{top:bottom.top},filter:getComputedStyle(el.querySelector('.liquid-backdrop')).backdropFilter};
     });
     assert.ok(Math.abs(props.host.width-props.back.width)<3,'Lens follows expanded sidebar width');
+    const layers=()=>page.evaluate(()=>Object.fromEntries(['#sidebar','.main','.right-panel'].map(selector=>{
+      const zIndex=getComputedStyle(document.querySelector(selector)).zIndex;
+      return [selector,zIndex==='auto' ? 0 : Number(zIndex)];
+    })));
+    let order=await layers();
+    assert.ok(order['#sidebar']>order['.main'],'Expanded navigation stays above the workspace');
+    await page.locator('#sidebar .nav[data-page="home"]').click();
+    await page.mouse.move(700,60);
+    await page.evaluate(()=>{
+      document.querySelector('#localAppearanceBackground').style.setProperty('background','#777','important');
+    });
+    for (const size of [{width:1480,height:960},{width:1180,height:760}]) {
+      await page.setViewportSize(size);
+      await page.waitForTimeout(400);
+      await page.waitForFunction(()=>{
+        if(document.documentElement.classList.contains('liquid-in-motion')) return false;
+        return ['#sidebar','.right-panel'].every(selector=>{
+          const lens=document.querySelector(selector+' > .liquid-backdrop');
+          return lens && getComputedStyle(lens).backdropFilter.includes('url(');
+        });
+      });
+      order=await layers();
+      assert.ok(order['.main']>order['#sidebar'] && order['.main']>order['.right-panel'],'Docked lenses paint before the workspace');
+      const shot=PNG.sync.read(await page.screenshot({path:path.join(outputs,`glass-panels-${size.width}.png`)}));
+      const emptyBands=await page.evaluate(()=>{
+        const nav=document.querySelector('#sidebar'),panel=document.querySelector('.right-panel');
+        return [
+          {box:nav.getBoundingClientRect().toJSON(),
+            top:nav.querySelector('.nav-stack .nav:last-child').getBoundingClientRect().bottom,
+            bottom:nav.querySelector('.nav-bottom').getBoundingClientRect().top},
+          {box:panel.getBoundingClientRect().toJSON(),
+            top:panel.lastElementChild.getBoundingClientRect().bottom,
+            bottom:panel.getBoundingClientRect().bottom-32}
+        ];
+      });
+      for (const {box,top,bottom} of emptyBands) {
+        const start=Math.ceil(box.x+box.width*.25),end=Math.floor(box.x+box.width*.75);
+        const rowLuminance=y=>{
+          let sum=0;
+          for (let x=start;x<end;x++) {
+            const i=(y*shot.width+x)*4;
+            sum+=shot.data[i]*.2126+shot.data[i+1]*.7152+shot.data[i+2]*.0722;
+          }
+          return sum/(end-start);
+        };
+        for (let y=Math.ceil(top)+12;y<Math.floor(bottom)-12;y++) {
+          assert.ok(Math.abs(rowLuminance(y)-rowLuminance(y-1))<6,`Unexpected horizontal glass seam at row ${y}`);
+        }
+      }
+    }
     console.log(JSON.stringify({changed,props}));
   } finally {if(browser)await browser.close();await new Promise(resolve=>server.close(resolve));}
 })().catch(error=>{console.error(error);process.exitCode=1;});
