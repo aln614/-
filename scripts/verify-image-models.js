@@ -151,3 +151,4 @@ function main() {
 main();
 require('./verify-apimart-model-contracts');
 require('./verify-october-models');
+require('./verify-november-models');

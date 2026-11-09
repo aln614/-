@@ -3052,6 +3052,13 @@ registerApimartVideoRules([
   { model:'pixverse-v6-max', label:'PixVerse V6 Max', resolutions:['360p','540p','720p','1080p'], defaultResolution:'540p', aspectRatios:['16:9','4:3','1:1','3:4','9:16','2:3','3:2','21:9'], durationRange:[1,15], defaultDuration:5, supportsImageUrls:true, maxImageCount:1, omitAspectWithImages:true, audioParam:'audio', defaultAudio:false, promptMaxLength:5000, imagePromptMaxLength:2048, allowedModes:['text_to_video','first_frame'] },
   { model:'Omni-Flash-Ext', apiModel:'gemini-omni-1.1-flash-ext', label:'Gemini Omni 1.1 Flash Ext', resolutions:['360p','720p','1080p','4k'], defaultResolution:'720p', aspectRatios:['16:9','9:16'], defaultAspectRatio:'16:9', durations:[4,6,8,10], defaultDuration:6, supportsImageUrls:true, supportsVideoUrls:true, videoParam:'video_urls', allowedImageCounts:[0,1,3], generationTypeParam:'generation_type', supportsReferenceGeneration:true, supportsSeed:false, durationWithVideo:false }
 ]);
+registerApimartVideoRules([
+  { model:'kling-v4', label:'Kling V4', resolutions:['720p','1080p'], aspectRatios:['16:9','9:16','1:1','21:9'], durationRange:[3,30], defaultDuration:5, supportsImageUrls:true, supportsImageWithRoles:true, supportsLastFrame:true, maxImageCount:10, supportsVideoUrls:true, videoParam:'video_urls', maxVideoCount:1, referenceVideoDurationRange:[3,30], omniTaskTypeParam:'omni_reference_task_type', omitAspectWithImageModes:['first_frame','first_last_frame'], omitAspectWithVideo:true, durationWithVideo:false, supportsSeed:false, promptOptionalModes:['first_frame','first_last_frame'] },
+  { model:'kling-v4-flash', label:'Kling V4 Flash', resolutions:['720p'], aspectRatios:['16:9','9:16','1:1','21:9'], durationRange:[3,20], defaultDuration:5, supportsImageUrls:true, supportsImageWithRoles:true, maxImageCount:10, supportsVideoUrls:true, videoParam:'video_urls', maxVideoCount:1, referenceVideoDurationRange:[3,20], omniTaskTypeParam:'omni_reference_task_type', omitAspectWithImageModes:['first_frame'], omitAspectWithVideo:true, durationWithVideo:false, supportsSeed:false, promptOptionalModes:['first_frame'], allowedModes:['text_to_video','first_frame','multi_reference','video_edit'] },
+  { model:'gemini-omni-1.2-flash', label:'Gemini Omni 1.2 Flash', resolutions:['360p','720p','1080p','4k'], defaultResolution:'720p', aspectRatios:['16:9','9:16'], durationRange:[3,15], defaultDuration:10, firstLastDurations:[3,4,5,6,7,8,9,10], supportsImageUrls:true, supportsImageWithRoles:true, supportsLastFrame:true, maxImageCount:10, supportsVideoUrls:true, videoParam:'video_urls', maxVideoCount:1, referenceVideoDurationRange:[1,15], omniTaskTypeParam:'omni_reference_task_type', omitAspectWithVideo:true, durationWithVideo:false, supportsSeed:false },
+  { model:'gemini-omni-1.2-flash-ext', label:'Gemini Omni 1.2 Flash Ext', resolutions:['360p','720p','1080p','4k'], defaultResolution:'720p', aspectRatios:['16:9','9:16'], durationRange:[3,15], defaultDuration:10, firstLastDurations:[3,4,5,6,7,8,9,10], supportsImageUrls:true, imageParam:'first_frame_image', supportsLastFrame:true, maxImageCount:10, supportsVideoUrls:true, videoParam:'video_urls', maxVideoCount:1, referenceVideoDurationRange:[1,15], videoDisallowsImages:true, omniTaskTypeParam:'omni_reference_task_type', omitAspectWithVideo:true, durationWithVideo:false, supportsSeed:false },
+  { model:'muse-video-ext', label:'Muse Video Ext', resolutions:['720p'], aspectRatios:['auto','1:1','16:9','9:16','4:3','3:4','3:2','2:3'], defaultAspectRatio:'auto', omitAutoAspect:true, durations:[10], defaultDuration:10, supportsImageUrls:true, maxImageCount:9, maxTotalImageBytes:11*1024*1024, referenceOnlyImages:true, supportsSeed:false, audioParam:'audio', defaultAudio:true, forceAudio:true }
+]);
 const APIMART_VIDEO_MODEL_ALIASES = Object.freeze({
   'seedance-1-0-pro-fast': 'doubao-seedance-1-0-pro-fast',
   'seedance-1-0-pro-quality': 'doubao-seedance-1-0-pro-quality',
@@ -3072,6 +3079,15 @@ function canonicalApimartVideoModel(model = 'Omni-Flash-Ext') {
   const raw = String(model || 'Omni-Flash-Ext').trim();
   if (!raw || raw.toLowerCase() === 'omni-flash-ext') return 'Omni-Flash-Ext';
   return APIMART_VIDEO_MODEL_ALIASES[raw.toLowerCase()] || raw;
+}
+function assertApimartVideoImageBytes(images, rule) {
+  if (!rule.maxTotalImageBytes) return;
+  const bytes = images.reduce((total, item) => {
+    if (typeof item === 'string') return total + fs.statSync(resolveMigratedUpload(item)).size;
+    const data = String(item?.data || '').split(',')[1] || '';
+    return total + Buffer.byteLength(data, 'base64');
+  }, 0);
+  if (bytes > rule.maxTotalImageBytes) throw new Error(`${rule.label} 参考图总大小不能超过 ${rule.maxTotalImageBytes / 1024 / 1024}MB。`);
 }
 function getApimartVideoRule(model = 'Omni-Flash-Ext') {
   const canonical = canonicalApimartVideoModel(model);
@@ -4432,6 +4448,7 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
   getDB()._save();
   try {
     row.status = '提交中'; row.progress = 2; row.progress_text = '正在提交到 APIMart'; row.updated_at = nowISO(); getDB()._save();
+    if (rule.maxTotalImageBytes) assertApimartVideoImageBytes(refImages, rule);
     if (videoModel === 'pixverse-v6-max') {
       if (initialImageCount > 1) throw new Error('PixVerse V6 Max 最多支持 1 张参考图。');
       if (!rule.allowedModes.includes(requestedMode)) throw new Error('PixVerse V6 Max 仅支持文生视频或单图首帧生成。');
@@ -4488,6 +4505,16 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
       throw new Error(`${rule.label || videoModel} 参考图最多支持 ${rule.maxImageCount} 张，当前为 ${imageUrls.length} 张。`);
     }
     let mode = viduMode || resolveApimartVideoMode(body.video_mode, { imageCount: imageUrls.length, hasVideo: videoUrls.length > 0, hasAudio: audioUrls.length > 0 });
+    if (rule.omniTaskTypeParam && normalizeVideoMode(body.video_mode) === 'auto' && mode === 'first_last_frame' && !rule.supportsLastFrame) mode = 'multi_reference';
+    if (rule.referenceOnlyImages && imageUrls.length) {
+      if (normalizeVideoMode(body.video_mode) !== 'auto' && mode !== 'multi_reference') throw new Error(`${rule.label} 仅支持参考图生成，不支持首帧或首尾帧控制。`);
+      mode = 'multi_reference';
+    }
+    if (rule.omniTaskTypeParam && ['first_frame','first_last_frame'].includes(mode)) {
+      const expected = mode === 'first_last_frame' ? 2 : 1;
+      if (imageUrls.length !== expected) throw new Error(`${rule.label} 的当前帧模式需要恰好 ${expected} 张图片。`);
+      if (videoUrls.length) throw new Error(`${rule.label} 不能混用首尾帧控制和视频编辑。`);
+    }
     if (rule.allowedModes && !rule.allowedModes.includes(mode)) throw new Error(`${rule.label || videoModel} 仅支持文生视频或单图首帧生成。`);
     const hasReferenceFamilyInputs = Boolean(videoUrls.length || audioUrls.length || documentFileUrl || linkUrl);
     if (rule.referenceFamilyInputsForceReferenceImages && hasReferenceFamilyInputs && imageUrls.length && ['first_frame', 'first_last_frame'].includes(mode)) {
@@ -4595,7 +4622,7 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
     } else if (rule.resolutionParam !== false && !(videoUrls.length && rule.omitResolutionWithVideo)) {
       payload[rule.resolutionParam || 'resolution'] = normalizedResolution;
     }
-    const omitAspect = (imageUrls.length && (rule.omitAspectWithImages || (Array.isArray(rule.omitAspectWithImageModes) && rule.omitAspectWithImageModes.includes(mode)))) || (videoUrls.length && rule.omitAspectWithVideo);
+    const omitAspect = (rule.omitAutoAspect && normalizedAspectRatio === 'auto') || (imageUrls.length && (rule.omitAspectWithImages || (Array.isArray(rule.omitAspectWithImageModes) && rule.omitAspectWithImageModes.includes(mode)))) || (videoUrls.length && rule.omitAspectWithVideo);
     if (!omitAspect && rule.aspectParam !== false) payload[rule.aspectParam || 'aspect_ratio'] = normalizedAspectRatio;
     if (imageUrls.length) {
       if (videoModel === 'viduq4-preview') {
@@ -4632,6 +4659,9 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
       } else if (rule.imageParam === 'first_frame_image') {
         payload.first_frame_image = imageUrls[0];
       }
+    }
+    if (rule.omniTaskTypeParam && (videoUrls.length || mode === 'multi_reference')) {
+      payload[rule.omniTaskTypeParam] = videoUrls.length ? 'edit' : 'reference';
     }
     if (rule.generationTypeParam && imageUrls.length) {
       const generationType = (videoUrls.length || mode === 'multi_reference' || (rule.referenceFamilyInputsForceReferenceImages && hasReferenceFamilyInputs)) ? 'reference' : 'frame';
@@ -4858,6 +4888,10 @@ async function createApimartVideoBatch(body, ownerId, req, cfg) {
   const documentUrl = multiFirstFrame ? '' : String(body.file_url || '').trim();
   const linkUrl = multiFirstFrame ? '' : String(body.link_url || '').trim();
   if (multiFirstFrame && !refImages.length) throw new Error('多首帧模式至少需要在“上传参考图”区域添加 1 张图片。');
+  const inputRule = getApimartVideoRule(canonicalApimartVideoModel(body.video_model));
+  if (inputRule.referenceOnlyImages && multiFirstFrame) throw new Error(`${inputRule.label} 不支持多首帧生成。`);
+  if (inputRule.maxTotalImageBytes) assertApimartVideoImageBytes(refImages, inputRule);
+  if (!multiFirstFrame && inputRule.maxImageCount > 0 && refImages.length > inputRule.maxImageCount) throw new Error(`${inputRule.label} 参考图最多支持 ${inputRule.maxImageCount} 张。`);
   if (canonicalApimartVideoModel(body.video_model) === 'pixverse-v6-max') {
     const imageCount = multiFirstFrame ? 1 : refImages.length;
     const mode = multiFirstFrame ? 'first_frame' : resolveApimartVideoMode(body.video_mode, {
@@ -4912,7 +4946,7 @@ async function createApimartVideoBatch(body, ownerId, req, cfg) {
   const multiVideoReference = body.multi_video_reference === true && sourceVideos.length > 1;
   const videoRule = getApimartVideoRule(canonicalApimartVideoModel(body.video_model || 'omni-flash-ext'));
   if (multiFirstFrame) {
-    const acceptsSingleImage = !videoRule.requiredVideo
+    const acceptsSingleImage = !videoRule.requiredVideo && !videoRule.referenceOnlyImages
       && (videoRule.supportsImageUrls || videoRule.supportsImageWithRoles || !!videoRule.imageParam)
       && Number(videoRule.maxImageCount || 1) >= 1
       && (!Array.isArray(videoRule.allowedImageCounts) || videoRule.allowedImageCounts.includes(1))
@@ -4950,7 +4984,9 @@ async function createApimartVideoBatch(body, ownerId, req, cfg) {
     const hasReferenceMedia = refImageUrls.length > 0 || localAudioPaths.length > 0
       || sourceVideos.some(item => item.local_video_path || item.video_url)
       || Boolean(documentFile || documentUrl || linkUrl);
-    if (!draftSettings.taskId && viduMode !== 'first_frame' && (!videoRule.promptOptionalWithMedia || !hasReferenceMedia)) throw new Error('请输入视频提示词');
+    const mode = multiFirstFrame ? 'first_frame' : resolveApimartVideoMode(body.video_mode, { imageCount:refImageUrls.length, hasVideo:!!(videoFiles.length || videoUrlInput), hasAudio:!!localAudioPaths.length });
+    const promptOptionalForMode = videoRule.promptOptionalModes?.includes(mode) && refImageUrls.length > 0;
+    if (!draftSettings.taskId && !promptOptionalForMode && viduMode !== 'first_frame' && (!videoRule.promptOptionalWithMedia || !hasReferenceMedia)) throw new Error('请输入视频提示词');
     prompts = [''];
   }
 

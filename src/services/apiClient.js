@@ -365,6 +365,8 @@ const APIMART_IMAGE_MODELS = [
   'gpt-image-1-official','gpt-image-1.5-official','gpt-image-2','gpt-image-2-official',
   'gpt-image-2.5-flare','gpt-image-2.5-sunburst',
   'gpt-image-2.5-ext','gpt-image-2.5-ext-sunburst',
+  'gpt-image-2.6-flare','gpt-image-2.6-sunburst','gpt-image-2.6-ext','gpt-image-2.6-ext-sunburst',
+  'hy-image-v3.5-preview','muse-image-ext',
   'seedream-4.0','seedream-4-0','seedream-4.5','seedream-5-0-lite','seedream-5.0-lite','seedream-5-0-pro','seedream-5.0-pro','seedream-5-0-flash',
   'doubao-seedance-4-0','doubao-seedream-4.0','doubao-seedream-4-0',
   'doubao-seedream-5-0-lite','doubao-seedream-5.0-lite',
@@ -546,6 +548,28 @@ const QWEN_IMAGE_3_RULE = {
   allowPromptExtend: true, promptExtendModes: ['direct','agent'], defaultPromptExtendMode: 'direct',
   agentPromptExtendTextOnly: true
 };
+const GPT_IMAGE_26_EXT_RULE = {
+  ...GPT_IMAGE_25_EXT_RULE, apiModel:'gpt-image-2.6-ext', nMax:1,
+  maxImageBytes:20 * 1024 * 1024, strictReferenceLimit:true,
+  allowQuality:true, qualities:GPT_IMAGE_25_RULE.qualities,
+  allowOutputFormat:true, outputFormats:['png','jpeg','webp'], defaultOutputFormat:'png',
+  allowOutputCompression:false
+};
+const HY_IMAGE_35_RULE = {
+  endpoint:'/v1/images/generations', taskQuery:'batch', maxImageUrls:5,
+  strictReferenceLimit:true, nMin:1, nMax:1, defaultN:1,
+  sizes:['auto','1:1','2:3','3:2','3:4','4:3','4:5','5:4','9:16','16:9','21:9'],
+  defaultSize:'auto', resolutions:['1K','2K','4K'], defaultResolution:'1K',
+  customSizeMin:256, customSizeMax:8192, customPixelMax:8294400,
+  allowNegativePrompt:true, allowSeed:true, seedMin:0
+};
+const MUSE_IMAGE_RULE = {
+  endpoint:'/v1/images/generations', taskQuery:'batch', maxImageUrls:9,
+  strictReferenceLimit:true, maxTotalImageBytes:11 * 1024 * 1024,
+  nMin:1, nMax:1, defaultN:1, noResolution:true, noCustomSize:true,
+  sizes:['auto','1:1','16:9','9:16','4:3','3:4','3:2','2:3'],
+  defaultSize:'auto', sizeParam:'aspect_ratio', omitAutoSize:true
+};
 const QWEN_IMAGE_2_RULE = {
   endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 16,
   nMin: 1, nMax: 6, defaultN: 1,
@@ -622,6 +646,12 @@ const APIMART_MODEL_RULES = {
   'gpt-image-2.5-sunburst': GPT_IMAGE_25_RULE,
   'gpt-image-2.5-ext': GPT_IMAGE_25_EXT_RULE,
   'gpt-image-2.5-ext-sunburst': { ...GPT_IMAGE_25_EXT_RULE, fixedVersion: 'sunburst' },
+  'gpt-image-2.6-flare': { ...GPT_IMAGE_25_RULE, strictReferenceLimit:true },
+  'gpt-image-2.6-sunburst': { ...GPT_IMAGE_25_RULE, strictReferenceLimit:true },
+  'gpt-image-2.6-ext': GPT_IMAGE_26_EXT_RULE,
+  'gpt-image-2.6-ext-sunburst': { ...GPT_IMAGE_26_EXT_RULE, fixedVersion:'sunburst' },
+  'hy-image-v3.5-preview': HY_IMAGE_35_RULE,
+  'muse-image-ext': MUSE_IMAGE_RULE,
   'gpt-image-1-official': { endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 15, nMin: 1, nMax: 4, defaultN: 1, resolutions: ['1k','2k','4k'], defaultResolution: '1k', qualities: ['auto','low','medium','high'], backgrounds: ['auto','opaque','transparent'], moderations: ['auto','low'], outputFormats: ['png','jpeg','webp'], allowQuality: true, allowMask: true, allowOutputFormat: true, allowBackground: true, allowModeration: true },
   'gpt-image-1.5-official': { endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 15, nMin: 1, nMax: 4, defaultN: 1, resolutions: ['1k','2k','4k'], defaultResolution: '1k', qualities: ['auto','low','medium','high'], backgrounds: ['auto','opaque','transparent'], moderations: ['auto','low'], outputFormats: ['png','jpeg','webp'], allowQuality: true, allowMask: true, allowOutputFormat: true, allowBackground: true, allowModeration: true },
   'imagen-4.0-apimart': IMAGEN_4_RULE,
@@ -725,6 +755,7 @@ function sanitizeApimartImagePayload(rawPayload = {}, model = '') {
     }
     if (rule.autoRequiresImage && rawSize === 'auto' && !hasRefs) rawSize = rule.defaultSize || '1:1';
     payload[rule.sizeParam || 'size'] = rawSize || rule.defaultSize || 'auto';
+    if (rule.omitAutoSize && rawSize === 'auto') delete payload[rule.sizeParam || 'size'];
   }
   if (!rule.noResolution && !(hasRefs && rule.dimensionsTextOnly)) payload.resolution = normalizeRuleResolution(rawPayload.resolution, rule);
   if (hasRefs && rule.imageResolutions && !rule.imageResolutions.includes(payload.resolution)) {
@@ -793,7 +824,7 @@ function sanitizeApimartImagePayload(rawPayload = {}, model = '') {
     if (typeof rawPayload[key] === 'boolean') payload[key] = rawPayload[key];
   }
   const seed = Number(rawPayload.seed);
-  if (rule.allowSeed && Number.isInteger(seed)) payload.seed = seed;
+  if (rule.allowSeed && Number.isInteger(seed) && (rule.seedMin === undefined || seed >= rule.seedMin)) payload.seed = seed;
   if (rule.allowPromptUpsampling && rawPayload.prompt_upsampling !== undefined) {
     payload.prompt_upsampling = rawPayload.prompt_upsampling === true || String(rawPayload.prompt_upsampling).toLowerCase() === 'true';
   }
@@ -1328,8 +1359,8 @@ async function generateOne({ cfg, prompt, mainImagePath, refImages = [], outputP
     if (rule.strictReferenceLimit && allImagePaths.length > maxImages) throw new Error(`${model} 最多支持 ${maxImages} 张参考图，请减少图片数量。`);
     if (rule.maxImageBytes || rule.maxTotalImageBytes) {
       const sizes = await Promise.all(allImagePaths.map(file => fs.promises.stat(file).then(stat => stat.size)));
-      if (sizes.some(size => size > rule.maxImageBytes)) throw new Error(`${model} 单张参考图不能超过 20MB。`);
-      if (rule.maxTotalImageBytes && sizes.reduce((sum, size) => sum + size, 0) > rule.maxTotalImageBytes) throw new Error(`${model} 参考图总大小不能超过 50MB。`);
+      if (rule.maxImageBytes && sizes.some(size => size > rule.maxImageBytes)) throw new Error(`${model} 单张参考图不能超过 ${rule.maxImageBytes / 1024 / 1024}MB。`);
+      if (rule.maxTotalImageBytes && sizes.reduce((sum, size) => sum + size, 0) > rule.maxTotalImageBytes) throw new Error(`${model} 参考图总大小不能超过 ${rule.maxTotalImageBytes / 1024 / 1024}MB。`);
     }
     if (maxImages <= 0) throw new Error(`${model} 当前输出数量已占满参考图名额，请减少 n 后再上传参考图`);
     for (const [index, p] of allImagePaths.slice(0, maxImages).entries()) {
@@ -1582,6 +1613,7 @@ async function generateFlow2ApiImage({ cfg, prompt, mainImagePath, refImages = [
 }
 
 const APIMART_RESPONSE_CHAT_MODELS = [
+  { id: 'gpt-6.1-terra', name: 'OpenAI · gpt-6.1-terra' },
   // GPT first
   { id: 'gpt-6.1-sol', name: 'GPT · gpt-6.1-sol' },
   { id: 'gpt-6-astra', name: 'GPT · gpt-6-astra' },
@@ -1672,6 +1704,7 @@ const APIMART_RESPONSE_CHAT_MODELS = [
 
   // DeepSeek
   { id: 'deepseek-v4-pro', name: 'DeepSeek · deepseek-v4-pro' },
+  { id: 'deepseek-v4.1-flash', name: 'DeepSeek · deepseek-v4.1-flash' },
   { id: 'deepseek-v4-flash', name: 'DeepSeek · deepseek-v4-flash' },
   { id: 'deepseek-ocr', name: 'DeepSeek · deepseek-ocr' },
   { id: 'deepseek-v3.2-exp', name: 'DeepSeek · deepseek-v3.2-exp' },

@@ -11,6 +11,8 @@ if (!catalogBlock) {
 }
 const ids = [...catalogBlock[1].matchAll(/\{\s*id:\s*'([^']+)'/g)].map(match => match[1]);
 const required = [
+  'gpt-6.1-terra',
+  'deepseek-v4.1-flash',
   'gemini-4-argon',
   'claude-haiku-5-5',
   'gpt-6.1-sol',
@@ -43,4 +45,4 @@ if (missing.length || duplicates.length) {
   process.exit(1);
 }
 
-console.log(`[verify-chat-models] OK: ${ids.length} built-in chat models; October 19 additions are present.`);
+console.log(`[verify-chat-models] OK: ${ids.length} built-in chat models; November 9 additions are present.`);

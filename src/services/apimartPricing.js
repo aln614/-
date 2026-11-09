@@ -12,6 +12,7 @@ const APP_IMAGE_PRICE_MODEL_MAP = Object.freeze({
   'gemini-2.5-flash-image-preview-official': 'nano-banana',
   'gpt-image-2': 'gpt-image-2-ext',
   'gpt-image-2.5-ext-sunburst': 'gpt-image-2.5-ext',
+  'gpt-image-2.6-ext-sunburst': 'gpt-image-2.6-ext',
   'seedream-4.0': 'seedance-4-0',
   'seedream-4.5': 'seedance-4-5',
   'flux-kontext-max': 'flux-kontext',
@@ -33,6 +34,9 @@ const APP_VIDEO_PRICE_MODEL_MAP = Object.freeze({
 });
 
 const FIXED_IMAGE_PRICES = Object.freeze({
+  'gpt-image-2.6-ext': [['flare@1K',0.085], ['flare@2K',0.3], ['flare@4K',0.4], ['sunburst@1K',0.085], ['sunburst@2K',0.3], ['sunburst@4K',0.4]],
+  'hy-image-v3.5-preview': [['1K',0.192], ['2K',0.192], ['4K',0.256]],
+  'muse-image-ext': [['default',0.048]],
   'flux-3-image': [['768SQ',0.328], ['1K',0.384], ['1.5K',0.56], ['2K',0.8], ['4K',4.856]],
   'gemini-nano-banana-2.1-ext': [['1K',0.2], ['2K',0.25], ['4K',0.3]],
   'gpt-image-2.5-ext': [['flare@1K', 0.085], ['flare@2K', 0.14], ['flare@4K', 0.21], ['sunburst@1K', 0.085], ['sunburst@2K', 0.14], ['sunburst@4K', 0.21]],
@@ -69,6 +73,10 @@ const FIXED_IMAGE_PRICES = Object.freeze({
 // APIMart public pricing snapshot. Live values are refreshed from the pricing
 // page; this table keeps estimates available while the network is offline.
 const FIXED_VIDEO_PRICES = Object.freeze({
+  'kling-v4': { unit:'秒', rows:[['720P',1.4],['1080P',2.1],['720P-input',0.84],['1080P-input',1.26]] },
+  'kling-v4-flash': { unit:'秒', rows:[['720P',0.857144],['720P-input',0.571432]] },
+  'gemini-omni-1.2-flash-ext': { unit:'秒', rows:[['360P',0.16],['720P',0.24],['1080P',0.24],['4K',0.56]] },
+  'muse-video-ext': { unit:'次', rows:[['default',0.24]] },
   'viduq4-preview': { unit:'秒', rows:[['540P',0.448],['720P',0.912],['1080P',1.024],['2K',1.624],['4K',3.328]] },
   'MiniMax-H3': { unit:'秒', rows:[['default',0.9144],['2K',0.9144],['768P',0.5712]] },
   'MiniMax-H3-Max': { unit:'秒', rows:[['default',0.5712],['768P',0.5712],['480P',0.3768],['1080P',1.28]] },
@@ -134,6 +142,8 @@ const TOKEN_METERED_IMAGE_MODELS = Object.freeze([
   'gpt-image-2-official',
   'gpt-image-2.5-flare',
   'gpt-image-2.5-sunburst',
+  'gpt-image-2.6-flare',
+  'gpt-image-2.6-sunburst',
   'nano-banana-pro'
 ]);
 
@@ -183,6 +193,10 @@ function fallbackModels() {
     id:'seedream-5-0-flash', aliases:[], metered:false, variants:[],
     unverifiedPricing:true,
     note:'平台默认展示价与文档分档说明不一致，暂不估算可用次数'
+  };
+  models['gemini-omni-1.2-flash'] = {
+    id:'gemini-omni-1.2-flash', category:'video', aliases:[], metered:true, variants:[], unverifiedPricing:true,
+    note:'官方文档按实际 Token 用量结算，展示秒价仅供参考，暂不估算固定次数'
   };
   return models;
 }
