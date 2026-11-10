@@ -97,6 +97,22 @@ body.mobile-ui #sidebar .nav-stack {padding:0!important}
 body.mobile-ui #sidebar .nav[data-page] {max-width:none!important;transform:none!important;color:var(--ios-muted)!important}
 body.mobile-ui #sidebar .nav.active {color:#006de0!important;background:rgba(10,132,255,.13)!important}
 body.theme-dark.mobile-ui #sidebar .nav.active {color:#79baff!important;background:rgba(10,132,255,.22)!important}
+
+/* Reserve the expanded rail in the desktop grid so it never covers page content. */
+body.desktop-shell:not(.mobile-ui) .app-shell {
+  grid-template-columns:62px minmax(0,1fr) 278px!important;
+  transition:grid-template-columns .18s cubic-bezier(.2,.8,.2,1)!important;
+}
+body.desktop-shell:not(.mobile-ui):has(#sidebar:hover) .app-shell,
+body.desktop-shell:not(.mobile-ui):has(#sidebar .nav:focus-visible) .app-shell {
+  grid-template-columns:208px minmax(0,1fr) 278px!important;
+}
+@media(max-width:1350px) {
+  body.desktop-shell:not(.mobile-ui) .app-shell {grid-template-columns:62px minmax(0,1fr) 258px!important}
+  body.desktop-shell:not(.mobile-ui):has(#sidebar:hover) .app-shell,
+  body.desktop-shell:not(.mobile-ui):has(#sidebar .nav:focus-visible) .app-shell {grid-template-columns:208px minmax(0,1fr) 258px!important}
+}
 @media(prefers-reduced-motion:reduce) {
   body:not(.mobile-ui) #sidebar,body:not(.mobile-ui) #sidebar :is(.nav,.nav-label) {transition:none!important}
+  body.desktop-shell:not(.mobile-ui) .app-shell {transition:none!important}
 }

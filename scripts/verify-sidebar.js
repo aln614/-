@@ -80,7 +80,8 @@ function pixelChanges(a,b) {
       const expanded=await geometry();
       assert.equal(expanded.width,208,'Hover exposes navigation names');
       assert.equal(expanded.labelOpacity,'1');
-      assert.equal(expanded.mainLeft,collapsed.mainLeft,'Expansion must not move the working area');
+      assert.ok(expanded.mainLeft>=expanded.right+8,'Expanded rail reserves space before the working area');
+      assert.ok(expanded.mainLeft-collapsed.mainLeft>=expanded.width-collapsed.width-2,'Working area moves by the expanded rail width');
       assert.equal(expanded.active,collapsed.active,'Hovering the rail preserves selection');
       assert.equal(expanded.color,collapsed.color);
       await page.screenshot({path:path.join(results,`sidebar-${theme}-expanded.png`)});
@@ -90,6 +91,14 @@ function pixelChanges(a,b) {
         assert.equal(await page.locator('#page-'+name).evaluate(el=>el.classList.contains('active')),true,name+' opens');
         assert.equal(await button.getAttribute('aria-current'),'page');
         assert.equal(await page.locator('#sidebar [aria-current="page"]').count(),1);
+        if(name==='history') {
+          const historyLayout=await page.locator('#page-history').evaluate(el=>({
+            left:el.getBoundingClientRect().left,
+            sidebarRight:document.getElementById('sidebar').getBoundingClientRect().right
+          }));
+          assert.ok(historyLayout.left>=historyLayout.sidebarRight+8,'History content stays outside the expanded rail');
+          await page.screenshot({path:path.join(results,`sidebar-history-${theme}-expanded.png`)});
+        }
       }
       await page.locator('#sidebar .nav[data-page="home"]').click();
       await page.mouse.move(600,80);await settle();
