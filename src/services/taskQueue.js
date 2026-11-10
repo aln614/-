@@ -301,6 +301,20 @@ class TaskQueue extends EventEmitter {
       repeatCount,
       outputDir
     };
+    if (String(fullCfg.outputFormat || '').toLowerCase() === 'svg' && /^gpt-image-2\.6-(flare|sunburst)$/i.test(String(fullCfg.model || ''))) {
+      fullCfg.timeoutMs = Math.max(Number(fullCfg.timeoutMs || 0), 24 * 60 * 1000);
+    }
+    if (/^gpt-image-2\.6-(?:flare|sunburst|ext(?:-sunburst)?)$/i.test(String(fullCfg.model || ''))) {
+      if (['mask','markup'].includes(fullCfg.editMode) && !(mainImages.length || refImages.length)) throw new Error('蒙版或标注层需要主图或参考图');
+      sanitizeApimartImagePayload({
+        image_urls:[mainImages[0], ...refImages].filter(Boolean), n:fullCfg.imageN,
+        size:fullCfg.size, resolution:fullCfg.imageSize, output_format:fullCfg.outputFormat,
+        complexity:fullCfg.complexity, frame_count:fullCfg.frameCount, frame_duration_ms:fullCfg.frameDurationMs,
+        svg_model:fullCfg.svgModel, svg_effort:fullCfg.svgEffort,
+        mask_url:fullCfg.editMode === 'mask' ? 'data:image/png;base64,validated' : fullCfg.maskUrl,
+        markup_url:fullCfg.editMode === 'markup' ? 'data:image/png;base64,validated' : ''
+      }, fullCfg.model);
+    }
 
     const tasks = [];
     let idx = 1;
@@ -471,7 +485,9 @@ class TaskQueue extends EventEmitter {
         db.prepare('UPDATE batches SET running_count=running_count+1, updated_at=? WHERE id=?').run(nowISO(), batchId);
         this.emit('changed');
         try {
-        const ext = '.png';
+        const format = String(cfg.outputFormat || '').toLowerCase();
+        const ext = /^gpt-image-2\.6-/i.test(String(cfg.model || '')) && ['jpeg','webp','gif','svg'].includes(format)
+          ? (format === 'jpeg' ? '.jpg' : '.' + format) : '.png';
         const fileName = String(task.task_index).padStart(5, '0') + ext;
         const outPath = path.join(batch.output_dir, fileName);
         const refImages = JSON.parse(task.ref_images_json || '[]');
@@ -525,8 +541,8 @@ class TaskQueue extends EventEmitter {
           }
         });
         if (token !== this.resetToken || this.stopFlags.has(batchId)) return;
-        const thumbPath = path.join(batch.output_dir, '_thumbs', String(task.task_index).padStart(5, '0') + '.png');
-        await this.resultPreviews.run(() => createThumbAsync(outPath, thumbPath, Number(cfg.thumbSize || 300)));
+        const desiredThumbPath = path.join(batch.output_dir, '_thumbs', String(task.task_index).padStart(5, '0') + '.png');
+        const thumbPath = ext === '.gif' ? '' : await this.resultPreviews.run(() => createThumbAsync(outPath, desiredThumbPath, Number(cfg.thumbSize || 300))) || '';
         const stat = await fs.promises.stat(outPath);
         const extraImages = Array.isArray(result.extraImages) ? result.extraImages : [];
         const extraRecords = [];
@@ -536,8 +552,8 @@ class TaskQueue extends EventEmitter {
           const extraStat = await fs.promises.stat(extra.outputPath).catch(() => null);
           if (!extraStat) continue;
           const extraThumb = path.join(batch.output_dir, '_thumbs', String(task.task_index).padStart(5, '0') + '_' + String(i+2).padStart(2, '0') + '.png');
-          await this.resultPreviews.run(() => createThumbAsync(extra.outputPath, extraThumb, Number(cfg.thumbSize || 300)));
-          extraRecords.push({ ...extra, thumbPath:extraThumb, size:extraStat.size });
+          const thumbPath = ext === '.gif' ? '' : await this.resultPreviews.run(() => createThumbAsync(extra.outputPath, extraThumb, Number(cfg.thumbSize || 300))) || '';
+          extraRecords.push({ ...extra, thumbPath, size:extraStat.size });
         }
         if (token !== this.resetToken || this.stopFlags.has(batchId)) return;
         db.transaction(() => {

@@ -4,9 +4,9 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>TENYING_AI 1.0</title>
-  <link rel="stylesheet" href="/static/style.css?v=1.0.144" />
-  <link rel="stylesheet" href="/static/sidebar.css?v=1.0.144" />
-  <link rel="stylesheet" href="/static/clear-glass.css?v=1.0.144" />
+  <link rel="stylesheet" href="/static/style.css?v=1.0.145" />
+  <link rel="stylesheet" href="/static/sidebar.css?v=1.0.145" />
+  <link rel="stylesheet" href="/static/clear-glass.css?v=1.0.145" />
   <link rel="stylesheet" href="/static/recent-media.css?v=1.0.130" />
   <link rel="stylesheet" href="/static/form-controls.css?v=1.0.132" />
 </head>
@@ -222,6 +222,8 @@
                 <option value="png">png</option>
                 <option value="jpeg">jpeg</option>
                 <option value="webp">webp</option>
+                <option value="gif">gif 动图</option>
+                <option value="svg">svg 矢量图</option>
               </select></div>
               <div><label>背景</label><select id="imageBackground">
                 <option value="auto">auto 自动</option>
@@ -263,6 +265,24 @@
               </select></div>
               <div><label>输出压缩 0-100</label><input id="outputCompression" type="number" min="0" max="100" step="1" value="90" /><div class="field-help">仅 jpeg / webp 有效，png 会自动不传。</div></div>
             </div>
+            <div class="row official-image-options" id="gpt26Options" style="display:none">
+              <div><label for="gpt26Complexity">规划强度</label><select id="gpt26Complexity">
+                <option value="auto">自动</option><option value="low">低</option><option value="medium">中</option><option value="high">高</option>
+              </select></div>
+              <div id="gpt26GifFramesWrap"><label for="gpt26GifFrames">GIF 帧数</label><input id="gpt26GifFrames" type="number" min="2" max="16" step="1" value="9" /></div>
+              <div id="gpt26GifDurationWrap"><label for="gpt26GifDuration">每帧时长（毫秒）</label><input id="gpt26GifDuration" type="number" min="20" step="10" value="200" /></div>
+              <div id="gpt26SvgModelWrap"><label for="gpt26SvgModel">SVG 写作模型</label><input id="gpt26SvgModel" value="gpt-5.4-mini" maxlength="128" /></div>
+              <div id="gpt26SvgEffortWrap"><label for="gpt26SvgEffort">SVG 思考程度</label><select id="gpt26SvgEffort">
+                <option value="auto">模型默认</option><option value="none">none</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="xhigh">xhigh</option>
+              </select></div>
+            </div>
+            <div class="row official-image-options" id="gpt26EditOptions" style="display:none">
+              <div><label for="gpt26EditMode">局部编辑</label><select id="gpt26EditMode">
+                <option value="none">无</option><option value="mask">PNG 蒙版</option><option value="markup">PNG 标注层</option>
+              </select></div>
+              <div id="gpt26EditFileWrap" style="display:none"><label for="gpt26EditFile">蒙版 / 标注层 PNG</label><input id="gpt26EditFile" type="file" accept="image/png,.png" /></div>
+            </div>
+            <div class="field-help" id="gpt26FormatHint" style="display:none;color:var(--text);margin:4px 0 10px" role="status"></div>
             <div class="row">
               <div><label>提交并发</label><input id="concurrency" type="number" min="1" step="1" value="30" title="同时向 API 提交的请求数；收到任务 ID 后立即提交下一项，远端生成与下载独立进行" /><div class="field-help">接口接收后立即补位，远端生成任务不占提交名额。</div></div>
               <div><label>每个任务重复生成次数</label><input id="repeatCount" type="number" min="1" value="1" /><div class="field-help">同一张主图 + 同一条提示词重复生成几张，用来一次抽多张效果。</div></div>
@@ -1075,8 +1095,8 @@
   <script src="/static/prompt-mention-core.js?v=1.0.109"></script>
   <script src="/static/prompt-mentions.js?v=1.0.109"></script>
   <script src="/static/local-appearance.js?v=1.0.133"></script>
-  <script src="/static/liquid-glass-bundle.js?v=1.0.144"></script>
-  <script src="/static/app.js?v=1.0.144"></script>
+  <script src="/static/liquid-glass-bundle.js?v=1.0.145"></script>
+  <script src="/static/app.js?v=1.0.145"></script>
   <script src="/static/library-backdrop-motion.js?v=1.0.127"></script>
   <script src="/static/main-window-drag.js?v=1.0.127"></script>
 </body>

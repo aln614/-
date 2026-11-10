@@ -61,6 +61,26 @@ fs.writeFileSync(path.join(runtime,'config.json'),JSON.stringify({
       await page.evaluate(()=>renderModelUsageEstimate());
       const imageCost = await page.evaluate(()=>getCurrentModelUsageContext());
       assert.equal(imageCost.variant.credits,0.3);
+      await page.selectOption('#modelPreset','gpt-image-2.6-flare');
+      await page.selectOption('#outputFormat','gif');
+      assert.equal(await page.locator('#gpt26GifFrames').isVisible(),true);
+      await page.screenshot({path:path.join(output,`${name}-gpt26-gif.png`)});
+      await page.selectOption('#outputFormat','svg');
+      assert.equal(await page.locator('#gpt26SvgModel').isVisible(),true);
+      assert.equal(await page.inputValue('#imageN'),'1');
+      assert.equal(await page.locator('#imageN option[value="2"]').isDisabled(),true);
+      await page.screenshot({path:path.join(output,`${name}-gpt26-svg.png`)});
+      await page.selectOption('#outputFormat','png');
+      await page.selectOption('#gpt26EditMode','markup');
+      assert.equal(await page.locator('#gpt26EditFile').isVisible(),true);
+      await page.screenshot({path:path.join(output,`${name}-gpt26-markup.png`)});
+      await page.selectOption('#modelPreset','gpt-image-2.6-ext');
+      assert.equal(await page.locator('#outputFormat option[value="svg"]').isDisabled(),true);
+      await page.selectOption('#outputFormat','gif');
+      assert.equal(await page.evaluate(()=>getCurrentModelUsageContext().formatPricingUnknown),true);
+      await page.selectOption('#outputFormat','png');
+      await page.selectOption('#modelPreset','gemini-3.1-flash-image-preview');
+      assert.equal(await page.locator('#outputFormat option[value="gif"]').isDisabled(),true);
       await page.screenshot({path:path.join(output,`${name}-image.png`)});
       await page.evaluate(()=>setPage('video'));
       for (const [model,max] of [['kling-v4',30],['kling-v4-flash',20],['gemini-omni-1.2-flash',15],['gemini-omni-1.2-flash-ext',15],['muse-video-ext',10]]) {

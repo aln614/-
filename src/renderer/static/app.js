@@ -527,12 +527,14 @@ function getCurrentModelUsageContext(){
   const resolution = String($('#clarity')?.value || $('#claritySettings')?.value || '1K');
   const quality = String($('#imageQuality')?.value || 'auto');
   const resolved = resolveImagePricingEntry(modelId);
-  const variant = resolveImagePricingVariant(resolved.entry, resolution, quality);
+  const format = String($('#outputFormat')?.value || 'png').toLowerCase();
+  const formatPricingUnknown = isGptImage26ExtModel(modelId) && format === 'gif';
+  const variant = formatPricingUnknown ? null : resolveImagePricingVariant(resolved.entry, resolution, quality);
   const outputCount = typeof isMultiNImageModel === 'function' && isMultiNImageModel(modelId)
     ? Math.max(1, Number($('#imageN')?.value || 1))
     : 1;
   const uses = variant ? estimateUsesForPrice(variant.credits, outputCount) : null;
-  return {modelId, label, resolution, quality, outputCount, priceModelId:resolved.priceModelId, entry:resolved.entry, variant, uses};
+  return {modelId, label, resolution, quality, outputCount, priceModelId:resolved.priceModelId, entry:resolved.entry, variant, uses, formatPricingUnknown};
 }
 function renderModelUsageEstimate(){
   const button = $('#modelUsageEstimateBtn');
@@ -550,6 +552,10 @@ function renderModelUsageEstimate(){
   }else if(context.entry?.metered){
     text = '动态计费';
     title = `${context.label} 按实际 Token 用量结算，无法给出固定次数`;
+    state = 'variable';
+  }else if(context.formatPricingUnknown){
+    text = '价格待核实';
+    title = 'Ext GIF 使用自动尺寸，实际结算档位请以平台为准';
     state = 'variable';
   }else if(!context.variant){
     text = context.entry?.unverifiedPricing ? '价格待核实' : '暂无定价';
@@ -1676,7 +1682,7 @@ function collectMjCurrentSettings(){
 }
 function saveCurrentClientSettings(cfg = {}){
   const existing = readClientSettings();
-  const allowed = ['image_api_platform','api_endpoint','legacy_api_endpoint','api_key','model','size','clarity','quality','background','moderation','output_format','output_compression','image_n','concurrency','retry_times','repeat_count','poll_interval_ms','timeout_seconds','background_keepalive','prompt_multiline_tasks'];
+  const allowed = ['image_api_platform','api_endpoint','legacy_api_endpoint','api_key','model','size','clarity','quality','background','moderation','output_format','output_compression','image_n','complexity','frame_count','frame_duration_ms','svg_model','svg_effort','concurrency','retry_times','repeat_count','poll_interval_ms','timeout_seconds','background_keepalive','prompt_multiline_tasks'];
   const next = { ...existing };
   for(const key of ['theme_mode','skin_id','mascot_enabled']) delete next[key];
   allowed.forEach(k=>{
@@ -1708,7 +1714,7 @@ function saveClientConfig(cfg){
   const safeCfg = sanitizePlatformEndpoint(cfg || {}, p);
   if(safeCfg.api_key && looksLikeApiUrl(safeCfg.api_key)) delete safeCfg.api_key;
   localStorage.setItem(IMAGE_PLATFORM_ACTIVE_KEY, p);
-  const allowed = ['image_api_platform','api_endpoint','legacy_api_endpoint','api_key','model','size','clarity','quality','background','moderation','output_format','output_compression','image_n','mask_url','concurrency','retry_times','repeat_count','poll_interval_ms','timeout_seconds','background_keepalive','prompt_multiline_tasks'];
+  const allowed = ['image_api_platform','api_endpoint','legacy_api_endpoint','api_key','model','size','clarity','quality','background','moderation','output_format','output_compression','image_n','complexity','frame_count','frame_duration_ms','svg_model','svg_effort','mask_url','concurrency','retry_times','repeat_count','poll_interval_ms','timeout_seconds','background_keepalive','prompt_multiline_tasks'];
   const cleaned = { image_api_platform:p };
   allowed.forEach(k => { if(typeof safeCfg[k] !== 'undefined') cleaned[k] = safeCfg[k]; });
   localStorage.setItem(platformConfigKey(p), JSON.stringify(cleaned));
@@ -1773,6 +1779,11 @@ function readCurrentImageFormConfig(){
     moderation: $('#moderation')?.value || 'auto',
     output_format: $('#outputFormat')?.value || 'png',
     output_compression: Number($('#outputCompression')?.value || 90),
+    complexity: $('#gpt26Complexity')?.value || 'auto',
+    frame_count: Number($('#gpt26GifFrames')?.value || 9),
+    frame_duration_ms: Number($('#gpt26GifDuration')?.value || 200),
+    svg_model: $('#gpt26SvgModel')?.value?.trim() || 'gpt-5.4-mini',
+    svg_effort: $('#gpt26SvgEffort')?.value || 'auto',
     image_n: Math.max(1, Math.min(15, Number($('#imageN')?.value || 1)))
   };
 }
@@ -1793,7 +1804,13 @@ function applyImagePlatformFields(cfg = {}, platform='apimart'){
   if($('#moderation')) $('#moderation').value = merged.moderation || 'auto';
   if($('#outputFormat')) $('#outputFormat').value = merged.output_format || 'png';
   if($('#outputCompression')) $('#outputCompression').value = merged.output_compression || 90;
+  if($('#gpt26Complexity')) $('#gpt26Complexity').value = merged.complexity || 'auto';
+  if($('#gpt26GifFrames')) $('#gpt26GifFrames').value = merged.frame_count || 9;
+  if($('#gpt26GifDuration')) $('#gpt26GifDuration').value = merged.frame_duration_ms || 200;
+  if($('#gpt26SvgModel')) $('#gpt26SvgModel').value = merged.svg_model || 'gpt-5.4-mini';
+  if($('#gpt26SvgEffort')) $('#gpt26SvgEffort').value = merged.svg_effort || 'auto';
   if($('#imageN')) $('#imageN').value = String(merged.image_n || 1);
+  updateOfficialImageOptions();
   updateApiKeyWarning();
   renderModelUsageEstimate();
 }
@@ -1886,6 +1903,7 @@ function isGptImage25ExtModel(model){
   return ['gpt-image-2.5-ext','gpt-image-2.5-ext-sunburst','gpt-image-2.6-ext','gpt-image-2.6-ext-sunburst'].includes(imageModelKey(model));
 }
 function isGptImage26ExtModel(model){ return imageModelKey(model).startsWith('gpt-image-2.6-ext'); }
+function isGptImage26Model(model){ return /^gpt-image-2\.6-(flare|sunburst|ext(?:-sunburst)?)$/.test(imageModelKey(model)); }
 function isSeedream5LiteModel(model){
   return ['seedream-5-0-lite','doubao-seedream-5-0-lite','doubao-seedream-5.0-lite','seedream-5.0-lite'].includes(imageModelKey(model));
 }
@@ -2152,13 +2170,32 @@ function updateOfficialImageOptions(){
   const backgroundWrap = $('#imageBackground')?.closest('div');
   if(backgroundWrap) backgroundWrap.style.display = flux || seedreamFlash || isGptImage26ExtModel(model) || imageModelKey(model) === 'gpt-image-2-official' ? 'none' : '';
   if($('#outputFormat')) [...$('#outputFormat').options].forEach(option=>{
-    const supported = !seedreamFlash || ['png','jpeg'].includes(option.value);
+    const supported = (!seedreamFlash || ['png','jpeg'].includes(option.value)) && (!['gif','svg'].includes(option.value) || (isGptImage26Model(model) && !(option.value === 'svg' && isGptImage26ExtModel(model))));
     option.hidden = !supported;
     option.disabled = !supported;
   });
+  if($('#outputFormat')?.selectedOptions[0]?.disabled) $('#outputFormat').value = 'png';
   const moderationWrap = $('#moderation')?.closest('div');
   if(moderationWrap) moderationWrap.style.display = (official || gptImage25) && !isGptImage26ExtModel(model) ? '' : 'none';
   const fmt = String($('#outputFormat')?.value || 'png').toLowerCase();
+  if($('#gpt26Options')) $('#gpt26Options').style.display = isGptImage26Model(model) ? '' : 'none';
+  const gpt26Editable = isGptImage26Model(model) && !isGptImage26ExtModel(model) && !['gif','svg'].includes(fmt);
+  if($('#gpt26EditOptions')) $('#gpt26EditOptions').style.display = gpt26Editable ? '' : 'none';
+  if($('#gpt26EditFileWrap')) $('#gpt26EditFileWrap').style.display = gpt26Editable && $('#gpt26EditMode')?.value !== 'none' ? '' : 'none';
+  if($('#gpt26FormatHint')) {
+    const hint = fmt === 'svg' && isGptImage26Model(model) ? 'SVG 需要额外的文本模型用量；结果可能需要较长时间。' :
+      fmt === 'gif' && isGptImage26Model(model) ? (isGptImage26ExtModel(model) ? 'Ext 动图仅支持文生图。' : '动图使用 512×512 单帧尺寸；按生成帧拼图计费。') : '';
+    $('#gpt26FormatHint').textContent = hint;
+    $('#gpt26FormatHint').style.display = hint ? '' : 'none';
+  }
+  for(const id of ['gpt26GifFramesWrap','gpt26GifDurationWrap']) if($('#'+id)) $('#'+id).style.display = fmt === 'gif' && !isGptImage26ExtModel(model) ? '' : 'none';
+  for(const id of ['gpt26SvgModelWrap','gpt26SvgEffortWrap']) if($('#'+id)) $('#'+id).style.display = fmt === 'svg' && isGptImage26Model(model) ? '' : 'none';
+  if(fmt === 'svg' && isGptImage26Model(model)) clampImageOutputCount(1);
+  if($('#imageN')) [...$('#imageN').options].forEach(option=>{
+    const limit = fmt === 'svg' && isGptImage26Model(model) ? 1 : isGptImage26ExtModel(model) ? 1 : isGptImage26Model(model) ? 4 : 15;
+    option.disabled = Number(option.value) > limit;
+    option.hidden = option.disabled;
+  });
   const compWrap = $('#outputCompression')?.closest('div');
   if(compWrap) compWrap.style.display = grokImage20 || seedreamFlash || isGptImage26ExtModel(model) ? 'none' : '';
   if(compWrap) compWrap.style.opacity = (fmt === 'jpeg' || fmt === 'webp') ? '1' : '.45';
@@ -5184,7 +5221,8 @@ $('#clarity')?.addEventListener('change', ()=>{ if($('#claritySettings')) $('#cl
 $('#claritySettings')?.addEventListener('change', ()=>{ if($('#clarity')) $('#clarity').value = $('#claritySettings').value; updateSizeHint(); renderModelUsageEstimate(); });
 $('#imageQuality')?.addEventListener('change', renderModelUsageEstimate);
 $('#imageN')?.addEventListener('change', renderModelUsageEstimate);
-$('#outputFormat')?.addEventListener('change', updateOfficialImageOptions);
+$('#outputFormat')?.addEventListener('change', ()=>{ updateOfficialImageOptions(); renderModelUsageEstimate(); });
+$('#gpt26EditMode')?.addEventListener('change', updateOfficialImageOptions);
 $('#apiKey')?.addEventListener('input', updateApiKeyWarning);
 $('#apiKey')?.addEventListener('change', ()=>{
   const validation = updateApiKeyWarning();
@@ -5413,6 +5451,11 @@ function collectConfig(){
     moderation: $('#moderation')?.value || 'auto',
     output_format: $('#outputFormat')?.value || 'png',
     output_compression: Number($('#outputCompression')?.value || 90),
+    complexity: $('#gpt26Complexity')?.value || 'auto',
+    frame_count: Number($('#gpt26GifFrames')?.value || 9),
+    frame_duration_ms: Number($('#gpt26GifDuration')?.value || 200),
+    svg_model: $('#gpt26SvgModel')?.value?.trim() || 'gpt-5.4-mini',
+    svg_effort: $('#gpt26SvgEffort')?.value || 'auto',
     image_n: Math.max(1, Math.min(15, Number($('#imageN')?.value || 1))),
     concurrency: Number($('#concurrency').value || 30),
     retry_times: Number($('#retryTimes').value || 0),
@@ -5628,6 +5671,22 @@ async function submitCurrentImageBatch(opts = {}){
     return null;
   }
   const inputs = {main:[...mainImages], ref:[...refImages]};
+  const model = $('#model')?.value || '';
+  const fmt = String($('#outputFormat')?.value || 'png').toLowerCase();
+  const editMode = isGptImage26Model(model) && !isGptImage26ExtModel(model) && !['gif','svg'].includes(fmt) ? $('#gpt26EditMode')?.value : 'none';
+  const editFile = editMode !== 'none' ? $('#gpt26EditFile')?.files?.[0] : null;
+  if(editMode !== 'none' && (!editFile || !(inputs.main.length || inputs.ref.length))){
+    const message = '局部编辑需要上传主图或参考图，并选择对应的 PNG 蒙版或标注层';
+    if(opts.fromAgent) throw new Error(message); toast(message); return null;
+  }
+  if(editFile && (editFile.size > 50 * 1024 * 1024 || !/\.png$/i.test(editFile.name))){
+    const message = '蒙版或标注层须为不超过 50 MB 的 PNG 文件';
+    if(opts.fromAgent) throw new Error(message); toast(message); return null;
+  }
+  if(fmt === 'gif' && isGptImage26ExtModel(model) && (inputs.main.length || inputs.ref.length)){
+    const message = 'GPT Image 2.6 Ext 的 GIF 仅支持文生图，请清空主图和参考图';
+    if(opts.fromAgent) throw new Error(message); toast(message); return null;
+  }
   let promptMentions;
   try{ promptMentions = imagePromptMentions?.submission(imageMentionRows(inputs)) || []; }
   catch(error){ if(opts.fromAgent) throw error; toast(error.message); return null; }
@@ -5635,6 +5694,12 @@ async function submitCurrentImageBatch(opts = {}){
   const button = $('#startBatchBtn');
   if(!opts.fromAgent && button){ button.disabled = true; button.textContent = '提交中...'; }
   try{
+    if(editFile){
+      body.gpt26_edit_mode = editMode;
+      body.gpt26_edit_image = {name:editFile.name, data:await new Promise((resolve,reject)=>{
+        const reader = new FileReader(); reader.onload=()=>resolve(reader.result); reader.onerror=()=>reject(new Error('无法读取 PNG 文件')); reader.readAsDataURL(editFile);
+      })};
+    }
     if(isPublicClient){
       const allCount = inputs.main.length + inputs.ref.length;
       const progressText = (done,total)=>{ if(!opts.fromAgent && button) button.textContent = total ? `上传素材 ${done}/${total}` : '创建批次...'; };
@@ -7488,6 +7553,7 @@ function previewProxyUrlFor(src, meta = {}){
     if(u.pathname !== '/file' && u.pathname !== '/download') return '';
     const filePath = u.searchParams.get('path') || '';
     if(!filePath) return '';
+    if (/\.(?:svg|gif)$/i.test(filePath)) return '';
     const out = new URL('/preview-image', location.href);
     out.searchParams.set('path', filePath);
     out.searchParams.set('max', String(previewProxyMaxDim()));

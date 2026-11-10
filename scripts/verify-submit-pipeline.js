@@ -103,6 +103,19 @@ async function main() {
     assert.strictEqual(first.row.running_count, 0);
     assert.strictEqual(db._store.images.filter(i => i.batch_id === first.row.id).length, 100);
 
+    for (const format of ['gif','svg','jpeg','webp']) {
+      const typed = batch(1,1);
+      typed.row.model = 'gpt-image-2.6-flare';
+      typed.row.config_json = JSON.stringify({model:typed.row.model,outputFormat:format,timeoutMs:30000});
+      generate = async args => { args.onSubmitted('typed'); return result(args,'typed'); };
+      await bounded(queue.runBatch(typed.row.id));
+      const expectedExt = format === 'jpeg' ? '.jpg' : '.' + format;
+      assert.strictEqual(typed.row.status,'已完成');
+      assert.strictEqual(path.extname(typed.tasks[0].result_path),expectedExt);
+      assert.ok(fs.existsSync(typed.tasks[0].result_path));
+      if (format === 'gif') assert.strictEqual(typed.tasks[0].thumb_path,'');
+    }
+
     const retry = batch(4, 2);
     const calls = new Map();
     const posted = new Map();

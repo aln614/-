@@ -538,6 +538,10 @@ const GPT_IMAGE_25_EXT_RULE = {
   defaultSize: 'auto', noCustomSize: true,
   resolutions: ['1K','2K','4K'], defaultResolution: '1K'
 };
+const GPT_IMAGE_26_RULE = {
+  ...GPT_IMAGE_25_RULE, strictReferenceLimit:true, allowComplexity:true,
+  outputFormats:['png','jpeg','webp','gif','svg']
+};
 const QWEN_IMAGE_3_RULE = {
   endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 3,
   nMin: 1, nMax: 6, defaultN: 1,
@@ -552,7 +556,8 @@ const GPT_IMAGE_26_EXT_RULE = {
   ...GPT_IMAGE_25_EXT_RULE, apiModel:'gpt-image-2.6-ext', nMax:1,
   maxImageBytes:20 * 1024 * 1024, strictReferenceLimit:true,
   allowQuality:true, qualities:GPT_IMAGE_25_RULE.qualities,
-  allowOutputFormat:true, outputFormats:['png','jpeg','webp'], defaultOutputFormat:'png',
+  allowOutputFormat:true, outputFormats:['png','jpeg','webp','gif'], defaultOutputFormat:'png',
+  allowComplexity:true, gifTextOnly:true,
   allowOutputCompression:false
 };
 const HY_IMAGE_35_RULE = {
@@ -646,8 +651,8 @@ const APIMART_MODEL_RULES = {
   'gpt-image-2.5-sunburst': GPT_IMAGE_25_RULE,
   'gpt-image-2.5-ext': GPT_IMAGE_25_EXT_RULE,
   'gpt-image-2.5-ext-sunburst': { ...GPT_IMAGE_25_EXT_RULE, fixedVersion: 'sunburst' },
-  'gpt-image-2.6-flare': { ...GPT_IMAGE_25_RULE, strictReferenceLimit:true },
-  'gpt-image-2.6-sunburst': { ...GPT_IMAGE_25_RULE, strictReferenceLimit:true },
+  'gpt-image-2.6-flare': GPT_IMAGE_26_RULE,
+  'gpt-image-2.6-sunburst': GPT_IMAGE_26_RULE,
   'gpt-image-2.6-ext': GPT_IMAGE_26_EXT_RULE,
   'gpt-image-2.6-ext-sunburst': { ...GPT_IMAGE_26_EXT_RULE, fixedVersion:'sunburst' },
   'hy-image-v3.5-preview': HY_IMAGE_35_RULE,
@@ -785,11 +790,51 @@ function sanitizeApimartImagePayload(rawPayload = {}, model = '') {
   if (rule.allowModeration && moderation && (rule.moderations || ['auto','low']).includes(moderation)) payload.moderation = moderation;
   const outputFormatRaw = String(rawPayload.output_format || rawPayload.outputFormat || rule.defaultOutputFormat || '').trim().toLowerCase();
   if (rule.allowOutputFormat && outputFormatRaw && (rule.outputFormats || ['png','jpeg','webp']).includes(outputFormatRaw)) payload.output_format = outputFormatRaw;
+  if (rule.allowComplexity) {
+    if (outputFormatRaw && !(rule.outputFormats || []).includes(outputFormatRaw)) throw new Error(`${payload.model} 不支持 ${outputFormatRaw} 输出格式`);
+    const complexity = String(rawPayload.complexity || '').trim().toLowerCase();
+    if (complexity && !['auto','low','medium','high'].includes(complexity)) throw new Error('规划强度仅支持自动、低、中、高');
+    if (complexity && complexity !== 'auto') payload.complexity = complexity;
+    if (outputFormatRaw === 'gif') {
+      if (rule.gifTextOnly && hasRefs) throw new Error('GPT Image 2.6 Ext 的 GIF 仅支持文生图');
+      if (rawPayload.mask_url || rawPayload.maskUrl || rawPayload.markup_url || rawPayload.markupUrl) throw new Error('GIF 不支持蒙版或标注层');
+      const gifSize = String(rawPayload.size || 'auto').toLowerCase();
+      if (gifSize !== 'auto' && !/^\d+:\d+$/.test(gifSize)) throw new Error('GIF 当前使用自动的 512×512 单帧尺寸，请选择自动或比例尺寸');
+      payload.size = 'auto';
+      const frames = Number(rawPayload.frame_count ?? rawPayload.frameCount ?? 9);
+      const duration = Number(rawPayload.frame_duration_ms ?? rawPayload.frameDurationMs ?? 200);
+      if (!Number.isInteger(frames) || frames < 2 || frames > 16) throw new Error('GIF 帧数须为 2 到 16 的整数');
+      if (!Number.isInteger(duration) || duration < 20 || duration % 10 !== 0) throw new Error('GIF 帧时长须为至少 20 毫秒且是 10 的倍数');
+      if (!rule.gifTextOnly) { payload.frame_count = frames; payload.frame_duration_ms = duration; }
+      if (payload.background === 'transparent') delete payload.background;
+    }
+    if (outputFormatRaw === 'svg') {
+      if (payload.n !== 1) throw new Error('SVG 一次只能生成 1 张');
+      if (rawPayload.mask_url || rawPayload.maskUrl || rawPayload.markup_url || rawPayload.markupUrl) throw new Error('SVG 不支持蒙版或标注层');
+      const svgModel = String(rawPayload.svg?.model || rawPayload.svg_model || rawPayload.svgModel || '').trim();
+      if (!/^[a-z0-9][a-z0-9._-]{0,127}$/i.test(svgModel)) throw new Error('请选择有效的 SVG 写作模型');
+      payload.svg = { model:svgModel };
+      const effort = String(rawPayload.svg?.reasoning?.effort || rawPayload.svg_effort || rawPayload.svgEffort || '').trim().toLowerCase();
+      if (effort && effort !== 'auto') {
+        if (!['none','minimal','low','medium','high','xhigh','max'].includes(effort)) throw new Error('SVG 思考程度无效');
+        payload.svg.reasoning = { effort };
+      }
+      if (payload.background === 'auto') delete payload.background;
+    }
+  }
   if (payload.background === 'transparent' && payload.output_format === 'jpeg') payload.background = 'auto';
   const outputCompression = parseInt(rawPayload.output_compression ?? rawPayload.outputCompression, 10);
   if (rule.allowOutputFormat && rule.allowOutputCompression !== false && Number.isFinite(outputCompression) && ['jpeg','webp'].includes(payload.output_format)) payload.output_compression = Math.max(0, Math.min(100, outputCompression));
   const maskUrl = String(rawPayload.mask_url || rawPayload.maskUrl || '').trim();
+  if (rule.allowMask && maskUrl && rule === GPT_IMAGE_26_RULE && !hasRefs) throw new Error('蒙版需要主图或参考图');
   if (rule.allowMask && maskUrl && (!rule.maskRequiresImage || hasRefs)) payload.mask_url = maskUrl;
+  const markupUrl = String(rawPayload.markup_url || rawPayload.markupUrl || '').trim();
+  if (rule.allowComplexity && rule !== GPT_IMAGE_26_RULE && markupUrl) throw new Error('当前模型不支持标注层');
+  if (rule === GPT_IMAGE_26_RULE && markupUrl) {
+    if (!hasRefs) throw new Error('标注层需要主图或参考图');
+    if (maskUrl) throw new Error('标注层和蒙版不能同时使用');
+    payload.markup_url = markupUrl;
+  }
   const negativePrompt = String(rawPayload.negative_prompt || rawPayload.negativePrompt || '').trim();
   if (rule.allowNegativePrompt && negativePrompt) payload.negative_prompt = negativePrompt;
   if (rule.allowPromptExtend) {
@@ -856,6 +901,7 @@ function makeApimartUrl(base, endpoint){ return normalizeApimartBase(base) + end
 function compactPayloadForLog(payload){
   const clone = {...(payload||{})};
   if(Array.isArray(clone.image_urls)) clone.image_urls = clone.image_urls.map(x=>String(x).slice(0,120));
+  for (const key of ['mask_url','markup_url']) if (String(clone[key] || '').startsWith('data:')) clone[key] = '[PNG data]';
   return JSON.stringify(clone);
 }
 
@@ -1015,7 +1061,7 @@ function pickResultUrls(data) {
     const x = String(s || '');
     const c = String(ctx || '').toLowerCase();
     if (!looksLikeRemoteUrl(x) || isNonResultUrl(x)) return false;
-    if (/\.(png|jpe?g|webp|gif|bmp|avif)(\?|#|$)/i.test(x)) return true;
+    if (/\.(png|jpe?g|webp|gif|svg|bmp|avif)(\?|#|$)/i.test(x)) return true;
     if (/image|img|photo|picture|result|output|download|remote|file|url|data|response|content|asset/i.test(c) && !/prompt|input_text|input_image|source|video_url|video_urls/i.test(c)) return true;
     // Some CDN signed URLs do not expose an extension; accept storage/CDN URLs when they appear inside result-like fields.
     if (/result|output|download|remote|file|asset|response/i.test(c) && /cdn|storage|oss|cos|r2|cloudflare|apimart|openai|oaidalleapi|blob|files/i.test(x)) return true;
@@ -1349,6 +1395,9 @@ async function generateOne({ cfg, prompt, mainImagePath, refImages = [], outputP
 
   const model = cfg.model || 'gemini-3.1-flash-image-preview';
   const rule = getApimartImageRule(model);
+  if (rule.gifTextOnly && String(cfg.output_format || cfg.outputFormat || '').toLowerCase() === 'gif' && allImagePaths.length) {
+    throw new Error('GPT Image 2.6 Ext 的 GIF 仅支持文生图');
+  }
   if (apimartMode && !remoteTaskId && allImagePaths.length) {
     let maxImages = Number(rule.maxImageUrls ?? 16);
     if (Number.isFinite(Number(rule.maxReferencesAndOutputs))) {
@@ -1387,7 +1436,13 @@ async function generateOne({ cfg, prompt, mainImagePath, refImages = [], outputP
     moderation: cfg.moderation,
     output_format: cfg.output_format || cfg.outputFormat,
     output_compression: cfg.output_compression || cfg.outputCompression,
-    mask_url: cfg.mask_url || cfg.maskUrl,
+    complexity: cfg.complexity,
+    frame_count: cfg.frame_count ?? cfg.frameCount,
+    frame_duration_ms: cfg.frame_duration_ms ?? cfg.frameDurationMs,
+    svg_model: cfg.svg_model || cfg.svgModel,
+    svg_effort: cfg.svg_effort || cfg.svgEffort,
+    mask_url: cfg.editMode === 'mask' && cfg.editImagePath ? `data:image/png;base64,${fs.readFileSync(cfg.editImagePath).toString('base64')}` : cfg.mask_url || cfg.maskUrl,
+    markup_url: cfg.editMode === 'markup' && cfg.editImagePath ? `data:image/png;base64,${fs.readFileSync(cfg.editImagePath).toString('base64')}` : '',
     negative_prompt: cfg.negativePrompt || cfg.negative_prompt,
     prompt_extend: cfg.promptExtend ?? cfg.prompt_extend,
     prompt_extend_mode: cfg.promptExtendMode || cfg.prompt_extend_mode,

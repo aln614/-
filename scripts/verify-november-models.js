@@ -5,6 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const vm = require('vm');
+const {createRequire} = require('module');
 const {sanitizeApimartImagePayload:sanitize, getApimartImageRule, generateOne} = require('../src/services/apiClient');
 const {createFallbackPricingCatalog, createLivePricingCatalog, APP_IMAGE_PRICE_MODEL_MAP} = require('../src/services/apimartPricing');
 const draft = require('../src/services/seedanceDraft');
@@ -35,6 +36,69 @@ for (const model of ['gpt-image-2.6-ext','gpt-image-2.6-ext-sunburst']) {
     for (const key of ['background','moderation','output_compression']) assert.ok(!(key in payload));
   }
   assert.equal(sanitize({size:'1024x1024'},model).size,'auto');
+}
+for (const model of ['gpt-image-2.6-flare','gpt-image-2.6-sunburst']) {
+  const gif = sanitize({prompt:'test',size:'16:9',n:2,output_format:'gif',frame_count:8,frame_duration_ms:200,complexity:'low',image_urls:refs.slice(0,1),background:'transparent'},model);
+  assert.equal(gif.size,'auto');
+  assert.equal(gif.frame_count,8);
+  assert.equal(gif.frame_duration_ms,200);
+  assert.equal(gif.complexity,'low');
+  assert.equal(gif.image_urls.length,1);
+  assert.ok(!('background' in gif));
+  assert.throws(()=>sanitize({output_format:'gif',frame_count:17},model),/帧数/);
+  assert.throws(()=>sanitize({output_format:'gif',frame_duration_ms:23},model),/帧时长/);
+  assert.throws(()=>sanitize({output_format:'gif',mask_url:'https://example.com/mask.png'},model),/不支持蒙版/);
+  const svg = sanitize({prompt:'test',n:1,output_format:'svg',svg_model:'gpt-5.4-mini',svg_effort:'high',image_urls:refs.slice(0,1)},model);
+  assert.deepEqual(svg.svg,{model:'gpt-5.4-mini',reasoning:{effort:'high'}});
+  assert.equal(svg.image_urls.length,1);
+  assert.throws(()=>sanitize({output_format:'svg',n:2,svg_model:'gpt-5.4-mini'},model),/只能生成/);
+  assert.throws(()=>sanitize({output_format:'svg'},model),/写作模型/);
+  assert.throws(()=>sanitize({output_format:'svg',svg_model:'gpt-5.4-mini',markup_url:'https://example.com/m.png'},model),/不支持蒙版/);
+  assert.equal(sanitize({image_urls:[refs[0]],markup_url:'https://example.com/m.png'},model).markup_url,'https://example.com/m.png');
+  assert.throws(()=>sanitize({markup_url:'https://example.com/m.png'},model),/需要主图/);
+  assert.throws(()=>sanitize({image_urls:[refs[0]],mask_url:'https://example.com/m.png',markup_url:'https://example.com/m.png'},model),/不能同时/);
+}
+assert.throws(()=>sanitize({output_format:'gif',image_urls:[refs[0]]},'gpt-image-2.6-ext'),/仅支持文生图/);
+assert.throws(()=>sanitize({output_format:'svg'},'gpt-image-2.6-ext'),/不支持/);
+
+async function verifyImageSubmission() {
+  const file = path.join(__dirname,'../src/services/apiClient.js');
+  const source = fs.readFileSync(file,'utf8');
+  const submitted = [], downloaded = [];
+  const context = vm.createContext({require:createRequire(file), module:{exports:{}}, process, Buffer, URL, AbortController, setTimeout, clearTimeout, setImmediate, console});
+  vm.runInContext(source + `\nmodule.exports.__mockImageTransport = hooks => {
+    uploadImageToApimart = hooks.upload;
+    postJson = hooks.post;
+    downloadResultToFile = hooks.download;
+  };`,context);
+  context.module.exports.__mockImageTransport({
+    upload:async()=> 'https://example.com/ref.png',
+    post:async(_url,_key,payload)=>{submitted.push(JSON.parse(JSON.stringify(payload)));return {data:[{url:['https://example.com/result.'+payload.output_format]}]};},
+    download:async(url,target)=>{downloaded.push({url,target});await fs.promises.writeFile(target,'mock');}
+  });
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(),'tenying-gpt26-submit-'));
+  try {
+    const ref = path.join(temp,'ref.png'), edit = path.join(temp,'edit.png');
+    fs.writeFileSync(ref,'reference'); fs.writeFileSync(edit,'mask');
+    for (const [format,extra] of [
+      ['gif',{frameCount:8,frameDurationMs:200}],
+      ['svg',{svgModel:'gpt-5.4-mini',svgEffort:'high'}],
+      ['png',{editMode:'markup',editImagePath:edit}],
+      ['png',{editMode:'mask',editImagePath:edit}]
+    ]) {
+      await context.module.exports.generateOne({cfg:{model:'gpt-image-2.6-flare',outputFormat:format,complexity:'low',...extra},prompt:'test',mainImagePath:ref,outputPath:path.join(temp,'result.'+format)});
+      const payload = submitted.at(-1);
+      assert.equal(payload.output_format,format);
+      assert.equal(payload.complexity,'low');
+      if(format==='gif') assert.equal(payload.frame_count,8);
+      if(format==='svg') assert.equal(payload.svg.reasoning.effort,'high');
+      if(extra.editMode==='markup') assert.match(payload.markup_url,/^data:image\/png;base64,/);
+      if(extra.editMode==='mask') assert.match(payload.mask_url,/^data:image\/png;base64,/);
+    }
+    assert.equal(downloaded.length,4);
+    await assert.rejects(context.module.exports.generateOne({cfg:{model:'gpt-image-2.6-ext',outputFormat:'gif'},prompt:'test',mainImagePath:ref,outputPath:path.join(temp,'bad.gif')}),/仅支持文生图/);
+    assert.equal(submitted.length,4);
+  } finally { fs.rmSync(temp,{recursive:true,force:true}); }
 }
 const hy = 'hy-image-v3.5-preview';
 assert.equal(sanitize({n:4,size:'2048x2048',resolution:'4K',seed:0,negative_prompt:'blur'},hy).size,'2048x2048');
@@ -68,6 +132,7 @@ function extract(name, async = false) {
   return line.endsWith('}') ? line : main.slice(start,main.indexOf('\n}',start)+2);
 }
 async function verify() {
+  await verifyImageSubmission();
   const submitted = [], store = {video_tasks:[]};
   let uploads = 0;
   const context = vm.createContext({

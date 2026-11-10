@@ -1371,7 +1371,7 @@ function safeJoinStatic(p) {
 }
 function contentType(file) {
   const ext = path.extname(file).toLowerCase();
-  return ext === '.html' ? 'text/html; charset=utf-8' : ext === '.js' ? 'text/javascript; charset=utf-8' : ext === '.css' ? 'text/css; charset=utf-8' : ext === '.png' ? 'image/png' : ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : ext === '.webp' ? 'image/webp' : ext === '.svg' ? 'image/svg+xml' : ext === '.mp4' ? 'video/mp4' : ext === '.webm' ? 'video/webm' : ext === '.mov' ? 'video/quicktime' : ext === '.m4v' ? 'video/x-m4v' : ext === '.mp3' ? 'audio/mpeg' : ext === '.wav' ? 'audio/wav' : ext === '.m4a' ? 'audio/mp4' : ext === '.aac' ? 'audio/aac' : 'application/octet-stream';
+  return ext === '.html' ? 'text/html; charset=utf-8' : ext === '.js' ? 'text/javascript; charset=utf-8' : ext === '.css' ? 'text/css; charset=utf-8' : ext === '.png' ? 'image/png' : ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : ext === '.webp' ? 'image/webp' : ext === '.gif' ? 'image/gif' : ext === '.svg' ? 'image/svg+xml' : ext === '.mp4' ? 'video/mp4' : ext === '.webm' ? 'video/webm' : ext === '.mov' ? 'video/quicktime' : ext === '.m4v' ? 'video/x-m4v' : ext === '.mp3' ? 'audio/mpeg' : ext === '.wav' ? 'audio/wav' : ext === '.m4a' ? 'audio/mp4' : ext === '.aac' ? 'audio/aac' : 'application/octet-stream';
 }
 function getAppVersion() {
   try { return app.getVersion() || require('../package.json').version || '0.0.0'; }
@@ -7003,6 +7003,30 @@ function mapPayloadToQueue(body, owner) {
     ...resolveBatchMediaUploadIds(body.reference_image_upload_ids, owner),
     ...(body.reference_images || []).map(x => dataUrlToFile(x, owner)).filter(Boolean)
   ];
+  const editMode = String(body.gpt26_edit_mode || 'none');
+  let editImagePath = '';
+  if (editMode !== 'none') {
+    if (!['mask','markup'].includes(editMode) || !/^gpt-image-2\.6-(flare|sunburst)$/i.test(String(body.model || ''))) throw new Error('当前模型不支持蒙版或标注层');
+    if (['gif','svg'].includes(String(body.output_format || '').toLowerCase())) throw new Error('GIF 和 SVG 不支持蒙版或标注层');
+    if (!(mainImages.length || refImages.length)) throw new Error('蒙版或标注层需要主图或参考图');
+    const data = String(body.gpt26_edit_image?.data || '');
+    const match = data.match(/^data:image\/png;base64,([a-z0-9+/=]+)$/i);
+    if (!match || match[1].length > Math.ceil(50 * 1024 * 1024 / 3) * 4) throw new Error('蒙版或标注层须为不超过 50 MB 的 PNG 文件');
+    const bytes = Buffer.from(match[1], 'base64');
+    if (!bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]))) throw new Error('蒙版或标注层不是有效的 PNG 文件');
+    const overlay = nativeImage.createFromBuffer(bytes);
+    if (overlay.isEmpty()) throw new Error('蒙版或标注层无法解码');
+    const dimensions = overlay.getSize();
+    if (dimensions.width * dimensions.height > 16777216) throw new Error('蒙版或标注层不能超过 16777216 像素');
+    for (const source of mainImages.length ? mainImages : [refImages[0]]) {
+      const image = nativeImage.createFromPath(source);
+      if (image.isEmpty()) throw new Error('无法读取主图尺寸，不能验证蒙版或标注层');
+      const original = image.getSize();
+      if (original.width * original.height > 16777216 || original.width !== dimensions.width || original.height !== dimensions.height) throw new Error('蒙版或标注层尺寸必须与每张主图一致，且不超过 16777216 像素');
+    }
+    editImagePath = dataUrlToFile(body.gpt26_edit_image, owner);
+    if (!editImagePath) throw new Error('无法保存蒙版或标注层');
+  }
   if(body.prompt_mentions?.length && (
     mainImages.length !== (body.main_image_upload_ids || []).length + (body.main_images || []).length ||
     refImages.length !== (body.reference_image_upload_ids || []).length + (body.reference_images || []).length
@@ -7028,6 +7052,13 @@ function mapPayloadToQueue(body, owner) {
     moderation: body.moderation || cfg.moderation || 'auto',
     outputFormat: body.output_format || cfg.outputFormat || 'png',
     outputCompression: Number(body.output_compression || cfg.outputCompression || 90),
+    complexity: body.complexity || 'auto',
+    frameCount: Number(body.frame_count ?? 9),
+    frameDurationMs: Number(body.frame_duration_ms ?? 200),
+    svgModel: String(body.svg_model || 'gpt-5.4-mini').trim(),
+    svgEffort: String(body.svg_effort || 'auto').trim(),
+    editMode,
+    editImagePath,
     imageN: Number(body.image_n || cfg.imageN || 1),
     maskUrl: body.mask_url || cfg.maskUrl || '',
     negativePrompt: body.negative_prompt || cfg.negativePrompt || cfg.negative_prompt || '',
@@ -7037,7 +7068,7 @@ function mapPayloadToQueue(body, owner) {
     retryTimes: Number(body.retry_times || cfg.retryTimes || 2),
     repeatCount: Number(body.repeat_count || cfg.repeatCount || 1),
     pollIntervalMs: Number(body.poll_interval_ms || cfg.pollIntervalMs || 1200),
-    timeoutMs: Number(body.timeout_seconds || 1200) * 1000,
+    timeoutMs: Math.max(String(body.output_format || '').toLowerCase() === 'svg' ? 24 * 60 * 1000 : 0, Number(body.timeout_seconds || 1200) * 1000),
     outputDir: body.output_dir || cfg.outputDir || '',
     name: body.name || ''
   };
@@ -9788,6 +9819,10 @@ async function sendDiskFile(req, res, file, opts = {}) {
     'Access-Control-Allow-Origin':'*',
     'Cache-Control':opts.cacheControl || 'public, max-age=86400'
   };
+  if (String(headers['Content-Type']).toLowerCase().startsWith('image/svg+xml')) {
+    headers['Content-Security-Policy'] = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
+    headers['X-Content-Type-Options'] = 'nosniff';
+  }
   if (opts.download) headers['Content-Disposition'] = `attachment; filename*=UTF-8''${encodeURIComponent(opts.filename || path.basename(file))}`;
   if (req.method === 'HEAD') { res.writeHead(200, headers); return res.end(); }
   res.writeHead(200, headers);
