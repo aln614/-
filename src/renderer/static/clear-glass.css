@@ -57,6 +57,28 @@ body[data-background-mode="none"].liquid-glass-enabled .main :is(.card,.recent-u
 body[data-background-mode="none"].liquid-glass-enabled .main .card.liquid-surface-active {
   background:transparent!important;box-shadow:0 4px 16px rgba(0,0,0,.03)!important;
 }
+/* Keep scrolling content separate from the stationary glass covering the whole panel. */
+body[data-background-mode] .right-panel.glass {overflow:hidden!important;padding:0!important}
+body .right-panel-content {
+  height:100%;min-height:0;min-width:0;padding:16px;overflow-x:hidden;overflow-y:auto;
+  overscroll-behavior:contain;scrollbar-width:auto!important;scrollbar-color:auto!important;
+}
+/* A continuous material underlay keeps SVG sampling artifacts out of the panel center. */
+body[data-background-mode="none"].liquid-glass-enabled .right-panel > .liquid-material {
+  position:absolute;inset:0;z-index:-1;pointer-events:none;
+  border-radius:inherit;clip-path:inset(0 round var(--liquid-clip-radius,24px));
+  background:linear-gradient(145deg,rgba(255,255,255,.12),rgba(255,255,255,.015)),var(--clear-surface);
+  backdrop-filter:blur(var(--liquid-blur)) saturate(var(--liquid-saturation));
+  -webkit-backdrop-filter:blur(var(--liquid-blur)) saturate(var(--liquid-saturation));
+}
+body[data-background-mode="none"].liquid-glass-enabled .right-panel > .liquid-backdrop {
+  --liquid-optical-edge:10px;
+  padding:var(--liquid-optical-edge);
+  -webkit-mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);
+  -webkit-mask-composite:xor;
+  mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);
+  mask-composite:exclude;
+}
 /* Keep live transparency during scrolling; restore the heavier edge optics when settled. */
 html.liquid-in-motion body[data-background-mode="none"].liquid-glass-enabled :is(.main .card,.right-panel)>.liquid-backdrop {
   backdrop-filter:blur(var(--liquid-blur)) saturate(var(--liquid-saturation))!important;

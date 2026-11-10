@@ -4804,7 +4804,7 @@ body.desktop-shell :is(.topbar.glass,.sidebar.glass,.right-panel.glass,.page .ca
   -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;
   mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);mask-composite:exclude;opacity:.52;
 }
-body.desktop-shell :is(.topbar.glass,.sidebar.glass,.right-panel.glass,.page .card,.recent-upload-panel,.recent-video-upload-panel,.table-wrap,.batch-card)>:not(.liquid-glass-mount):not(.liquid-backdrop){position:relative;z-index:1}
+body.desktop-shell :is(.topbar.glass,.sidebar.glass,.right-panel.glass,.page .card,.recent-upload-panel,.recent-video-upload-panel,.table-wrap,.batch-card)>:not(.liquid-glass-mount):not(.liquid-backdrop):not(.liquid-material){position:relative;z-index:1}
 body.desktop-shell .topbar.glass{border-radius:22px!important;padding:5px 10px 5px 14px!important;min-height:48px!important;overflow:hidden!important;background:transparent!important;background-image:none!important}
 body.desktop-shell .topbar>.liquid-backdrop{
   background:linear-gradient(145deg,rgba(255,255,255,.24),rgba(255,255,255,.025) 54%,rgba(132,210,255,.08)),rgba(var(--liquid-tint),calc(.05 + var(--liquid-opacity)*.15))!important;

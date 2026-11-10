@@ -84,15 +84,16 @@ const server=http.createServer((req,res)=>{
       const emptyBands=await page.evaluate(()=>{
         const nav=document.querySelector('#sidebar'),panel=document.querySelector('.right-panel');
         return [
-          {box:nav.getBoundingClientRect().toJSON(),
+          {label:'sidebar',box:nav.getBoundingClientRect().toJSON(),
             top:nav.querySelector('.nav-stack .nav:last-child').getBoundingClientRect().bottom,
             bottom:nav.querySelector('.nav-bottom').getBoundingClientRect().top},
-          {box:panel.getBoundingClientRect().toJSON(),
-            top:panel.lastElementChild.getBoundingClientRect().bottom,
+          {label:'right-panel',box:panel.getBoundingClientRect().toJSON(),
+            top:panel.querySelector('#imageRealtimePanel').getBoundingClientRect().bottom,
             bottom:panel.getBoundingClientRect().bottom-32}
         ];
       });
-      for (const {box,top,bottom} of emptyBands) {
+      for (const {label,box,top,bottom} of emptyBands) {
+        if(label==='right-panel') assert.ok(bottom-top>80,'Task panel must expose a nonempty scan band');
         const start=Math.ceil(box.x+box.width*.25),end=Math.floor(box.x+box.width*.75);
         const rowLuminance=y=>{
           let sum=0;

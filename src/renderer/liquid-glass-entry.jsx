@@ -69,7 +69,10 @@ function GlassSurface({host,...props}) {
       if(match && backdrop) backdrop.style.setProperty('--liquid-refraction',`url("#${match[1]}")`);
     }
   },[]);
-  return <><div ref={layer} className="liquid-react-layer"><LiquidGlass {...props} /></div>{createPortal(<div className="liquid-backdrop" aria-hidden="true" />,host)}</>;
+  return <><div ref={layer} className="liquid-react-layer"><LiquidGlass {...props} /></div>{createPortal(<>
+    {host.matches('.right-panel') && <div className="liquid-material" aria-hidden="true" />}
+    <div className="liquid-backdrop" aria-hidden="true" />
+  </>,host)}</>;
 }
 
 function renderSurface(surface) {
@@ -109,6 +112,7 @@ function removeSurface(host) {
   host.style.removeProperty('--liquid-clip-radius');
   host.querySelector(':scope > .liquid-glass-mount')?.remove();
   host.querySelector(':scope > .liquid-backdrop')?.remove();
+  host.querySelector(':scope > .liquid-material')?.remove();
 }
 function hostDisplayed(host) {
   if(host.matches(clearSelector) && appearanceMode!=='none') return false;
@@ -117,7 +121,7 @@ function hostDisplayed(host) {
   return style.display!=='none' && style.visibility!=='hidden' && host.getClientRects().length>0;
 }
 function collectHosts(node) {
-  if(node.nodeType!==1 || node.closest('.liquid-glass-mount,.liquid-backdrop')) return;
+  if(node.nodeType!==1 || node.closest('.liquid-glass-mount,.liquid-backdrop,.liquid-material')) return;
   const collect=host=>{candidates.add(host);pendingHosts.add(host);};
   if(node.matches(hostSelector)) collect(node);
   for(const host of node.querySelectorAll(hostSelector)) collect(host);
@@ -149,7 +153,7 @@ function scheduleDiscover() { if(!frame) frame=requestAnimationFrame(discoverSur
 new MutationObserver(records=>{
   let removed=false;
   for(const record of records){
-    if(record.target.closest?.('.liquid-glass-mount,.liquid-backdrop')) continue;
+    if(record.target.closest?.('.liquid-glass-mount,.liquid-backdrop,.liquid-material')) continue;
     for(const node of record.addedNodes) collectHosts(node);
     for(const node of record.removedNodes) if(node.nodeType===1 && (node.matches('[data-liquid-surface]') || node.querySelector('[data-liquid-surface]'))) removed=true;
   }
@@ -160,7 +164,7 @@ new MutationObserver(records=>{
   for(const record of records) {
     // Desktop offsets are CSS variables on body, not visibility changes.
     if(record.target===document.body && record.attributeName==='style') continue;
-    if(!record.target.closest('.liquid-glass-mount,.liquid-backdrop')) targets.add(record.target);
+    if(!record.target.closest('.liquid-glass-mount,.liquid-backdrop,.liquid-material')) targets.add(record.target);
   }
   for(const target of targets) {
     if(target.matches(hostSelector)) candidates.add(target);
