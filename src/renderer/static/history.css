@@ -1,0 +1,81 @@
+/* History uses the existing glass surfaces, with restrained table-specific contrast. */
+#page-history{container-type:inline-size;min-width:0}
+#page-history .section-head{margin-bottom:14px!important}
+#page-history .section-head p{margin-top:4px;color:var(--ios-muted,var(--muted))!important}
+#page-history .history-refresh{min-height:34px;padding:7px 16px;font-size:12px}
+.history-toolbar{display:flex;align-items:center;justify-content:space-between;gap:14px;margin:0 0 12px;min-width:0}
+.history-select-all-compact{display:none!important}
+#page-history .history-filters{display:flex;align-items:center;gap:3px;flex:0 0 auto;flex-wrap:nowrap;margin:0!important;padding:4px!important;border:1px solid var(--ios-edge-soft,rgba(100,110,120,.16));border-radius:999px;background:var(--ios-fill,rgba(118,118,128,.12));overflow:auto}
+#page-history .history-filters .chip{flex:0 0 auto;min-height:30px;padding:6px 12px;border:1px solid transparent!important;border-radius:999px!important;background:transparent!important;box-shadow:none!important;color:var(--ios-muted,var(--muted))!important;font-size:12px;font-weight:650;white-space:nowrap}
+#page-history .history-filters .chip.active{background:rgba(255,255,255,.78)!important;border-color:rgba(255,255,255,.45)!important;color:#1b242d!important;box-shadow:0 1px 5px rgba(0,0,0,.10)!important}
+body.theme-dark #page-history .history-filters .chip.active{background:rgba(233,239,248,.22)!important;border-color:rgba(255,255,255,.15)!important;color:#fff!important}
+.history-search-wrap{position:relative;flex:1 1 240px;max-width:340px;min-width:200px}
+.history-search-wrap svg{position:absolute;z-index:1;left:13px;top:50%;width:16px;height:16px;transform:translateY(-50%);color:var(--ios-muted,var(--muted));pointer-events:none}
+body #page-history #historySearch{width:100%;height:38px;min-height:38px;margin:0;padding:7px 12px 7px 37px!important;border-radius:12px!important;font-size:12px!important}
+body #page-history #historySearch::placeholder{color:var(--ios-muted,var(--muted));opacity:1}
+#page-history .history-bulk-bar{gap:8px;margin:0 0 12px;padding:8px 10px;border-radius:12px;box-shadow:none;background:var(--ios-glass-raised,rgba(255,255,255,.68));border-color:var(--ios-edge-soft,rgba(100,110,120,.16))}
+#page-history .history-bulk-bar span{margin-right:auto;color:var(--ios-text,var(--text));font-size:12px}
+#page-history .history-bulk-bar button{min-height:32px;padding:6px 12px;font-size:12px;white-space:nowrap}
+body #page-history .history-table-wrap{max-height:calc(100vh - 205px)!important;overflow:auto!important;border-radius:16px!important}
+#page-history .history-table{width:100%;min-width:900px;table-layout:fixed;border-collapse:collapse}
+.history-col-select{width:42px}.history-col-time{width:104px}.history-col-model{width:140px}.history-col-size{width:92px}.history-col-count{width:48px}.history-col-actions{width:220px}
+#page-history .history-table :is(th,td){padding:12px 8px;border-bottom:1px solid rgba(100,110,120,.16);font-size:12px;line-height:1.45;vertical-align:middle;color:var(--ios-text,var(--text))}
+#page-history .history-table th{position:sticky;top:0;z-index:2;padding-top:11px;padding-bottom:11px;background:rgba(241,244,247,.94)!important;color:#505b68!important;font-size:11px;font-weight:700;white-space:nowrap}
+body.theme-dark #page-history .history-table th{background:rgba(43,46,51,.95)!important;color:#d3d8df!important}
+body.theme-dark #page-history .history-table :is(th,td){border-color:rgba(255,255,255,.10)}
+#page-history .history-table tbody tr:last-child td{border-bottom:0}
+#page-history .history-table tbody tr:not(.history-empty-row):hover{background:rgba(125,145,165,.08)}
+#page-history .history-select-col{text-align:center;padding-left:10px!important;padding-right:4px!important}
+#page-history .history-select-col input{display:inline-block;width:16px!important;height:16px!important;min-height:0!important;margin:0;padding:0!important;vertical-align:middle;accent-color:#0a84ff}
+#page-history .history-time{white-space:nowrap;font-variant-numeric:tabular-nums;color:var(--ios-muted,var(--muted))!important}
+#page-history .history-time span{display:block}
+#page-history .history-batch-cell{min-width:0;overflow-wrap:anywhere}
+#page-history .history-batch-name{color:var(--ios-text,var(--text))!important;font-weight:700;line-height:1.4}
+#page-history .history-batch-cell .small-note{margin-top:4px;color:#535e6a;font-size:11px;line-height:1.5;overflow-wrap:anywhere}
+body.theme-dark #page-history .history-batch-cell .small-note{color:#d0d4da}
+#page-history .history-duration-line{display:flex;align-items:center;flex-wrap:wrap;gap:5px}
+#page-history .history-duration-line .batch-duration{margin:0;padding:2px 7px;font-size:10px;font-weight:650}
+#page-history .history-model{overflow-wrap:anywhere;line-height:1.45}
+#page-history .history-size{white-space:nowrap}
+#page-history .history-count{text-align:center;font-variant-numeric:tabular-nums;white-space:nowrap}
+#page-history .history-count-success{color:#16825e}.theme-dark #page-history .history-count-success{color:#83dfb8}
+#page-history .history-count-fail.has-failures{color:#c53434}.theme-dark #page-history .history-count-fail.has-failures{color:#ff9c98}
+.history-actions{display:flex;align-items:center;justify-content:flex-start;gap:5px;white-space:nowrap}
+body #page-history .history-action{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:32px;height:32px;min-width:32px;min-height:32px;padding:0!important;border:1px solid var(--ios-edge-soft,rgba(110,120,130,.18))!important;border-radius:10px!important;background:var(--ios-glass-control,rgba(118,118,128,.12))!important;color:var(--ios-text,var(--text))!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.12)!important;cursor:pointer;line-height:1;font-size:11px;font-weight:700}
+body #page-history .history-action:hover{background:rgba(10,132,255,.16)!important;filter:none!important;transform:none!important}
+body #page-history .history-action:focus-visible{outline:2px solid #0a84ff;outline-offset:2px}
+body #page-history .history-action svg{width:15px;height:15px;flex:0 0 auto;pointer-events:none}
+body #page-history .history-action.history-open{width:auto;min-width:70px;padding:0 9px!important;gap:5px;color:#0864c5!important}
+body.theme-dark #page-history .history-action.history-open{color:#9fd0ff!important}
+body #page-history .history-action.history-delete-action{color:#b43b3b!important}
+body.theme-dark #page-history .history-action.history-delete-action{color:#ffaaa6!important}
+body #page-history .history-action.history-delete-action:hover,body #page-history .history-action.confirming{background:rgba(255,69,58,.18)!important}
+body #page-history .history-action:disabled{opacity:.55;cursor:wait}
+#page-history .history-empty-cell{text-align:center!important;padding:50px 16px!important;color:var(--ios-muted,var(--muted))!important}
+#page-history #historyLoadMoreRow td{text-align:center;padding:16px}
+
+@container (max-width:900px){
+  #page-history .history-toolbar{align-items:stretch;flex-wrap:wrap;gap:9px}
+  #page-history .history-filters{flex:1 0 100%;min-width:0;max-width:100%}
+  body #page-history .history-select-all-compact{display:inline-flex!important;align-items:center;justify-content:center;flex:0 0 auto;min-height:38px;padding:7px 12px!important;font-size:12px;white-space:nowrap}
+  #page-history .history-search-wrap{flex:1 1 0;max-width:none;min-width:0}
+  body #page-history .history-table-wrap{max-height:none!important;overflow:visible!important;background:transparent!important;background-image:none!important;border:0!important;box-shadow:none!important;backdrop-filter:none!important}
+  body #page-history .history-table,body #page-history .history-table tbody{display:block!important;width:100%!important;min-width:0!important}
+  body #page-history .history-table :is(colgroup,thead){display:none!important}
+  body #page-history .history-table tbody tr:not(.history-empty-row):not(#historyLoadMoreRow){display:grid!important;grid-template-columns:repeat(3,minmax(0,1fr)) 30px;grid-template-areas:"batch batch batch select" "time time time time" "model model size size" "tasks success fail fail" "actions actions actions actions";gap:9px 12px;width:100%!important;margin:0 0 10px;padding:14px;border:1px solid var(--ios-edge-soft,rgba(100,110,120,.2));border-radius:8px;background:var(--ios-glass-raised,rgba(255,255,255,.72));box-shadow:none}
+  body #page-history .history-table tbody tr td{display:block!important;width:auto!important;min-width:0;padding:0!important;border:0!important}
+  body #page-history .history-select-col{grid-area:select;align-self:start;text-align:right}
+  body #page-history .history-time{grid-area:time;display:flex!important;gap:7px}
+  body #page-history .history-batch-cell{grid-area:batch}
+  body #page-history .history-model{grid-area:model}
+  body #page-history .history-size{grid-area:size}
+  body #page-history .history-task-count{grid-area:tasks}
+  body #page-history .history-count-success{grid-area:success}
+  body #page-history .history-count-fail{grid-area:fail}
+  body #page-history .history-action-cell{grid-area:actions}
+  body #page-history .history-table td[data-label]:not(.history-time):not(.history-batch-cell)::before{content:attr(data-label);display:block;margin-bottom:3px;color:var(--ios-muted,var(--muted));font-size:10px;font-weight:600}
+  body #page-history .history-table .history-count{text-align:left}
+  body #page-history .history-actions{padding-top:4px}
+  body #page-history .history-table :is(.history-empty-row,#historyLoadMoreRow){display:block!important;margin:0;padding:0;background:transparent!important;border:0!important}
+  body #page-history .history-table :is(.history-empty-row,#historyLoadMoreRow) td{width:100%!important;padding:30px 10px!important}
+}

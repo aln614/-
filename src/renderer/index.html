@@ -4,11 +4,12 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>TENYING_AI 1.0</title>
-  <link rel="stylesheet" href="/static/style.css?v=1.0.145" />
-  <link rel="stylesheet" href="/static/sidebar.css?v=1.0.145" />
-  <link rel="stylesheet" href="/static/clear-glass.css?v=1.0.145" />
+  <link rel="stylesheet" href="/static/style.css?v=1.0.146" />
+  <link rel="stylesheet" href="/static/sidebar.css?v=1.0.146" />
+  <link rel="stylesheet" href="/static/clear-glass.css?v=1.0.146" />
   <link rel="stylesheet" href="/static/recent-media.css?v=1.0.130" />
   <link rel="stylesheet" href="/static/form-controls.css?v=1.0.132" />
+  <link rel="stylesheet" href="/static/history.css?v=1.0.146" />
 </head>
 <body>
   <div class="app-shell">
@@ -374,16 +375,19 @@
       </section>
 
       <section class="page" id="page-history">
-        <div class="section-head"><div><h1>历史记录</h1><p>统一管理生成批次、运行中任务、已完成和失败记录；支持下载、重复、删除和备注。</p></div><button class="secondary" onclick="refreshAll()">刷新</button></div>
-        <div class="filters history-filters"><button class="chip active" data-filter="all">全部</button><button class="chip" data-filter="生成中">生成中</button><button class="chip" data-filter="已完成">已完成</button><button class="chip" data-filter="部分完成">部分完成</button><button class="chip" data-filter="失败">失败</button></div>
-        <input class="search" id="historySearch" placeholder="搜索批次名 / 备注 / 模型 / 日期" />
+        <div class="section-head"><div><h1>历史记录</h1><p id="historyResultSummary" aria-live="polite">加载中</p></div><button class="secondary history-refresh" onclick="refreshAll()" type="button">刷新</button></div>
+        <div class="history-toolbar">
+          <div class="filters history-filters" aria-label="按状态筛选"><button class="chip active" data-filter="all" type="button">全部</button><button class="chip" data-filter="生成中" type="button">生成中</button><button class="chip" data-filter="已完成" type="button">已完成</button><button class="chip" data-filter="部分完成" type="button">部分完成</button><button class="chip" data-filter="失败" type="button">失败</button></div>
+          <div class="history-search-wrap"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg><input class="search" id="historySearch" type="search" aria-label="搜索历史记录" placeholder="搜索批次、备注、模型或日期" /></div>
+          <button class="secondary history-select-all-compact" id="historySelectAllCompact" type="button" aria-pressed="false">全选</button>
+        </div>
         <div class="history-bulk-bar hidden" id="historyBulkBar">
           <span id="historyBulkCount">已选择 0 个批次</span>
           <button class="primary" id="downloadSelectedBatchesBtn" type="button">下载选中批次</button>
           <button class="danger" id="deleteSelectedBatchesBtn" type="button">删除选中</button>
           <button class="secondary" id="clearHistoryBatchSelectionBtn" type="button">取消选择</button>
         </div>
-        <div class="table-wrap"><table><thead><tr><th class="history-select-col"><input type="checkbox" id="historySelectAllBatches" title="全选 / 取消全选" /></th><th>时间</th><th>批次 / 备注</th><th>模型</th><th>尺寸</th><th>任务</th><th>成功</th><th>失败</th><th>操作</th></tr></thead><tbody id="historyRows"></tbody></table></div>
+        <div class="table-wrap history-table-wrap"><table class="history-table"><colgroup><col class="history-col-select"><col class="history-col-time"><col class="history-col-batch"><col class="history-col-model"><col class="history-col-size"><col class="history-col-count"><col class="history-col-count"><col class="history-col-count"><col class="history-col-actions"></colgroup><thead><tr><th class="history-select-col" scope="col"><input type="checkbox" id="historySelectAllBatches" title="全选 / 取消全选" aria-label="全选当前显示的批次" /></th><th scope="col">时间</th><th scope="col">批次 / 备注</th><th scope="col">模型</th><th scope="col">尺寸</th><th class="history-count" scope="col">任务</th><th class="history-count" scope="col">成功</th><th class="history-count" scope="col">失败</th><th scope="col">操作</th></tr></thead><tbody id="historyRows"></tbody></table></div>
       </section>
 
       <section class="page" id="page-images">
@@ -1095,8 +1099,8 @@
   <script src="/static/prompt-mention-core.js?v=1.0.109"></script>
   <script src="/static/prompt-mentions.js?v=1.0.109"></script>
   <script src="/static/local-appearance.js?v=1.0.133"></script>
-  <script src="/static/liquid-glass-bundle.js?v=1.0.145"></script>
-  <script src="/static/app.js?v=1.0.145"></script>
+  <script src="/static/liquid-glass-bundle.js?v=1.0.146"></script>
+  <script src="/static/app.js?v=1.0.146"></script>
   <script src="/static/library-backdrop-motion.js?v=1.0.127"></script>
   <script src="/static/main-window-drag.js?v=1.0.127"></script>
 </body>
