@@ -43,6 +43,7 @@ Release requirements:
 
 - Tag name should be a semantic version, for example `v1.0.4`.
 - The included GitHub Actions workflow builds the Windows portable `.exe`, Windows LAN client, and macOS arm64/x64 DMG and ZIP packages. All packages are attached to the GitHub release when a matching `v*` tag is pushed.
+- A push to `main` with the exact commit message `release: v<version>` also builds the packages and creates the matching release after all builds succeed.
 - The release asset is named like `TENYING_AI-1.0.4-win-x64.exe`.
 - macOS assets are named `TENYING_AI-<version>-mac-arm64.dmg` / `...-mac-x64.dmg` and have matching ZIP archives.
 - In the app, open Settings and fill the repository as `owner/repo`.

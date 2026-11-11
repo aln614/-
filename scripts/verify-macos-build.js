@@ -48,7 +48,7 @@ assert.equal(context.pickAsset(release,'darwin','x64').name,'TENYING_AI-1.0.149-
 assert.equal(context.pickAsset(release,'linux','x64'),null);
 
 const workflow = fs.readFileSync(path.join(root,'.github','workflows','release.yml'),'utf8');
-for (const expected of ['macos-15','macos-15-intel','arch: arm64','arch: x64','publish-release','merge-multiple: true']) {
+for (const expected of ['macos-15','macos-15-intel','arch: arm64','arch: x64','prepare-release','release: v','publish-release','merge-multiple: true']) {
   assert.ok(workflow.includes(expected), `Release workflow is missing ${expected}`);
 }
 
