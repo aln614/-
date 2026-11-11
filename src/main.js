@@ -68,6 +68,7 @@ const OUTPUT_MJ_DIR_NAME = 'TENYING_AI_1_0_Midjourney';
 const OUTPUT_RUNTIME_DATA_DIR_NAME = '运行数据目录';
 const LEGACY_OUTPUT_RUNTIME_DATA_DIR_NAME = '.TENYING_AI_RuntimeData';
 const DEFAULT_UPDATE_REPO = 'aln614/-';
+const APP_ICON_PATH = path.join(__dirname, '..', 'assets', process.platform === 'darwin' ? 'rocket.png' : 'rocket.ico');
 const DEFAULT_SHORTCUT_SETTINGS = Object.freeze({
   open_app: 'Ctrl+Alt+A',
   toggle_asset_library: 'Ctrl+Shift+A',
@@ -454,8 +455,7 @@ function startPreparedNativeDrag(event, prepared) {
   if (!prepared?.filePath || !fs.existsSync(prepared.filePath)) throw new Error('拖拽副本尚未准备好');
   nativeDragActiveSenders.add(senderId);
   try {
-    const iconPath = path.join(__dirname, '..', 'assets', 'rocket.ico');
-    let icon = nativeImage.createFromPath(iconPath);
+    let icon = nativeImage.createFromPath(APP_ICON_PATH);
     if (!icon.isEmpty()) icon = icon.resize({ width:32, height:32, quality:'good' });
     sender.startDrag({ file:prepared.filePath, icon });
     return { ok:true, name:prepared.name, size:prepared.size };
@@ -832,8 +832,7 @@ function toggleMainWindowFromShortcut() {
 
 function createTray() {
   if (SERVER_ONLY || tray) return;
-  const iconPath = path.join(__dirname, '..', 'assets', 'rocket.ico');
-  tray = new Tray(iconPath);
+  tray = new Tray(APP_ICON_PATH);
   tray.setToolTip(readConfig().app_name || APP_DISPLAY_NAME);
   tray.setContextMenu(Menu.buildFromTemplate([
     { label:'打开主窗口', click:bringMainWindowToFront },
@@ -926,7 +925,7 @@ function showLibraryWindow(kind, toggle = false) {
     width:kind === 'asset' ? 1200 : 1050, height:760, minWidth:720, minHeight:500,
     title:kind === 'asset' ? '资产库' : '提示词库', show:false, frame:false,
     transparent:!!experimentalNativeGlass || !nativeBackdropSupported, backgroundColor:'#00000000', thickFrame:nativeBackdropSupported && !experimentalNativeGlass, hasShadow:false,
-    icon:path.join(__dirname, '..', 'assets', 'rocket.ico'),
+    icon:APP_ICON_PATH,
     webPreferences:{contextIsolation:true, nodeIntegration:false, sandbox:false, webSecurity:true, allowRunningInsecureContent:false, preload:path.join(__dirname,'preload.js')}
   });
   libraryWindows[kind] = win;
@@ -10141,7 +10140,7 @@ function createWindow() {
     width: 1480, height: 960, minWidth: 1180, minHeight: 760, show:!process.argv.includes('--background'), frame:false,
     transparent:!!experimentalNativeGlass || !nativeBackdropSupported,backgroundColor:'#00000000',thickFrame:nativeBackdropSupported && !experimentalNativeGlass,hasShadow:false,
     title: (cfg.app_name || APP_DISPLAY_NAME),
-    icon: path.join(__dirname, '..', 'assets', 'rocket.ico'),
+    icon: APP_ICON_PATH,
     webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: false, webSecurity: true, allowRunningInsecureContent: false, preload: path.join(__dirname, 'preload.js') }
   });
   mainWindow.removeMenu();

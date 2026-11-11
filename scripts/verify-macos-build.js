@@ -7,6 +7,7 @@ const vm = require('node:vm');
 const {createIcnsFromIco} = require('./create-macos-icon');
 
 const root = path.join(__dirname, '..');
+assert.deepEqual([...fs.readFileSync(path.join(root, 'assets', 'rocket.png')).subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
 const icon = createIcnsFromIco(fs.readFileSync(path.join(root, 'assets', 'rocket.ico')));
 assert.equal(icon.toString('ascii', 0, 4), 'icns');
 assert.equal(icon.readUInt32BE(4), icon.length);
@@ -32,6 +33,7 @@ const mainSource = fs.readFileSync(path.join(root, 'src', 'main.js'), 'utf8');
 assert.ok(mainSource.includes("app.getPath('appData')"), 'macOS application data directory is missing.');
 assert.ok(mainSource.includes("app.getPath('cache')"), 'macOS cache directory is missing.');
 assert.ok(mainSource.includes("'/usr/bin/sips'"), 'macOS preview generation is missing.');
+assert.ok(mainSource.includes("process.platform === 'darwin' ? 'rocket.png' : 'rocket.ico'"), 'macOS application icon is missing.');
 const pickerStart = mainSource.indexOf('function pickSoftwareUpdateAsset');
 const pickerEnd = mainSource.indexOf('\nasync function checkSoftwareUpdate', pickerStart);
 assert.ok(pickerStart >= 0 && pickerEnd > pickerStart, 'Platform-aware update asset picker is missing.');
