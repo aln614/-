@@ -37,7 +37,7 @@ fs.writeFileSync(path.join(runtime,'config.json'),JSON.stringify({
       await page.waitForFunction(()=>typeof applyModelToUI==='function' && typeof currentApimartVideoRule==='function');
       await page.setViewportSize({width,height:1000});
       await page.evaluate(catalog=>{apimartPricingState={...catalog,modelAliases:catalog.model_aliases,status:'ready'};},prices);
-      for (const model of ['gpt-image-2.6-flare','gpt-image-2.6-sunburst','gpt-image-2.6-ext','gpt-image-2.6-ext-sunburst','hy-image-v3.5-preview','muse-image-ext']) {
+      for (const model of ['gpt-image-2.6-flare','gpt-image-2.6-sunburst','gpt-image-2.6-ext','gpt-image-2.6-ext-sunburst','hy-image-v3.5-preview','muse-image-ext','seedream-5-5']) {
         await page.selectOption('#modelPreset',model);
         const state = await page.evaluate(()=>({model:$('#model').value,clarity:$('#clarity').value,disabled:$('#clarity').disabled,
           n:Number($('#imageN').value),qualityVisible:$('#officialImageOptions3').style.display!=='none',sizes:[...$('#size').options].map(x=>x.value)}));
@@ -47,6 +47,12 @@ fs.writeFileSync(path.join(runtime,'config.json'),JSON.stringify({
           assert.equal(state.clarity,'auto');
           assert.ok(!state.sizes.includes('custom'));
         } else assert.equal(state.disabled,false);
+        if(model==='seedream-5-5') {
+          assert.equal(state.n,1);
+          assert.ok(state.sizes.includes('custom'));
+          assert.ok(state.sizes.includes('21:9'));
+          assert.equal(await page.locator('#officialImageOptions').isVisible(),true);
+        }
         if(model.includes('gpt-image')) assert.equal(state.qualityVisible,true);
         if(model.includes('-ext') || model.startsWith('hy-')) assert.equal(state.n,1);
       }
@@ -82,6 +88,31 @@ fs.writeFileSync(path.join(runtime,'config.json'),JSON.stringify({
       await page.selectOption('#modelPreset','gemini-3.1-flash-image-preview');
       assert.equal(await page.locator('#outputFormat option[value="gif"]').isDisabled(),true);
       await page.screenshot({path:path.join(output,`${name}-image.png`)});
+      await page.selectOption('#modelPreset','seedream-5-5');
+      await page.selectOption('#clarity','1.5K');
+      await page.selectOption('#size','custom');
+      await page.fill('#customWidth','2048'); await page.fill('#customHeight','1024');
+      await page.evaluate(()=>updateSizeHint());
+      assert.equal(await page.inputValue('#size'),'custom','Seedream 5.5 valid custom pixels must survive UI guards');
+      await page.selectOption('#outputFormat','jpeg');
+      await page.selectOption('#imageBackground','transparent');
+      assert.equal(await page.inputValue('#outputFormat'),'png','transparent Seedream output must use PNG');
+      assert.equal(await page.locator('#outputFormat option[value="jpeg"]').isDisabled(),true);
+      assert.equal(await page.locator('#outputFormat option[value="webp"]').isDisabled(),true);
+      assert.match(await page.locator('#sizeHint').innerText(),/不提交 resolution/);
+      assert.doesNotMatch(await page.locator('#sizeHint').innerText(),/resolution=1\.5K/);
+      assert.equal(await page.locator('#imageBackground option[value="transparent"]').innerText(),'transparent 透明');
+      const seedreamEstimate = await page.evaluate(()=>{
+        mainImages.length=0; refImages.length=0;
+        mainImages.push({name:'main.png'}); refImages.push({name:'reference.png'});
+        const result=getCurrentModelUsageContext();
+        mainImages.length=0; refImages.length=0;
+        return {price:result.variant?.credits,referenceImageCount:result.referenceImageCount,perTaskCredits:result.perTaskCredits};
+      });
+      assert.equal(seedreamEstimate.price,0.13);
+      assert.equal(seedreamEstimate.referenceImageCount,2);
+      assert.ok(Math.abs(seedreamEstimate.perTaskCredits - 0.234) < 1e-9);
+      await page.screenshot({path:path.join(output,`${name}-seedream55.png`)});
       await page.evaluate(()=>setPage('video'));
       for (const [model,max] of [['kling-v4',30],['kling-v4-flash',20],['gemini-omni-1.2-flash',15],['gemini-omni-1.2-flash-ext',15],['muse-video-ext',10]]) {
         await page.selectOption('#videoModel',model);

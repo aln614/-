@@ -533,8 +533,13 @@ function getCurrentModelUsageContext(){
   const outputCount = typeof isMultiNImageModel === 'function' && isMultiNImageModel(modelId)
     ? Math.max(1, Number($('#imageN')?.value || 1))
     : 1;
-  const uses = variant ? estimateUsesForPrice(variant.credits, outputCount) : null;
-  return {modelId, label, resolution, quality, outputCount, priceModelId:resolved.priceModelId, entry:resolved.entry, variant, uses, formatPricingUnknown};
+  const referenceImageCount = modelId === 'seedream-5-5'
+    ? (Array.isArray(mainImages) && mainImages.length ? 1 : 0) + (Array.isArray(refImages) ? refImages.length : 0)
+    : 0;
+  const referenceCredits = Number(resolved.entry?.referenceImageCredits || 0) * referenceImageCount;
+  const perTaskCredits = variant ? Number(variant.credits) * outputCount + referenceCredits : null;
+  const uses = variant ? estimateUsesForPrice(perTaskCredits, 1) : null;
+  return {modelId, label, resolution, quality, outputCount, referenceImageCount, referenceCredits, perTaskCredits, priceModelId:resolved.priceModelId, entry:resolved.entry, variant, uses, formatPricingUnknown};
 }
 function renderModelUsageEstimate(){
   const button = $('#modelUsageEstimateBtn');
@@ -568,8 +573,9 @@ function renderModelUsageEstimate(){
   }else{
     const countText = formatModelUsageCount(context.uses);
     text = context.uses === 0 ? '不足 1 次' : (context.uses === Infinity ? '不限' : `约 ${countText} 次`);
-    const perUse = Number(context.variant.credits) * context.outputCount;
-    title = `${context.label} · ${context.variant.spec} · ${context.quality} · ${context.outputCount} 张/次，约 ${perUse.toFixed(6).replace(/0+$/,'').replace(/\.$/,'')} Credits/次`;
+    const perUse = Number(context.perTaskCredits);
+    const referenceNote = context.referenceImageCount ? `（含 ${context.referenceImageCount} 张参考图费用）` : '';
+    title = `${context.label} · ${context.variant.spec} · ${context.quality} · ${context.outputCount} 张/次，约 ${perUse.toFixed(6).replace(/0+$/,'').replace(/\.$/,'')} Credits/次${referenceNote}`;
     state = 'ready';
   }
   value.textContent = text;
@@ -599,7 +605,7 @@ function renderModelUsageDetails(){
     const pricingText = context.entry?.metered
       ? '按 Token 动态计费'
       : context.variant
-        ? `${repeatsResolution ? '' : `${context.variant.spec} 价格档 · `}${modelUsagePriceText(context.variant)} · ${context.outputCount} 张/次`
+        ? `${repeatsResolution ? '' : `${context.variant.spec} 价格档 · `}${modelUsagePriceText(context.variant)} · ${context.outputCount} 张/次${context.referenceImageCount ? ` + ${context.referenceImageCount} 张参考图` : ''}`
         : '暂无公开固定单价';
     const usesText = context.entry?.metered || !context.variant
       ? '无法固定估算'
@@ -1634,6 +1640,7 @@ const APIMART_MODEL_OPTIONS = [
   ['seedream-5-0-lite','Seedream-5.0 Lite'],
   ['seedream-5-0-pro','Seedream-5.0 Pro'],
   ['seedream-5-0-flash','Seedream-5.0 Flash'],
+  ['seedream-5-5','Seedream 5.5'],
   ['flux-kontext-pro','Flux Kontext Pro'],
   ['flux-kontext-max','Flux Kontext Max'],
   ['flux-2-flex','Flux 2.0 Flex'],
@@ -1914,8 +1921,9 @@ function isSeedream5OutputFormatModel(model){
   return isSeedream5LiteModel(model) || isSeedream5SingleImageModel(model);
 }
 function isSeedream5SingleImageModel(model){
-  return isSeedream5ProModel(model) || imageModelKey(model) === 'seedream-5-0-flash';
+  return isSeedream5ProModel(model) || ['seedream-5-0-flash','seedream-5-5'].includes(imageModelKey(model));
 }
+function isSeedream55Model(model){ return imageModelKey(model) === 'seedream-5-5'; }
 function isFluxKontextModel(model){
   return ['flux-kontext-pro','flux-kontext-max'].includes(imageModelKey(model));
 }
@@ -1976,6 +1984,14 @@ function applyDocumentedImageUiGuard(model){
     clampImageOutputCount(1);
     if(m !== 'hy-image-v3.5-preview' || !/^\d+x\d+$/i.test(sizeValue)) setSizeIfUnsupported(m === 'muse-image-ext' ? ['auto','1:1','16:9','9:16','4:3','3:4','3:2','2:3'] : ['auto','1:1','16:9','9:16','4:3','3:4','3:2','2:3','4:5','5:4','21:9'],'auto');
     if(m === 'hy-image-v3.5-preview') setResolution(['1K','2K','4K'],'1K');
+  }else if(isSeedream55Model(m)){
+    const custom = String(sizeValue || '').match(/^(\d+)x(\d+)$/i);
+    const pixels = custom ? Number(custom[1]) * Number(custom[2]) : 0;
+    const ratio = custom && Number(custom[2]) > 0 ? Number(custom[1]) / Number(custom[2]) : 0;
+    const validCustom = custom && pixels >= 921600 && pixels <= 4624220 && ratio >= 1 / 16 && ratio <= 16;
+    if(!validCustom) setSizeIfUnsupported(['auto','custom','1:1','4:3','3:4','16:9','9:16','3:2','2:3','2:1','1:2','21:9'],'auto');
+    setResolution(['1K','1.5K','2K'],'2K');
+    clampImageOutputCount(1);
   }else if(['gemini-2.5-flash-image-preview','gemini-2.5-flash-image-preview-official'].includes(m)){
     setSizeIfUnsupported(['1:1','3:2','2:3','4:3','3:4','16:9','9:16','5:4','4:5','21:9']);
     setResolution(['1K'], '1K');
@@ -2019,6 +2035,7 @@ function applyFluxImageUiGuard(model){
   const profile = isNanoBanana21Model(model) ? imageModelKey(model) : isMaiImage26Model(model) ? 'mai-image-26'
     : ['flux-3-image','flux-3-image-klein'].includes(imageModelKey(model)) ? 'flux-3-image'
     : ['hy-image-v3.5-preview','muse-image-ext'].includes(imageModelKey(model)) ? imageModelKey(model)
+    : isSeedream55Model(model) ? 'seedream-5-5'
     : imageModelKey(model) === 'seedream-5-0-flash' ? 'seedream-5-flash'
     : isFluxKontextModel(model) ? 'flux-kontext' : (isFlux2Model(model) ? 'flux-2' : (isGptImage25ExtModel(model) ? 'gpt-image-25-ext' : 'default'));
   if(size.dataset.modelProfile === profile){
@@ -2063,12 +2080,13 @@ function applyFluxImageUiGuard(model){
     clarity.innerHTML = muse ? '<option value="auto">auto</option>' : ['1K','2K','4K'].map(value=>`<option value="${value}">${value}</option>`).join('');
     clarity.value = muse ? 'auto' : ['1K','2K','4K'].includes(oldClarity) ? oldClarity : '1K';
     clarity.disabled = muse;
-  }else if(profile === 'seedream-5-flash'){
+  }else if(profile === 'seedream-5-flash' || profile === 'seedream-5-5'){
     const sizes = ['auto','custom','1:1','4:3','3:4','16:9','9:16','3:2','2:3','2:1','1:2','21:9'];
     size.innerHTML = sizes.map(value=>`<option value="${value}">${value === 'auto' ? 'auto 自动' : value === 'custom' ? '自定义宽高' : value}</option>`).join('');
     size.value = sizes.includes(oldSize) ? oldSize : /^\d+x\d+$/i.test(oldSize) ? 'custom' : 'auto';
     clarity.innerHTML = ['1K','1.5K','2K'].map(value=>`<option value="${value}">${value}</option>`).join('');
-    clarity.value = ['1K','1.5K','2K'].includes(oldClarity) ? oldClarity : '1K';
+    const defaultResolution = profile === 'seedream-5-5' ? '2K' : '1K';
+    clarity.value = ['1K','1.5K','2K'].includes(oldClarity) ? oldClarity : defaultResolution;
     clarity.disabled = false;
   }else if(profile === 'gpt-image-25-ext'){
     size.innerHTML = ['auto','1:1','16:9','9:16','4:3','3:4','3:2','2:3','5:4','4:5','21:9'].map(value=>`<option value="${value}">${value === 'auto' ? 'auto 自动' : value}</option>`).join('');
@@ -2131,10 +2149,11 @@ function applyQwenImage3UiGuard(model){
 }
 function applySeedream5SingleImageUiGuard(model){
   if(currentImagePlatform() !== 'apimart' || !isSeedream5SingleImageModel(model)) return;
-  const defaultResolution = isSeedream5ProModel(model) ? '1.5K' : '1K';
+  const defaultResolution = isSeedream5ProModel(model) ? '1.5K' : isSeedream55Model(model) ? '2K' : '1K';
   if($('#clarity') && !['1K','1.5K','2K'].includes(String($('#clarity').value || '').toUpperCase())) $('#clarity').value = defaultResolution;
   if($('#claritySettings')) $('#claritySettings').value = $('#clarity')?.value || defaultResolution;
   if($('#outputFormat') && !['jpeg','png'].includes(String($('#outputFormat').value || '').toLowerCase())) $('#outputFormat').value = 'jpeg';
+  if(isSeedream55Model(model) && $('#imageBackground')?.value === 'transparent' && $('#outputFormat')) $('#outputFormat').value = 'png';
   if($('#imageN')) $('#imageN').value = '1';
 }
 function updateOfficialImageOptions(){
@@ -2150,6 +2169,7 @@ function updateOfficialImageOptions(){
   const gptImage25 = !grsai && (isGptImage25Model(model) || isGptImage26ExtModel(model));
   const grokImage20 = !grsai && imageModelKey(model) === 'grok-imagine-image-2.0';
   const flux = !grsai && isFluxImageModel(model);
+  const seedream55 = !grsai && isSeedream55Model(model);
   const seedreamFlash = !grsai && imageModelKey(model) === 'seedream-5-0-flash';
   const showOutput = !grsai && (official || gptImage25 || isSeedream5OutputFormatModel(model) || flux);
   const showN = !grsai && isMultiNImageModel(model);
@@ -2169,8 +2189,10 @@ function updateOfficialImageOptions(){
   const row3 = $('#officialImageOptions3'); if(row3) row3.style.display = showQuality ? '' : 'none';
   const backgroundWrap = $('#imageBackground')?.closest('div');
   if(backgroundWrap) backgroundWrap.style.display = flux || seedreamFlash || isGptImage26ExtModel(model) || imageModelKey(model) === 'gpt-image-2-official' ? 'none' : '';
+  const transparentOption = $('#imageBackground option[value="transparent"]');
+  if(transparentOption) transparentOption.textContent = seedream55 ? 'transparent 透明' : 'transparent 透明（官方会降级）';
   if($('#outputFormat')) [...$('#outputFormat').options].forEach(option=>{
-    const supported = (!seedreamFlash || ['png','jpeg'].includes(option.value)) && (!['gif','svg'].includes(option.value) || (isGptImage26Model(model) && !(option.value === 'svg' && isGptImage26ExtModel(model))));
+    const supported = (!seedreamFlash || ['png','jpeg'].includes(option.value)) && (!seedream55 || (['png','jpeg'].includes(option.value) && ($('#imageBackground')?.value !== 'transparent' || option.value === 'png'))) && (!['gif','svg'].includes(option.value) || (isGptImage26Model(model) && !(option.value === 'svg' && isGptImage26ExtModel(model))));
     option.hidden = !supported;
     option.disabled = !supported;
   });
@@ -2197,7 +2219,7 @@ function updateOfficialImageOptions(){
     option.hidden = option.disabled;
   });
   const compWrap = $('#outputCompression')?.closest('div');
-  if(compWrap) compWrap.style.display = grokImage20 || seedreamFlash || isGptImage26ExtModel(model) ? 'none' : '';
+  if(compWrap) compWrap.style.display = grokImage20 || seedreamFlash || seedream55 || isGptImage26ExtModel(model) ? 'none' : '';
   if(compWrap) compWrap.style.opacity = (fmt === 'jpeg' || fmt === 'webp') ? '1' : '.45';
 }
 function applyModelToUI(model){
@@ -2313,6 +2335,13 @@ function updateSizeHint(){
   }
   if(imageModelKey(model) === 'hy-image-v3.5-preview'){
     $('#sizeHint').textContent = `HY Image 3.5：size=${actual}，resolution=${clarity}；单次 1 张，最多 5 张参考图；自定义宽高 256-8192px，总像素不超过 8294400。`;
+    return;
+  }
+  if(isSeedream55Model(model)){
+    const sizeIsTier = ['1K','1.5K','2K'].includes(String(v).toUpperCase());
+    const sizeIsPixel = /^\d+x\d+$/i.test(v);
+    const resolutionText = sizeIsTier || sizeIsPixel ? '不提交 resolution' : `resolution=${clarity}`;
+    $('#sizeHint').textContent = `Seedream 5.5：size=${actual}，${resolutionText}；支持透明 PNG、1 张输出、最多 10 张参考图；自定义尺寸 921600-4624220 像素，比例 1:16-16:1。`;
     return;
   }
   if(isFlux2Model(model)){
@@ -5232,6 +5261,7 @@ $('#clarity')?.addEventListener('change', ()=>{ if($('#claritySettings')) $('#cl
 $('#claritySettings')?.addEventListener('change', ()=>{ if($('#clarity')) $('#clarity').value = $('#claritySettings').value; updateSizeHint(); renderModelUsageEstimate(); });
 $('#imageQuality')?.addEventListener('change', renderModelUsageEstimate);
 $('#imageN')?.addEventListener('change', renderModelUsageEstimate);
+$('#imageBackground')?.addEventListener('change', ()=>{ updateOfficialImageOptions(); renderModelUsageEstimate(); });
 $('#outputFormat')?.addEventListener('change', ()=>{ updateOfficialImageOptions(); renderModelUsageEstimate(); });
 $('#gpt26EditMode')?.addEventListener('change', updateOfficialImageOptions);
 $('#apiKey')?.addEventListener('input', updateApiKeyWarning);

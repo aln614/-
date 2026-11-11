@@ -367,7 +367,7 @@ const APIMART_IMAGE_MODELS = [
   'gpt-image-2.5-ext','gpt-image-2.5-ext-sunburst',
   'gpt-image-2.6-flare','gpt-image-2.6-sunburst','gpt-image-2.6-ext','gpt-image-2.6-ext-sunburst',
   'hy-image-v3.5-preview','muse-image-ext',
-  'seedream-4.0','seedream-4-0','seedream-4.5','seedream-5-0-lite','seedream-5.0-lite','seedream-5-0-pro','seedream-5.0-pro','seedream-5-0-flash',
+  'seedream-4.0','seedream-4-0','seedream-4.5','seedream-5-0-lite','seedream-5.0-lite','seedream-5-0-pro','seedream-5.0-pro','seedream-5-0-flash','seedream-5-5',
   'doubao-seedance-4-0','doubao-seedream-4.0','doubao-seedream-4-0',
   'doubao-seedream-5-0-lite','doubao-seedream-5.0-lite',
   'doubao-seedream-5-0-pro','doubao-seedream-5.0-pro',
@@ -474,6 +474,20 @@ const SEEDREAM5_FLASH_RULE = {
   ...SEEDREAM5_PRO_RULE,
   sizes: ['auto','1:1','4:3','3:4','16:9','9:16','3:2','2:3','2:1','1:2','21:9'],
   defaultResolution: '1K', allowOutputCompression: false,
+  allowOptimizePrompt: true, optimizePromptObject: true,
+  optimizePromptOptions: ['standard'], defaultOptimizePrompt: 'standard'
+};
+const SEEDREAM5_5_RULE = {
+  endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 10,
+  strictReferenceLimit: true, maxImageBytes: 30 * 1024 * 1024,
+  nMin: 1, nMax: 1, defaultN: 1,
+  sizes: ['auto','1:1','4:3','3:4','16:9','9:16','3:2','2:3','2:1','1:2','21:9'],
+  sizeTiers: ['1K','1.5K','2K'], defaultSize: 'auto',
+  customPixelMin: 921600, customPixelMax: 4624220, minAspectRatio: 1 / 16, maxAspectRatio: 16,
+  resolutions: ['1K','1.5K','2K','auto'], defaultResolution: '2K', omitResolutionWithCustomSize: true,
+  outputFormats: ['png','jpeg'], defaultOutputFormat: 'png', allowOutputFormat: true,
+  allowOutputCompression: false, allowBackground: true, backgrounds: ['auto','transparent','opaque'],
+  forcePngWhenTransparent: true, allowWatermark: true,
   allowOptimizePrompt: true, optimizePromptObject: true,
   optimizePromptOptions: ['standard'], defaultOptimizePrompt: 'standard'
 };
@@ -672,6 +686,7 @@ const APIMART_MODEL_RULES = {
   'doubao-seedream-5.0-lite': SEEDREAM5_LITE_RULE,
   'seedream-5-0-pro': SEEDREAM5_PRO_RULE,
   'seedream-5-0-flash': SEEDREAM5_FLASH_RULE,
+  'seedream-5-5': SEEDREAM5_5_RULE,
   'seedream-5.0-pro': SEEDREAM5_PRO_RULE,
   'doubao-seedream-5-0-pro': SEEDREAM5_PRO_RULE,
   'doubao-seedream-5.0-pro': SEEDREAM5_PRO_RULE,
@@ -718,6 +733,7 @@ function normalizeRuleResolution(value, rule = DEFAULT_APIMART_IMAGE_RULE) {
 }
 function sanitizeApimartImagePayload(rawPayload = {}, model = '') {
   const rule = getApimartImageRule(model);
+  let sizeIsTier = false;
   const payload = {
     model: rule.apiModel || String(model || rawPayload.model || '').trim() || 'gemini-3.1-flash-image-preview',
     prompt: rawPayload.prompt,
@@ -731,7 +747,9 @@ function sanitizeApimartImagePayload(rawPayload = {}, model = '') {
     payload.version = version;
   }
   if (!rule.noSize && !(hasRefs && rule.dimensionsTextOnly)) {
-    let rawSize = String(rawPayload.size || rule.defaultSize || 'auto').replace('×','x').replace(/\s+/g,'').toLowerCase();
+    let rawSize = String(rawPayload.size || rule.defaultSize || 'auto').replace('×','x').replace(/\s+/g,'');
+    sizeIsTier = (rule.sizeTiers || []).includes(rawSize.toUpperCase());
+    rawSize = sizeIsTier ? rawSize.toUpperCase() : rawSize.toLowerCase();
     if (rawSize === 'none') rawSize = rule.defaultSize || '1:1';
     const sizes = rule.sizes || null;
     if (rule.arbitraryAspectRatios && rawSize !== 'auto' && !/^\d+x\d+$/i.test(rawSize)) {
@@ -739,7 +757,7 @@ function sanitizeApimartImagePayload(rawPayload = {}, model = '') {
       const value = ratio && Number(ratio[2]) > 0 ? Number(ratio[1]) / Number(ratio[2]) : 0;
       if (value < rule.minAspectRatio || value > rule.maxAspectRatio) rawSize = rule.defaultSize;
     }
-    if (sizes && !sizes.includes(rawSize) && !/^\d+x\d+$/i.test(rawSize)) rawSize = rule.defaultSize || sizes[0] || '1:1';
+    if (sizes && !sizeIsTier && !sizes.includes(rawSize) && !/^\d+x\d+$/i.test(rawSize)) rawSize = rule.defaultSize || sizes[0] || '1:1';
     if (sizes && rule.noCustomSize && /^\d+x\d+$/i.test(rawSize)) rawSize = rule.defaultSize || sizes[0] || '1:1';
     const customSize = rawSize.match(/^(\d+)x(\d+)$/i);
     if (customSize && (rule.customSizeMin || rule.customPixelMin || rule.customPixelMax)) {
@@ -762,7 +780,9 @@ function sanitizeApimartImagePayload(rawPayload = {}, model = '') {
     payload[rule.sizeParam || 'size'] = rawSize || rule.defaultSize || 'auto';
     if (rule.omitAutoSize && rawSize === 'auto') delete payload[rule.sizeParam || 'size'];
   }
-  if (!rule.noResolution && !(hasRefs && rule.dimensionsTextOnly)) payload.resolution = normalizeRuleResolution(rawPayload.resolution, rule);
+  const modelSize = payload[rule.sizeParam || 'size'];
+  const omitResolution = rule.omitResolutionWithCustomSize && (sizeIsTier || /^\d+x\d+$/i.test(String(modelSize || '')));
+  if (!rule.noResolution && !(hasRefs && rule.dimensionsTextOnly) && !omitResolution) payload.resolution = normalizeRuleResolution(rawPayload.resolution, rule);
   if (hasRefs && rule.imageResolutions && !rule.imageResolutions.includes(payload.resolution)) {
     payload.resolution = rule.defaultResolution || rule.imageResolutions[0];
   }
@@ -822,6 +842,7 @@ function sanitizeApimartImagePayload(rawPayload = {}, model = '') {
       if (payload.background === 'auto') delete payload.background;
     }
   }
+  if (rule.forcePngWhenTransparent && payload.background === 'transparent' && payload.output_format !== 'png') payload.output_format = 'png';
   if (payload.background === 'transparent' && payload.output_format === 'jpeg') payload.background = 'auto';
   const outputCompression = parseInt(rawPayload.output_compression ?? rawPayload.outputCompression, 10);
   if (rule.allowOutputFormat && rule.allowOutputCompression !== false && Number.isFinite(outputCompression) && ['jpeg','webp'].includes(payload.output_format)) payload.output_compression = Math.max(0, Math.min(100, outputCompression));
@@ -1046,7 +1067,11 @@ function urlJoin(base, p) { return cleanBase(base) + p; }
 
 function sizeToAspect(size, model = '', clarity = '1K') {
   const raw = String(size || 'auto').replace('×','x').replace(/\s+/g,'').toLowerCase();
-  if(APIMART_IMAGE_MODELS.includes(String(model || '').toLowerCase())) return APIMART_RATIO_SET.has(raw) || /^\d+x\d+$/i.test(raw) || (getApimartImageRule(model).arbitraryAspectRatios && /^\d+:\d+$/.test(raw)) ? raw : 'auto';
+  if(APIMART_IMAGE_MODELS.includes(String(model || '').toLowerCase())) {
+    const rule = getApimartImageRule(model);
+    const sizeTier = (rule.sizeTiers || []).find(value=>value.toLowerCase() === raw);
+    return sizeTier || (APIMART_RATIO_SET.has(raw) || /^\d+x\d+$/i.test(raw) || (rule.arbitraryAspectRatios && /^\d+:\d+$/.test(raw)) ? raw : 'auto');
+  }
   return resolveModelSize(model, size, clarity);
 }
 

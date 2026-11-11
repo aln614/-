@@ -84,6 +84,7 @@ function main() {
 
   const required = [
     'seedream-5-0-flash',
+    'seedream-5-5',
     'seedream-5-0-pro',
     'flux-kontext-pro',
     'flux-kontext-max',
@@ -140,7 +141,9 @@ function main() {
     "'grok-imagine-image-2.0'",
     'maxReferencesAndOutputs: 15',
     'customPixelMin: 921600',
-    'const Z_IMAGE_TURBO_RULE'
+    'const Z_IMAGE_TURBO_RULE',
+    'const SEEDREAM5_5_RULE',
+    "'seedream-5-5': SEEDREAM5_5_RULE"
   ];
   const missingRules = requiredRuleSnippets.filter(snippet => !apiClientJs.includes(snippet));
   if (missingRules.length) fail(`Image request rules are incomplete: ${missingRules.join(', ')}`);

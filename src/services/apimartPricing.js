@@ -45,6 +45,7 @@ const FIXED_IMAGE_PRICES = Object.freeze({
   'nano-banana-ext': [['default', 0.125]],
   'nano-banana-2-lite-ext': [['default', 0.125]],
   'seedream-5-0-pro': [['default', 0.36], ['1K', 0.2925], ['1K-layer', 0.14625], ['2K', 0.585], ['2K-layer', 0.2925]],
+  'seedream-5-5': [['default',0.2275], ['1K',0.13], ['1.5K',0.13], ['2K',0.2275]],
   'nano-banana-2-ext': [['default', 0.15], ['0.5K', 0.15], ['1K', 0.15], ['2K', 0.2], ['4K', 0.25]],
   'grok-imagine-1.5-ext': [['default', 0.15]],
   'grok-imagine-1.5-edit-ext': [['default', 0.15]],
@@ -182,6 +183,8 @@ function makeFixedModel(id, rows, aliases = []) {
 function fallbackModels() {
   const models = {};
   Object.entries(FIXED_IMAGE_PRICES).forEach(([id, rows]) => { models[id] = makeFixedModel(id, rows); });
+  models['seedream-5-5'].referenceImageCredits = 0.052;
+  models['seedream-5-5'].note = '参考图另计 0.052 Credits/张；当前可用次数按已上传图片数计入参考图费用';
   Object.entries(FIXED_VIDEO_PRICES).forEach(([id, value]) => {
     models[id] = makeFixedModel(id, (value.rows || []).map(([spec, credits]) => [spec, credits, value.unit || '秒']));
     models[id].category = 'video';
@@ -208,11 +211,16 @@ function mergePricingModels(liveModels = {}) {
     const current = merged[id] || { id, aliases:[], variants:[], metered:false, note:'' };
     // Do not turn a conflicting default price into a precise per-resolution estimate.
     if (current.unverifiedPricing) return;
-    const variants = Array.isArray(value.variants) && value.variants.length ? value.variants : current.variants;
+    const variants = (Array.isArray(value.variants) && value.variants.length ? value.variants : current.variants).map(item=>({...item}));
+    if(id === 'seedream-5-5' && !variants.some(item=>normalizeSpec(item.spec).toUpperCase() === '1.5K')){
+      const oneK = variants.find(item=>normalizeSpec(item.spec).toUpperCase() === '1K');
+      if(oneK) variants.push({...oneK, spec:'1.5K'});
+    }
     merged[id] = {
       ...current,
       ...value,
       id,
+      note: value.note || current.note || '',
       aliases: Array.from(new Set([...(current.aliases || []), ...(value.aliases || [])])),
       variants
     };
