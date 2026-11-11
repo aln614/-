@@ -2214,12 +2214,14 @@ function applyModelToUI(model){
     $('#model').value = v;
     $('#model').classList.add('show');
   }
+  syncSelectDisplayTitle($('#modelPreset'));
   updateOfficialImageOptions();
 }
 function updateModelFromPreset(){
   const v = $('#modelPreset').value;
   if(v === 'custom'){ $('#model').classList.add('show'); $('#model').focus(); }
   else { $('#model').value = v; $('#model').classList.remove('show'); }
+  syncSelectDisplayTitle($('#modelPreset'));
   updateSizeHint();
   updateOfficialImageOptions();
   renderModelUsageEstimate();
@@ -2358,7 +2360,16 @@ function updateLanDisplay(c = {}){
   if($('#servicePort')) $('#servicePort').value = port;
   if($('#localUrl')) $('#localUrl').textContent = localUrl;
   if($('#lanUrl')) $('#lanUrl').textContent = lanUrl;
-  $('#lanState').textContent = c.lan_enabled ? `局域网：${lanUrl}` : '局域网：未开启';
+  const lanLabel = c.lan_enabled ? `局域网：${lanUrl}` : '局域网：未开启';
+  $('#lanState').textContent = lanLabel;
+  $('#lanState').title = lanLabel;
+  $('#lanState').setAttribute('aria-label', lanLabel);
+}
+
+function syncSelectDisplayTitle(select){
+  if(!select) return;
+  const label = select.selectedOptions?.[0]?.textContent?.trim() || String(select.value || '').trim();
+  select.title = label;
 }
 
 
@@ -8607,6 +8618,7 @@ function updateVideoDurationOptions(){
   updateVideoDurationDisplay();
 }
 function updateVideoResolutionOptions(){
+  syncSelectDisplayTitle($('#videoModel'));
   const resolution = $('#videoResolution');
   if(!resolution) return;
   const old = resolution.value;

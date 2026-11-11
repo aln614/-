@@ -17,6 +17,8 @@ fs.writeFileSync(path.join(data,'config.json'),JSON.stringify({port:18784,shortc
     await page.waitForURL('http://127.0.0.1:18784/**',{timeout:30000});
     await page.waitForFunction(()=>window.liquidGlassSettings && document.querySelector('.topbar .liquid-backdrop'));
     fs.mkdirSync(path.join(root,'test-results'),{recursive:true});
+    const pageIds=['home','midjourney','history','images','video','video-manage','chat','api','lan','public','logs','settings'];
+    const pageIssues=[];
     for(const mode of ['light','dark']) for(const size of [{width:1480,height:960},{width:1180,height:760}]) {
       await app.evaluate(({BrowserWindow},size)=>BrowserWindow.getAllWindows().find(w=>!w.webContents.getURL().includes('library=')).setSize(size.width,size.height),size);
       await page.evaluate(mode=>applyThemeMode(mode),mode);
@@ -24,17 +26,75 @@ fs.writeFileSync(path.join(data,'config.json'),JSON.stringify({port:18784,shortc
       await page.waitForTimeout(350);
       const issues=await page.evaluate(()=>{
         const ids=['apiKey','modelPreset','size','clarity','startBatchBtn','promptLibraryBtn','assetLibraryBtn','mainWindowClose'];
-        return ids.flatMap(id=>{
+        const issues=ids.flatMap(id=>{
           const el=document.getElementById(id),r=el.getBoundingClientRect();
           if(!r.width || !r.height || r.left<0 || r.right>innerWidth || r.top<0 || r.bottom>innerHeight) return [id+' is outside the viewport'];
           const hit=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);
           return hit && (el===hit || el.contains(hit)) ? [] : [id+' is obscured'];
         });
+        const model=document.getElementById('modelPreset');
+        if(model && model.title!==model.selectedOptions[0]?.textContent.trim()) issues.push('selected model label is not available as a tooltip');
+        const lan=document.getElementById('lanState');
+        if(lan && (!lan.title || lan.title!==lan.textContent || lan.getAttribute('aria-label')!==lan.textContent)) issues.push('LAN address tooltip or accessible label is incomplete');
+        return issues;
       });
       assert.deepEqual(issues,[],mode+' '+size.width+'px controls must be visible and clickable');
       await page.screenshot({path:path.join(root,'test-results',`interface-${mode}-${size.width}.png`)});
+
+      for(const id of pageIds){
+        await page.locator(`.nav[data-page="${id}"]`).click();
+        await page.waitForFunction(id=>document.querySelector(`#page-${id}`)?.classList.contains('active'),id);
+        await page.waitForTimeout(80);
+        const result=await page.evaluate(()=>{
+          const page=document.querySelector('.page.active');
+          const clipped=[...page.querySelectorAll('p,span,label,h1,h2,h3,.field-help,.calc-box,.size-hint,.estimate')].flatMap(el=>{
+            if(!el.getClientRects().length || !el.textContent.trim()) return [];
+            const style=getComputedStyle(el),rect=el.getBoundingClientRect();
+            if(style.overflowX!=='hidden' && style.overflowX!=='clip' && style.textOverflow!=='ellipsis' && el.scrollWidth<=el.clientWidth+2) return [];
+            if(el.scrollWidth<=el.clientWidth+2 || style.textOverflow==='ellipsis') return [];
+            return [{text:el.textContent.trim().replace(/\s+/g,' ').slice(0,70),width:Math.round(el.clientWidth),scrollWidth:el.scrollWidth,overflow:style.overflowX,rect:{left:Math.round(rect.left),right:Math.round(rect.right)}}];
+          });
+          const horizontalOverflow=page.scrollWidth>page.clientWidth+3;
+          const blocked=[...page.querySelectorAll('button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled)')].flatMap(el=>{
+            const r=el.getBoundingClientRect();
+            if(!r.width || !r.height || r.left<0 || r.top<0 || r.right>innerWidth || r.bottom>innerHeight) return [];
+            for(let parent=el.parentElement;parent;parent=parent.parentElement){
+              const style=getComputedStyle(parent),clip=parent.getBoundingClientRect();
+              if(['auto','scroll','hidden','clip'].includes(style.overflowY) && (r.top<clip.top-1 || r.bottom>clip.bottom+1)) return [];
+              if(['auto','scroll','hidden','clip'].includes(style.overflowX) && (r.left<clip.left-1 || r.right>clip.right+1)) return [];
+            }
+            const x=r.left+r.width/2;
+            const y=r.top+r.height/2;
+            const hit=document.elementFromPoint(x,y);
+            return hit && (hit===el || el.contains(hit)) ? [] : [{tag:el.tagName,id:el.id||'',text:(el.innerText||el.getAttribute('aria-label')||'').trim().slice(0,45),rect:{left:Math.round(r.left),top:Math.round(r.top),right:Math.round(r.right),bottom:Math.round(r.bottom)},hit:{tag:hit?.tagName||'',id:hit?.id||'',class:String(hit?.className||'').slice(0,80)}}];
+          });
+          return {id:page.id,horizontalOverflow,clipped,blocked};
+        });
+        await page.screenshot({path:path.join(root,'test-results',`page-${mode}-${size.width}-${id}.png`)});
+        await page.evaluate(()=>{const main=document.querySelector('.main');main.scrollTop=main.scrollHeight;});
+        await page.waitForTimeout(50);
+        const bottomBlocked=await page.evaluate(()=>{
+          const page=document.querySelector('.page.active');
+          return [...page.querySelectorAll('button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled)')].flatMap(el=>{
+            const r=el.getBoundingClientRect();
+            if(!r.width || !r.height || r.left<0 || r.top<0 || r.right>innerWidth || r.bottom>innerHeight) return [];
+            for(let parent=el.parentElement;parent;parent=parent.parentElement){
+              const style=getComputedStyle(parent),clip=parent.getBoundingClientRect();
+              if(['auto','scroll','hidden','clip'].includes(style.overflowY) && (r.top<clip.top-1 || r.bottom>clip.bottom+1)) return [];
+              if(['auto','scroll','hidden','clip'].includes(style.overflowX) && (r.left<clip.left-1 || r.right>clip.right+1)) return [];
+            }
+            const hit=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);
+            return hit && (hit===el || el.contains(hit)) ? [] : [{tag:el.tagName,id:el.id||'',text:(el.innerText||el.getAttribute('aria-label')||'').trim().slice(0,45),hit:{tag:hit?.tagName||'',id:hit?.id||'',class:String(hit?.className||'').slice(0,80)}}];
+          });
+        });
+        if(result.horizontalOverflow || result.clipped.length || result.blocked.length || bottomBlocked.length) pageIssues.push({mode,width:size.width,...result,bottomBlocked});
+        await page.evaluate(()=>{const main=document.querySelector('.main');main.scrollTop=0;});
+      }
+      await page.locator('.nav[data-page="home"]').click();
+      await page.waitForFunction(()=>document.querySelector('#page-home')?.classList.contains('active'));
     }
-    console.log('Main interface: light/dark, 1480px/1180px and control hit targets passed.');
+    console.log(JSON.stringify({result:pageIssues.length?'issues-found':'passed',pageCount:pageIds.length,viewports:[1480,1180],themes:2,issues:pageIssues},null,2));
+    if(pageIssues.length) process.exitCode=1;
   } finally {
     if(app) await app.close();
     const relative=path.relative(os.tmpdir(),temporary);
