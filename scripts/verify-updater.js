@@ -119,8 +119,8 @@ const targetEnd = source.indexOf('\nfunction installSoftwareUpdate', targetStart
 if (targetStart < 0 || targetEnd < 0) throw new Error('Persistent updater install-target resolver is missing.');
 const targetSandbox = {
   os: { tmpdir: () => 'C:\\Temp' },
-  path,
-  process: { platform: process.platform, env: {}, execPath: 'C:\\Temp\\TENYING_AI.exe' },
+  path: path.win32,
+  process: { platform: 'win32', env: {}, execPath: 'C:\\Temp\\TENYING_AI.exe' },
   app: { getPath: () => 'C:\\Temp' },
   fs: { existsSync: value => /(?:Apps|Program Files)\\TENYING_AI\.exe$/i.test(String(value || '')), readdirSync: () => [], rmSync: () => {} },
   String,
