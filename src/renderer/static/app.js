@@ -1021,7 +1021,7 @@ function bindSoftwareUpdateModal(modal){
   modal.dataset.bound = '1';
   modal.addEventListener('click', e=>{ if(e.target === modal) closeSoftwareUpdateModal(); });
   modal.querySelector('#softwareUpdateModalCloseBtn')?.addEventListener('click', closeSoftwareUpdateModal);
-  modal.querySelector('#softwareUpdateModalInstallBtn')?.addEventListener('click', ()=>applySoftwareUpdateOta());
+  modal.querySelector('#softwareUpdateModalInstallBtn')?.addEventListener('click', ()=>handleSoftwareUpdateAction());
   return modal;
 }
 function ensureSoftwareUpdateModal(){
@@ -1030,7 +1030,7 @@ function ensureSoftwareUpdateModal(){
   modal = document.createElement('div');
   modal.id = 'softwareUpdateModal';
   modal.className = 'modal software-update-modal';
-  modal.innerHTML = `<div class="software-update-dialog glass-modal"><div class="software-update-head"><div><h2 id="softwareUpdateModalTitle">版本更新</h2><div class="software-update-sub" id="softwareUpdateModalSub">检查更新后会在这里显示新版本内容。</div></div><div class="software-update-badge" id="softwareUpdateBadge">-</div></div><div class="software-update-body"><div class="software-update-line"><span>当前版本</span><b id="softwareUpdateCurrentVersion">-</b></div><div class="software-update-line"><span>最新版本</span><b id="softwareUpdateLatestVersion">-</b></div><div class="software-update-line"><span>Release</span><a id="softwareUpdateReleaseUrl" href="#" target="_blank" rel="noreferrer">-</a></div><div class="software-update-line"><span>EXE</span><b id="softwareUpdateAssetName">-</b></div><div class="software-update-notes" id="softwareUpdateNotes">暂无更新内容。</div></div><div class="software-update-actions"><button class="secondary" id="softwareUpdateModalCloseBtn" type="button">关闭</button><button class="danger" id="softwareUpdateModalInstallBtn" type="button">立即更新</button></div></div>`;
+  modal.innerHTML = `<div class="software-update-dialog glass-modal"><div class="software-update-head"><div><h2 id="softwareUpdateModalTitle">版本更新</h2><div class="software-update-sub" id="softwareUpdateModalSub">检查更新后会在这里显示新版本内容。</div></div><div class="software-update-badge" id="softwareUpdateBadge">-</div></div><div class="software-update-body"><div class="software-update-line"><span>当前版本</span><b id="softwareUpdateCurrentVersion">-</b></div><div class="software-update-line"><span>最新版本</span><b id="softwareUpdateLatestVersion">-</b></div><div class="software-update-line"><span>Release</span><a id="softwareUpdateReleaseUrl" href="#" target="_blank" rel="noreferrer">-</a></div><div class="software-update-line"><span>安装包</span><b id="softwareUpdateAssetName">-</b></div><div class="software-update-notes" id="softwareUpdateNotes">暂无更新内容。</div></div><div class="software-update-actions"><button class="secondary" id="softwareUpdateModalCloseBtn" type="button">关闭</button><button class="danger" id="softwareUpdateModalInstallBtn" type="button">立即更新</button></div></div>`;
   const updateBody = modal.querySelector('.software-update-body');
   if(updateBody && !modal.querySelector('#softwareUpdateProgress')){
     const progress = document.createElement('div');
@@ -1122,12 +1122,16 @@ function renderSoftwareUpdateModal(info = null){
     release.classList.toggle('muted-link', !url);
   }
   if(asset) asset.textContent = info?.asset_name || '未找到 .exe 资产';
-  if(notes) notes.innerHTML = info?.notes ? escapeHtml(String(info.notes).slice(0, 3000)).replace(/\n/g, '<br>') : '暂无更新内容。';
+  if(notes){
+    const releaseNotes = info?.notes ? escapeHtml(String(info.notes).slice(0, 3000)).replace(/\n/g, '<br>') : '暂无更新内容。';
+    const macInstallNote = info?.platform === 'darwin' && has ? '<br><br>下载完成后打开 DMG，将 TENYING_AI 拖入“应用程序”并替换旧版本。该构建未经过 Apple 公证；首次打开时，请在 Finder 中按住 Control 点击应用并选择“打开”。' : '';
+    notes.innerHTML = releaseNotes + macInstallNote;
+  }
   const ready = !!(has && info?.asset_url && info?.update_status !== 'waiting_asset');
   const runtime = info?.update_runtime || info?.runtime || null;
   const runtimeFailed = runtime?.state === 'failed';
   const runtimeActive = isSoftwareUpdateActiveState(runtime?.state);
-  if(asset) asset.textContent = info?.asset_name || (has ? '安装包未就绪，等待 GitHub Actions 上传 EXE' : '-');
+  if(asset) asset.textContent = info?.asset_name || (has ? '安装包未就绪，等待 GitHub Actions 上传' : '-');
   if(badge) badge.textContent = info ? (runtimeFailed ? '更新失败' : (runtimeActive ? '更新中' : (has ? (ready ? '发现新版本' : '构建中') : '当前最新'))) : '-';
   if(sub) sub.textContent = runtime?.message || info?.message || (info ? (has ? (ready ? '检测到新版本，确认后即可直接下载并原地更新。' : '检测到新版本，但安装包还未上传完成，请稍后再检查。') : '当前软件已经是最新版本。') : '检查更新后会在这里显示新版本内容。');
   const progressWrap = $('#softwareUpdateProgress');
@@ -1136,7 +1140,8 @@ function renderSoftwareUpdateModal(info = null){
   const progressFill = $('#softwareUpdateProgressFill');
   const progressBytes = $('#softwareUpdateProgressBytes');
   const progress = Math.max(0, Math.min(100, Number(runtime?.progress || 0)));
-  const showProgress = !!has || runtimeActive || runtimeFailed;
+  const manualMacDownload = info?.platform === 'darwin' && info?.asset_kind === 'dmg';
+  const showProgress = (!manualMacDownload && !!has) || runtimeActive || runtimeFailed;
   if(progressWrap) progressWrap.hidden = !showProgress;
   if(progressStage) progressStage.textContent = runtime?.message || (has ? '等待开始更新' : '');
   if(progressPercent) progressPercent.textContent = String(Math.round(progress)) + '%';
@@ -1155,7 +1160,7 @@ function renderSoftwareUpdateModal(info = null){
       return;
     }
     updateBtn.disabled = (softwareUpdateBusy && !runtimeFailed) || !ready;
-    updateBtn.textContent = runtimeFailed ? '重新更新' : (has ? (ready ? '立即更新' : '等待安装包') : '已是最新版本');
+    updateBtn.textContent = runtimeFailed ? '重新更新' : (has ? (ready ? (manualMacDownload ? '下载 macOS 安装包' : '立即更新') : '等待安装包') : '已是最新版本');
     updateBtn.classList.toggle('loading', softwareUpdateBusy && !runtimeFailed);
   }
 }
@@ -1259,6 +1264,24 @@ async function applySoftwareUpdateOta(){
     toast(e.message || 'OTA 更新失败');
   }finally{
     $('#checkUpdateBtn')?.toggleAttribute('disabled', false);
+  }
+}
+function handleSoftwareUpdateAction(){
+  const info = normalizeSoftwareUpdateInfo(softwareUpdateInfo);
+  if(info?.platform !== 'darwin' || info?.asset_kind !== 'dmg') return applySoftwareUpdateOta();
+  if(!info.has_update || !info.asset_url || info.update_status === 'waiting_asset'){
+    toast('macOS 安装包还未就绪，请稍后重新检查更新');
+    renderSoftwareUpdateInfo(info);
+    return;
+  }
+  try{
+    const url = new URL(info.asset_url);
+    if(url.protocol !== 'https:' || url.hostname !== 'github.com') throw new Error('下载地址不是受信任的 GitHub Release 地址');
+    window.open(url.href, '_blank');
+    closeSoftwareUpdateModal();
+    toast('已打开 macOS DMG 下载；下载后将应用拖入“应用程序”替换旧版本');
+  }catch(error){
+    toast(error.message || '无法打开 macOS 安装包下载');
   }
 }
 function withPublicAccess(url){

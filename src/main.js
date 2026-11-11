@@ -81,7 +81,7 @@ try { app.setAppUserModelId('com.local.api.image.generator.webui.v14_9_8'); } ca
 // 旧版本都用了相同 productName，Windows 会复用 %APPDATA%\本地调用api生成，
 // 所以打包成功后第一次打开会把旧批次/旧图片又加载回来。
 const DATA_ROOT = process.env.LOCAL_API_IMAGE_GENERATOR_DATA_DIR || path.join(
-  process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'),
+  process.platform === 'darwin' ? app.getPath('appData') : (process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming')),
   'LocalApiImageGenerator_RuntimeData_V1498'
 );
 try { app.setPath('userData', DATA_ROOT); } catch {}
@@ -97,7 +97,7 @@ const LEGACY_RESTORE_BLOCK_MARKER = path.join(DATA_ROOT, 'data', 'skip_legacy_re
 const PREVIEW_IMAGE_DEFAULT_MAX_DIM = 2200;
 const PREVIEW_IMAGE_MAX_WORKERS = Math.max(1, Math.min(2, os.cpus().length || 2));
 const LOCAL_HOT_CACHE_ROOT = process.env.TENYING_AI_LOCAL_HOT_CACHE_DIR || path.join(
-  process.env.LOCALAPPDATA || process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Local'),
+  process.platform === 'darwin' ? app.getPath('cache') : (process.env.LOCALAPPDATA || process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Local')),
   'TENYING_AI',
   'HotCache'
 );
@@ -203,8 +203,12 @@ function enqueuePreviewImageJob(key, fn) {
 }
 function generatePreviewImageInWorker(filePath, outPath, maxDim) {
   return new Promise((resolve, reject) => {
-    const script = ensurePreviewImageWorkerScript();
-    const child = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, filePath, outPath, String(maxDim)], { windowsHide: true });
+    const isMac = process.platform === 'darwin';
+    const command = isMac ? '/usr/bin/sips' : 'powershell.exe';
+    const args = isMac
+      ? ['-s', 'format', 'png', '-Z', String(maxDim), filePath, '--out', outPath]
+      : ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ensurePreviewImageWorkerScript(), filePath, outPath, String(maxDim)];
+    const child = spawn(command, args, { windowsHide: true });
     let stderr = '';
     const timer = setTimeout(() => {
       try { child.kill(); } catch {}
@@ -1737,8 +1741,19 @@ function downloadUrlToFileWithSystemCurl(target, dest, opts = {}) {
     });
   });
 }
-function pickWindowsExeAsset(release) {
+function pickSoftwareUpdateAsset(release, platform = process.platform, arch = process.arch) {
   const assets = Array.isArray(release.assets) ? release.assets : [];
+  if (platform === 'darwin') {
+    const dmgAssets = assets
+      .filter(asset => /\.dmg$/i.test(asset.name || '') && (!asset.state || asset.state === 'uploaded') && Number(asset.size || 0) > 0)
+      .sort((a, b) => {
+        const preferred = `-mac-${arch}.dmg`.toLowerCase();
+        const score = asset => String(asset.name || '').toLowerCase().endsWith(preferred) ? 100 : 0;
+        return score(b) - score(a);
+      });
+    return dmgAssets.find(asset => String(asset.name || '').toLowerCase().endsWith(`-mac-${arch}.dmg`)) || null;
+  }
+  if (platform !== 'win32') return null;
   const wantsLanClient = /(?:lan[_\s-]*client|_lan_)/i.test(path.basename(process.execPath || ''));
   const exeAssets = assets
     .filter(a => /\.exe$/i.test(a.name || '') && (!a.state || a.state === 'uploaded') && Number(a.size || 0) > 0)
@@ -1761,15 +1776,22 @@ async function checkSoftwareUpdate(repoInput = '', cfg = readConfig()) {
   const release = await httpJson(`https://api.github.com/repos/${repo}/releases/latest`);
   const version = String(release.tag_name || release.name || '').replace(/^v/i, '').trim();
   if (!version) throw new Error('GitHub Release 缺少可识别的版本号 tag');
-  const asset = pickWindowsExeAsset(release);
+  const asset = pickSoftwareUpdateAsset(release);
   const current = getAppVersion();
   const hasUpdate = compareVersions(version, current) > 0;
   const updateReady = hasUpdate && !!(asset && asset.browser_download_url);
-  const message = hasUpdate
-    ? (updateReady ? '检测到新版本，可直接更新。' : '检测到新版本，但 GitHub Release 安装包还未上传完成，请稍后再检查。')
-    : '当前已经是最新版本。';
+  const message = !hasUpdate
+    ? '当前已经是最新版本。'
+    : process.platform === 'darwin'
+      ? (updateReady ? '检测到新版本，可下载当前 Mac 架构的 DMG 安装包。' : '检测到新版本，但当前 Mac 架构的 DMG 尚未上传完成，请稍后再检查。')
+      : process.platform === 'win32'
+        ? (updateReady ? '检测到新版本，可直接更新。' : '检测到新版本，但 GitHub Release 安装包还未上传完成，请稍后再检查。')
+        : '检测到新版本，请打开 GitHub Release 页面手动下载适用于当前系统的安装包。';
   const info = {
     repo,
+    platform: process.platform,
+    arch: process.arch,
+    asset_kind: process.platform === 'darwin' ? 'dmg' : process.platform === 'win32' ? 'exe' : 'manual',
     current_version: current,
     latest_version: version,
     has_update: hasUpdate,
@@ -1787,6 +1809,11 @@ async function checkSoftwareUpdate(repoInput = '', cfg = readConfig()) {
   return { ok:true, ...info };
 }
 async function downloadSoftwareUpdate(repoInput = '', cfg = readConfig(), attemptId = '') {
+  if (process.platform !== 'win32') {
+    throw new Error(process.platform === 'darwin'
+      ? 'macOS 版本请下载 DMG 后在 Finder 中将 TENYING_AI 拖入“应用程序”完成更新。'
+      : '当前系统不支持应用内安装更新，请打开 GitHub Release 页面下载对应安装包。');
+  }
   let currentAttemptId = attemptId;
   if (currentAttemptId && !isCurrentSoftwareUpdateAttempt(currentAttemptId)) {
     throw new Error('更新任务已取消，请重新点击更新。');
@@ -1875,6 +1902,11 @@ async function downloadSoftwareUpdate(repoInput = '', cfg = readConfig(), attemp
   }
 }
 async function applyLatestSoftwareUpdate(repoInput = '', cfg = readConfig()) {
+  if (process.platform !== 'win32') {
+    throw new Error(process.platform === 'darwin'
+      ? 'macOS 不支持应用内覆盖更新，请使用版本窗口中的 DMG 下载并手动替换应用。'
+      : '当前系统不支持应用内安装更新，请打开 GitHub Release 页面下载对应安装包。');
+  }
   if (isLiveSoftwareUpdateRuntime()) {
     return { ok:true, update_runtime:softwareUpdateRuntime, message:'更新任务已经在后台运行，请等待完成。' };
   }

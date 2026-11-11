@@ -5,6 +5,7 @@ release-build-*/
 build_log.txt
 last_error.txt
 npm-debug.log*
+build/rocket.icns
 *.zip
 *.7z
 *.rar

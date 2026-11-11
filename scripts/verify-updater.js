@@ -41,6 +41,8 @@ assertIncludes('beginSoftwareUpdateAttempt', 'Updater does not reset runtime fie
 assertIncludes('isLiveSoftwareUpdateRuntime', 'Updater does not distinguish the current process from persisted runtime state.');
 assertIncludes('recoverInterruptedSoftwareUpdateRuntime', 'Interrupted updater state is not recovered after restart.');
 assertIncludes('SOFTWARE_UPDATE_STALLED_DOWNLOAD_TIMEOUT_MS', 'Updater stalled-download watchdog is missing.');
+assertIncludes('function pickSoftwareUpdateAsset', 'Platform-aware GitHub release asset selection is missing.');
+assertIncludes("process.platform === 'darwin'", 'macOS release assets are not selected by platform.');
 
 const statusStart = source.indexOf('function getSoftwareUpdateStatus');
 const statusEnd = source.indexOf('\nfunction httpJson', statusStart);
@@ -173,6 +175,8 @@ if (!reconcileSource.includes('cleanupCompletedSoftwareUpdateArtifacts(runtime)'
 assertRendererIncludes('softwareUpdateProgress', 'Renderer update progress UI is missing.');
 assertRendererIncludes('scheduleStartupSoftwareUpdateCheck', 'Startup update check scheduler is missing.');
 assertRendererIncludes('softwareUpdateActionLabel', 'Updater stage-specific button labels are missing.');
+assertRendererIncludes('handleSoftwareUpdateAction', 'Platform-specific update action is missing.');
+assertRendererIncludes('下载 macOS 安装包', 'macOS update action is not available in the release dialog.');
 assertIndexIncludes('id="updateAutoCheck"', 'Settings auto-check checkbox is missing.');
 assertIndexIncludes('id="softwareUpdateProgress"', 'Update progress markup is missing from the main document.');
 

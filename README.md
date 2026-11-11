@@ -19,23 +19,32 @@ npm install
 npm start
 ```
 
-## Build single Windows EXE
+## Build desktop packages
 
 ```bash
 npm run dist
 ```
 
-The portable EXE is generated in `dist/`.
+The Windows portable EXE is generated in `dist/`.
+
+macOS builds require a Mac. The command below generates a DMG and ZIP for the current Mac architecture:
+
+```bash
+npm run dist:mac
+```
+
+GitHub Actions builds separate Apple Silicon (`arm64`) and Intel (`x64`) packages and attaches both to tagged releases. The current macOS packages are unsigned and not notarized; on first launch, Control-click TENYING_AI in Finder and choose Open.
 
 ## GitHub updater
 
-The app can check a GitHub repository's latest Release, download the Windows `.exe` asset, replace the current executable in place, and restart.
+On Windows, the app can download the latest `.exe`, replace the current executable in place, and restart. On macOS, the update window opens the matching architecture's `.dmg`; drag TENYING_AI into Applications to replace the installed app.
 
 Release requirements:
 
 - Tag name should be a semantic version, for example `v1.0.4`.
-- The included GitHub Actions workflow builds the Windows portable `.exe` and attaches it to the release automatically when a `v*` tag is pushed.
+- The included GitHub Actions workflow builds the Windows portable `.exe`, Windows LAN client, and macOS arm64/x64 DMG and ZIP packages. All packages are attached to the GitHub release when a matching `v*` tag is pushed.
 - The release asset is named like `TENYING_AI-1.0.4-win-x64.exe`.
+- macOS assets are named `TENYING_AI-<version>-mac-arm64.dmg` / `...-mac-x64.dmg` and have matching ZIP archives.
 - In the app, open Settings and fill the repository as `owner/repo`.
 
 ## Security Notes
