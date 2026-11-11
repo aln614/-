@@ -832,7 +832,8 @@ function toggleMainWindowFromShortcut() {
 
 function createTray() {
   if (SERVER_ONLY || tray) return;
-  tray = new Tray(APP_ICON_PATH);
+  const iconPath = APP_ICON_PATH;
+  tray = new Tray(iconPath);
   tray.setToolTip(readConfig().app_name || APP_DISPLAY_NAME);
   tray.setContextMenu(Menu.buildFromTemplate([
     { label:'打开主窗口', click:bringMainWindowToFront },
