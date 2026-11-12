@@ -8,7 +8,7 @@ const crypto = require('crypto');
 const zlib = require('zlib');
 const { Transform } = require('stream');
 const { pipeline } = require('stream/promises');
-const { app, BrowserWindow, Tray, shell, Menu, clipboard, ClipboardItem, nativeImage, ipcMain, globalShortcut, nativeTheme, screen } = require('electron');
+const { app, BrowserWindow, Tray, shell, Menu, clipboard, ClipboardItem, nativeImage, ipcMain, globalShortcut, nativeTheme, screen, session } = require('electron');
 const { spawn } = require('child_process');
 const { initDB, getDB, addLog, listBatches, listImages, listLogs, nowISO, uuid, setNetworkTimeOffset, getNetworkTimeInfo } = require('./services/db');
 const { TaskQueue } = require('./services/taskQueue');
@@ -16,11 +16,14 @@ const assetIndex = require('./services/assetIndex');
 const { DEFAULT_LIQUID_GLASS, normalizeLiquidGlass } = require('./services/liquidGlassSettings');
 const { uploadDirectory, previewDirectory, relocatedUploadPath, expendableDragFiles } = require('./services/mediaStorage');
 const { buildExportManifest } = require('./services/exportManifest');
+const { createSoftwareUpdateNetwork } = require('./services/softwareUpdateNetwork');
 const { registerFolderExport } = require('../lan-client/folderExport');
 const { seedanceDraftSettings, validateSeedanceDraftRequest, buildSeedanceFinalPayload } = require('./services/seedanceDraft');
 const { chatCompletion, getApimartChatModels, refreshApimartChatModels, APIMART_IMAGE_MODELS } = require('./services/apiClient');
 const { safeName, ensureDir, makeDirs, createThumb, convertImageToUploadPng, removeTemporaryUploadFile, downloadToFile } = require('./services/cache');
 const { APIMART_PRICING_URL, createFallbackPricingCatalog, createLivePricingCatalog } = require('./services/apimartPricing');
+
+const softwareUpdateNetwork = createSoftwareUpdateNetwork({ app, session, fs, path, ensureDir });
 
 let mainWindow = null;
 let server = null;
@@ -1568,52 +1571,12 @@ function getSoftwareUpdateStatus() {
   return { ok:true, ...runtime, last_check: cfg.update_last_check || null };
 }
 function httpJson(target, timeoutMs = 20000) {
-  return new Promise((resolve, reject) => {
-    const req = https.get(target, { timeout: timeoutMs, headers: { 'User-Agent':'LocalApiImageGenerator-Updater', 'Accept':'application/vnd.github+json' } }, r => {
-      if (r.statusCode >= 300 && r.statusCode < 400 && r.headers.location) {
-        r.resume();
-        return httpJson(r.headers.location, timeoutMs).then(resolve, reject);
-      }
-      let raw = '';
-      r.setEncoding('utf8');
-      r.on('data', c => raw += c);
-      r.on('end', () => {
-        if (r.statusCode < 200 || r.statusCode >= 300) {
-          if (r.statusCode === 404) {
-            return reject(new Error('GitHub 更新检查失败：未找到 Release。请确认仓库已公开、已创建 Release，并且 Release 中包含 Windows EXE 附件。'));
-          }
-          return reject(new Error(`GitHub 更新检查失败：HTTP ${r.statusCode}`));
-        }
-        try { resolve(JSON.parse(raw)); } catch (e) { reject(e); }
-      });
-    });
-    req.on('timeout', () => req.destroy(new Error('GitHub 更新检查超时')));
-    req.on('error', reject);
-  });
-}
-function downloadUrlToFile(target, dest, timeoutMs = 180000) {
-  return new Promise((resolve, reject) => {
-    ensureDir(path.dirname(dest));
-    const file = fs.createWriteStream(dest);
-    const lib = String(target).startsWith('https:') ? https : http;
-    const req = lib.get(target, { timeout: timeoutMs, headers: { 'User-Agent':'LocalApiImageGenerator-Updater', 'Accept':'application/octet-stream' } }, r => {
-      if (r.statusCode >= 300 && r.statusCode < 400 && r.headers.location) {
-        r.resume(); file.close(()=>{ try { fs.rmSync(dest, {force:true}); } catch {} });
-        return downloadUrlToFile(r.headers.location, dest, timeoutMs).then(resolve, reject);
-      }
-      if (r.statusCode < 200 || r.statusCode >= 300) {
-        r.resume(); file.close(()=>{ try { fs.rmSync(dest, {force:true}); } catch {} });
-        return reject(new Error(`新版 EXE 下载失败：HTTP ${r.statusCode}`));
-      }
-      r.pipe(file);
-      file.on('finish', () => file.close(() => resolve(dest)));
-    });
-    req.on('timeout', () => req.destroy(new Error('新版 EXE 下载超时')));
-    req.on('error', e => { file.close(()=>{}); try { fs.rmSync(dest, {force:true}); } catch {}; reject(e); });
-    file.on('error', reject);
-  });
+  return softwareUpdateNetwork.httpJson(target, timeoutMs);
 }
 function downloadUrlToFileRobust(target, dest, opts = {}) {
+  return softwareUpdateNetwork.downloadToFile(target, dest, opts);
+}
+function downloadUrlToFileRobustLegacy(target, dest, opts = {}) {
   const timeoutMs = Number(opts.timeoutMs || 30 * 60 * 1000);
   const idleTimeoutMs = Number(opts.idleTimeoutMs || 120000);
   const redirectsLeft = Number.isFinite(opts.redirectsLeft) ? opts.redirectsLeft : 8;
@@ -1821,7 +1784,7 @@ async function downloadSoftwareUpdate(repoInput = '', cfg = readConfig(), attemp
   if (!currentAttemptId) {
     if (isLiveSoftwareUpdateRuntime()) throw new Error('更新任务已经在后台运行，请等待完成。');
     const repo = normalizeUpdateRepo(repoInput || cfg.update_repo || DEFAULT_UPDATE_REPO);
-    currentAttemptId = beginSoftwareUpdateAttempt(repo, '正在准备下载新版 EXE...').attempt_id;
+    currentAttemptId = beginSoftwareUpdateAttempt(repo, '正在通过系统代理准备更新...').attempt_id;
   }
   const setForAttempt = patch => setSoftwareUpdateRuntimeForAttempt(currentAttemptId, patch);
   const ensureCurrentAttempt = () => {
@@ -1842,54 +1805,19 @@ async function downloadSoftwareUpdate(repoInput = '', cfg = readConfig(), attemp
         return { ok:true, ...next };
       }
     } catch {}
-    setForAttempt({ state:'downloading', message:'正在下载新版 EXE...', repo:info.repo, version:info.latest_version, asset_name:assetName, downloaded_path:'', bytes:0, total:info.asset_size || 0, progress:0 });
-    const downloadErrors = [];
-    let downloaded = false;
-    for (const proxy of updateDownloadProxyCandidates(cfg)) {
-      ensureCurrentAttempt();
-      const route = proxy ? '更新代理' : '直连 GitHub';
-      try {
-        setForAttempt({ state:'downloading', message:`正在通过${route}下载新版 EXE...`, progress:1 });
-        await downloadUrlToFileWithSystemCurl(info.asset_url, dest, {
-          timeoutMs: 30 * 60 * 1000,
-          idleTimeoutMs: 75 * 1000,
-          total: info.asset_size || 0,
-          proxy,
-          onProgress: p => {
-            const total = p.total || info.asset_size || 0;
-            const progress = total ? Math.max(1, Math.min(99, Math.round(p.bytes / total * 100))) : 1;
-            reportSoftwareUpdateDownloadProgress({ state:'downloading', message:`正在通过${route}下载新版 EXE${total ? ` ${progress}%` : ''}`, bytes:p.bytes, total, progress }, currentAttemptId);
-          }
-        });
-        ensureCurrentAttempt();
-        downloaded = true;
-        break;
-      } catch (error) {
-        const message = error?.message || String(error);
-        downloadErrors.push(`[${route}] ${message}`);
-        addLog(`软件更新${route}失败，尝试下一条网络链路：${message}`, { level:'warn' });
+    setForAttempt({ state:'downloading', message:'正在通过系统代理下载新版 EXE...', repo:info.repo, version:info.latest_version, asset_name:assetName, downloaded_path:'', bytes:0, total:info.asset_size || 0, progress:0 });
+    ensureCurrentAttempt();
+    await downloadUrlToFileRobust(info.asset_url, dest, {
+      timeoutMs: 30 * 60 * 1000,
+      idleTimeoutMs: 75 * 1000,
+      total: info.asset_size || 0,
+      onProgress: p => {
+        const total = p.total || info.asset_size || 0;
+        const progress = total ? Math.max(1, Math.min(99, Math.round(p.bytes / total * 100))) : 0;
+        reportSoftwareUpdateDownloadProgress({ state:'downloading', message:`正在通过系统代理下载新版 EXE${total ? ` ${progress}%` : ''}`, bytes:p.bytes, total, progress }, currentAttemptId);
       }
-    }
-    if (!downloaded) {
-      try {
-        ensureCurrentAttempt();
-        setForAttempt({ state:'downloading', message:'系统下载器不可用，已切换内置下载...', progress:1 });
-        await downloadUrlToFileRobust(info.asset_url, dest, {
-          timeoutMs: 30 * 60 * 1000,
-          idleTimeoutMs: 75 * 1000,
-          onProgress: p => {
-            const total = p.total || info.asset_size || 0;
-            const progress = total ? Math.max(1, Math.min(99, Math.round(p.bytes / total * 100))) : 0;
-            reportSoftwareUpdateDownloadProgress({ state:'downloading', message:`正在下载新版 EXE${total ? ` ${progress}%` : ''}`, bytes:p.bytes, total, progress }, currentAttemptId);
-          }
-        });
-        ensureCurrentAttempt();
-        downloaded = true;
-      } catch (fallbackError) {
-        downloadErrors.push(`[内置下载] ${fallbackError?.message || fallbackError}`);
-        throw new Error(`新版 EXE 下载失败：${downloadErrors.join(' | ')}`);
-      }
-    }
+    });
+    ensureCurrentAttempt();
     const next = { ...info, downloaded_path: dest, downloaded_at: nowISO() };
     saveConfig({ update_repo: info.repo, update_last_check: next });
     setForAttempt({ state:'downloaded', message:'新版 EXE 下载完成，准备安装...', downloaded_path:dest, progress:100 });
@@ -1916,7 +1844,7 @@ async function applyLatestSoftwareUpdate(repoInput = '', cfg = readConfig()) {
   setImmediate(async () => {
     try {
       if (!isCurrentSoftwareUpdateAttempt(attemptId)) return;
-      setSoftwareUpdateRuntimeForAttempt(attemptId, { state:'checking', message:'正在检查 GitHub Release 与安装包...', progress:3 });
+      setSoftwareUpdateRuntimeForAttempt(attemptId, { state:'checking', message:'正在通过系统代理检查 GitHub Release 与安装包...', progress:3 });
       const info = await checkSoftwareUpdate(repo, readConfig());
       if (!isCurrentSoftwareUpdateAttempt(attemptId)) return;
       if (!info.has_update) {
@@ -2161,22 +2089,6 @@ function dataUrlToFile(item, owner) {
   const file = path.join(dir, `${Date.now().toString(36)}_${Math.random().toString(36).slice(2,8)}${ext}`);
   fs.writeFileSync(file, Buffer.from(m[2], 'base64'));
   return file;
-}
-function updateDownloadProxyCandidates(cfg = readConfig()) {
-  const candidates = [];
-  const add = value => {
-    const proxy = normalizeProxyUrl(value || '');
-    if (proxy && !candidates.includes(proxy)) candidates.push(proxy);
-  };
-  // GitHub release downloads try direct access first.  The APIMart proxy is
-  // retained only as a final compatibility fallback for networks where GitHub
-  // is blocked but the user's existing local proxy can reach release assets.
-  candidates.push('');
-  add(cfg.update_proxy_url);
-  add(process.env.HTTPS_PROXY);
-  add(process.env.HTTP_PROXY);
-  add(cfg.apimart_proxy_url);
-  return candidates;
 }
 function batchMediaUploadDir(owner='local') {
   return uploadDirectory(readConfig(), DATA_ROOT, owner);

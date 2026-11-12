@@ -79,3 +79,17 @@ body:not(.standalone-library) .page.active {
     transition-delay: 0s !important;
   }
 }
+
+body .prompt-library-orb {
+  background-size: 100% 100%;
+  animation-name: prompt-library-orb-float;
+}
+@keyframes prompt-library-orb-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-2px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  body :is(.prompt-library-orb, .send-icon-btn.sending svg, .theme-popover.show) {
+    animation: none !important;
+  }
+}

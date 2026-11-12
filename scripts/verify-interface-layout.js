@@ -5,6 +5,7 @@ const os=require('node:os');
 const path=require('node:path');
 const {_electron:electron}=require('playwright');
 const root=path.resolve(__dirname,'..');
+const results=process.env.UI_SCREENSHOT_DIR || path.join(root,'test-results');
 const temporary=fs.mkdtempSync(path.join(os.tmpdir(),'tenying-interface-'));
 const data=path.join(temporary,'runtime');
 fs.mkdirSync(data,{recursive:true});
@@ -19,12 +20,14 @@ fs.writeFileSync(path.join(data,'config.json'),JSON.stringify({port:18784,shortc
     await page.emulateMedia({reducedMotion:'reduce'});
     const reducedMotion = await page.evaluate(()=>({
       animation:getComputedStyle(document.querySelector('#page-home')).animationName,
-      transition:getComputedStyle(document.querySelector('#saveConfigBtn')).transitionDuration
+      transition:getComputedStyle(document.querySelector('#saveConfigBtn')).transitionDuration,
+      promptOrbAnimation:getComputedStyle(document.querySelector('.prompt-library-orb')).animationName
     }));
     assert.equal(reducedMotion.animation,'none','Reduced motion must disable page entrance animation');
     assert.ok(reducedMotion.transition.split(',').every(value=>parseFloat(value)===0),'Reduced motion must disable button transitions');
+    assert.equal(reducedMotion.promptOrbAnimation,'none','Reduced motion must disable the floating prompt-library animation');
     await page.emulateMedia({reducedMotion:'no-preference'});
-    fs.mkdirSync(path.join(root,'test-results'),{recursive:true});
+    fs.mkdirSync(results,{recursive:true});
     const pageIds=['home','midjourney','history','images','video','video-manage','chat','api','lan','public','logs','settings'];
     const pageIssues=[];
     for(const mode of ['light','dark']) for(const size of [{width:1480,height:960},{width:1180,height:760}]) {
@@ -47,7 +50,7 @@ fs.writeFileSync(path.join(data,'config.json'),JSON.stringify({port:18784,shortc
         return issues;
       });
       assert.deepEqual(issues,[],mode+' '+size.width+'px controls must be visible and clickable');
-      await page.screenshot({path:path.join(root,'test-results',`interface-${mode}-${size.width}.png`)});
+      await page.screenshot({path:path.join(results,`interface-${mode}-${size.width}.png`)});
 
       for(const id of pageIds){
         await page.locator(`.nav[data-page="${id}"]`).click();
@@ -78,7 +81,7 @@ fs.writeFileSync(path.join(data,'config.json'),JSON.stringify({port:18784,shortc
           });
           return {id:page.id,horizontalOverflow,clipped,blocked};
         });
-        await page.screenshot({path:path.join(root,'test-results',`page-${mode}-${size.width}-${id}.png`)});
+        await page.screenshot({path:path.join(results,`page-${mode}-${size.width}-${id}.png`)});
         await page.evaluate(()=>{const main=document.querySelector('.main');main.scrollTop=main.scrollHeight;});
         await page.waitForTimeout(50);
         const bottomBlocked=await page.evaluate(()=>{

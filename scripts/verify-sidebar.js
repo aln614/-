@@ -13,7 +13,7 @@ fs.writeFileSync(path.join(data,'config.json'),JSON.stringify({
   port:18792,shortcuts_enabled:false,update_auto_check:false,public_enabled:false,
   asset_library_dir:path.join(temporary,'assets'),output_dir:path.join(temporary,'output')
 }));
-const results=path.join(root,'test-results');
+const results=process.env.UI_SCREENSHOT_DIR || path.join(root,'test-results');
 fs.mkdirSync(results,{recursive:true});
 
 function pixelChanges(a,b) {
@@ -103,6 +103,32 @@ function pixelChanges(a,b) {
       await page.locator('#sidebar .nav[data-page="home"]').click();
       await page.mouse.move(600,80);await settle();
       assert.equal((await geometry()).width,62,'Mouse click focus must not leave the rail stuck open');
+    }
+    for(const theme of ['light','dark']) {
+      await setSize({width:1180,height:760});
+      await page.evaluate(theme=>window.localAppearance.setTheme(theme),theme);
+      await page.locator('#sidebar .nav[data-page="home"]').click();
+      await page.mouse.move(600,80);await settle();
+      const narrowCollapsed=await geometry();
+      assert.equal(narrowCollapsed.width,62,'Narrow host window keeps a stable collapsed rail');
+      assert.equal(narrowCollapsed.clipped,false,'Narrow collapsed navigation stays inside its rounded rail');
+      assert.ok(narrowCollapsed.mainLeft>=narrowCollapsed.right,'Narrow collapsed navigation cannot cover the work area');
+      await page.screenshot({path:path.join(results,`sidebar-${theme}-narrow-collapsed.png`)});
+      await page.locator('#sidebar').hover({position:{x:20,y:24}});await settle();
+      const trackExpanded=await page.evaluate(()=>({
+        activePage:document.querySelector('.page.active')?.id,
+        activeNav:document.querySelector('#sidebar .nav[aria-current="page"]')?.dataset.page,
+        width:document.querySelector('#sidebar').getBoundingClientRect().width,
+        railRight:document.querySelector('#sidebar').getBoundingClientRect().right,
+        mainLeft:document.querySelector('.main').getBoundingClientRect().left
+      }));
+      assert.equal(trackExpanded.activePage,'page-home','Expanding navigation leaves the working page active');
+      assert.equal(trackExpanded.activeNav,'home','Expanding navigation preserves the selected destination');
+      assert.equal(trackExpanded.width,208,'Narrow host navigation exposes labels');
+      assert.ok(trackExpanded.mainLeft>=trackExpanded.railRight+8,'Narrow expanded navigation reserves space before the work area');
+      await page.screenshot({path:path.join(results,`sidebar-${theme}-narrow-expanded.png`)});
+      await page.mouse.move(600,80);await settle();
+      assert.equal((await geometry()).width,62,'Narrow rail collapses after pointer leave');
     }
     await setSize({width:1180,height:650});await settle();
     assert.equal(await page.locator('#sidebar .nav-stack').evaluate(el=>el.scrollHeight>el.clientHeight),true,'Short windows get a scrollable navigation stack');

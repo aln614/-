@@ -12417,10 +12417,11 @@ function detectPreferredDeviceUI(){
   const isTouch = navigator.maxTouchPoints > 0 || window.matchMedia('(pointer:coarse)').matches;
   const ua = navigator.userAgent || '';
   const isMobileUA = /Android|iPhone|iPod|Mobile|Windows Phone/i.test(ua);
+  const lanDesktop = document.body.classList.contains('lan-desktop-shell');
   const width = window.innerWidth || document.documentElement.clientWidth || 1440;
   let mode = 'desktop';
-  if(width < 768 || (isTouch && width < 900) || isMobileUA) mode = 'mobile';
-  else if(width < 1024 && isTouch) mode = 'mobile';
+  if(!lanDesktop && (width < 768 || (isTouch && width < 900) || isMobileUA)) mode = 'mobile';
+  else if(!lanDesktop && width < 1024 && isTouch) mode = 'mobile';
   document.body.classList.toggle('mobile-ui', mode === 'mobile');
   document.body.classList.toggle('desktop-ui', mode !== 'mobile');
   document.body.classList.toggle('tablet-ui', mode === 'mobile' && width >= 768);

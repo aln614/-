@@ -3,6 +3,7 @@ const path = require('path');
 const os = require('os');
 const vm = require('vm');
 const crypto = require('crypto');
+const { createSoftwareUpdateNetwork } = require('../src/services/softwareUpdateNetwork');
 
 const mainPath = path.join(__dirname, '..', 'src', 'main.js');
 const source = fs.readFileSync(mainPath, 'utf8');
@@ -23,11 +24,9 @@ function assertIndexIncludes(fragment, message) {
   if (!indexSource.includes(fragment)) throw new Error(message);
 }
 
-assertIncludes('function updateDownloadProxyCandidates', 'Update proxy candidate helper is missing.');
 assertIncludes('function parseSoftwareUpdateRuntimeTimestamp', 'Updater timezone-safe timestamp parser is missing.');
-assertIncludes("'--continue-at', '-'", 'Updater no longer resumes partial EXE downloads.');
-assertIncludes("'--speed-time'", 'Updater has no transfer idle protection.');
-assertIncludes("'--noproxy', '*'", 'Direct GitHub updater route can still inherit an unrelated system proxy.');
+assertIncludes("require('./services/softwareUpdateNetwork')", 'Updater network is not routed through the system proxy module.');
+assertIncludes('createSoftwareUpdateNetwork({ app, session, fs, path, ensureDir })', 'Updater system-proxy network is not initialized.');
 assertIncludes('timeoutMs: 30 * 60 * 1000', 'Updater total download timeout is too short.');
 assertIncludes('idleTimeoutMs: 75 * 1000', 'Updater should fail over quickly when a route receives no bytes.');
 assertIncludes('reportSoftwareUpdateDownloadProgress', 'Updater progress persistence throttle is missing.');
@@ -100,15 +99,13 @@ if (runtimeSandbox.freshUpdateStatus.state !== 'downloading') throw new Error('A
 if (runtimeSandbox.freshUpdateStatus.attempt_id === 'interrupted-attempt') throw new Error('A fresh update attempt reused stale persisted timing.');
 if (runtimeSandbox.legacyTimestampStatus.state !== 'downloading') throw new Error('A fresh timezone-less updater timestamp is incorrectly treated as expired.');
 
-const proxyStart = source.indexOf('function updateDownloadProxyCandidates');
-const proxyEnd = source.indexOf('\nfunction batchMediaUploadDir', proxyStart);
-const proxySource = source.slice(proxyStart, proxyEnd);
-if (proxySource.includes('lastGoodApimartProxy')) throw new Error('Updater incorrectly prioritizes the last APIMart API proxy.');
-if (proxySource.indexOf("candidates.push('');") > proxySource.indexOf('add(cfg.update_proxy_url);')) {
-  throw new Error('Updater should attempt direct GitHub download before an optional update proxy.');
-}
-if (proxySource.indexOf('add(cfg.apimart_proxy_url);') < proxySource.indexOf('add(process.env.HTTP_PROXY);')) {
-  throw new Error('APIMart proxy must only be a final GitHub download fallback.');
+const updaterFlowStart = source.indexOf('async function downloadSoftwareUpdate');
+const updaterFlowEnd = source.indexOf('\nasync function applyLatestSoftwareUpdate', updaterFlowStart);
+const updaterFlow = source.slice(updaterFlowStart, updaterFlowEnd);
+if (!updaterFlow.includes('downloadUrlToFileRobust(info.asset_url, dest')) throw new Error('Updater does not use the system-proxy download implementation.');
+if (!updaterFlow.includes('正在通过系统代理下载新版 EXE')) throw new Error('Updater progress does not identify the system-proxy route.');
+if (updaterFlow.includes('downloadUrlToFileWithSystemCurl') || updaterFlow.includes('直连 GitHub')) {
+  throw new Error('Updater can still fall back to a direct GitHub download.');
 }
 
 const installStart = source.indexOf('function installSoftwareUpdate');
@@ -180,4 +177,62 @@ assertRendererIncludes('下载 macOS 安装包', 'macOS update action is not ava
 assertIndexIncludes('id="updateAutoCheck"', 'Settings auto-check checkbox is missing.');
 assertIndexIncludes('id="softwareUpdateProgress"', 'Update progress markup is missing from the main document.');
 
-console.log('[verify-updater] OK: updater uses timezone-safe runtime state, direct-first resumable downloads, portable EXE replacement, visible progress, restart recovery, and startup auto-check control.');
+async function verifySystemProxyUpdaterNetwork() {
+  const proxyConfigs = [];
+  const requests = [];
+  const mockSession = {
+    setProxy: async config => proxyConfigs.push(config),
+    fetch: async (target, init) => {
+      requests.push({ target, init });
+      if (target.includes('api.github.com')) {
+        return { ok:true, status:200, json:async () => ({ tag_name:'v9.9.9' }) };
+      }
+      let sent = false;
+      return {
+        ok:true,
+        status:206,
+        headers:{ get: name => ({ 'content-range':'bytes 3-5/6', 'content-length':'3' }[name.toLowerCase()] || null) },
+        body:{
+          getReader:()=>({
+            read:async()=> sent ? { done:true } : (sent=true, { done:false, value:new Uint8Array(Buffer.from('def')) }),
+            cancel:async()=>{}
+          }),
+          cancel:async()=>{}
+        }
+      };
+    }
+  };
+  const network = createSoftwareUpdateNetwork({
+    app:{ whenReady:async()=>{} },
+    session:{ fromPartition:partition=>{ if(partition!=='tenying-software-updater') throw new Error('Updater did not use its isolated session.'); return mockSession; } },
+    fs,
+    path,
+    ensureDir:dir=>fs.mkdirSync(dir,{recursive:true})
+  });
+  const release = await network.httpJson('https://api.github.com/repos/example/project/releases/latest');
+  if (release.tag_name !== 'v9.9.9') throw new Error('System-proxy GitHub API response was not parsed.');
+  if (proxyConfigs.length !== 1 || proxyConfigs[0].mode !== 'system') throw new Error('Updater did not explicitly select the OS system proxy.');
+  if (requests[0].init.redirect !== 'follow') throw new Error('GitHub release checks do not follow redirects in the system-proxy session.');
+
+  const testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tenying-updater-system-proxy-'));
+  try {
+    const destination = path.join(testDir, 'update.exe');
+    fs.writeFileSync(`${destination}.part`, 'abc');
+    const progress = [];
+    await network.downloadToFile('https://github.com/example/project/releases/download/v9.9.9/update.exe', destination, {
+      total:6,
+      onProgress:value=>progress.push(value)
+    });
+    if (fs.readFileSync(destination, 'utf8') !== 'abcdef') throw new Error('Resumed system-proxy download produced incorrect file content.');
+    const downloadRequest = requests[1];
+    if (downloadRequest.init.headers.Range !== 'bytes=3-') throw new Error('Updater did not resume a partial system-proxy download.');
+    if (progress.at(-1)?.bytes !== 6 || progress.at(-1)?.source !== 'system-proxy') throw new Error('System-proxy download progress was not reported.');
+    if (proxyConfigs.length !== 1) throw new Error('Updater recreated or changed the isolated proxy session between requests.');
+  } finally {
+    fs.rmSync(testDir, { recursive:true, force:true });
+  }
+}
+
+verifySystemProxyUpdaterNetwork()
+  .then(()=>console.log('[verify-updater] OK: updater uses the OS system proxy for GitHub checks and resumable downloads, with no direct fallback; runtime recovery and portable install checks passed.'))
+  .catch(error=>{ console.error(error); process.exitCode=1; });

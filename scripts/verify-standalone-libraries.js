@@ -7,6 +7,7 @@ const path = require('node:path');
 const {spawn} = require('node:child_process');
 const { _electron:electron } = require('playwright');
 const root = path.resolve(__dirname, '..');
+const results = process.env.UI_SCREENSHOT_DIR || path.join(root, 'test-results');
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'tenying-library-test-'));
 const data = path.join(temporary, 'runtime');
 fs.mkdirSync(data, {recursive:true});
@@ -49,8 +50,8 @@ fs.writeFileSync(path.join(data, 'config.json'), JSON.stringify({
       return {fit:controls.right<=header.right && status.right<=controls.left && controls.top>=header.top && controls.bottom<=header.bottom};
     });
     assert.equal(topbarFit.fit,true,'Header controls must not overlap or overflow');
-    fs.mkdirSync(path.join(root,'test-results'),{recursive:true});
-    await main.screenshot({path:path.join(root,'test-results','liquid-glass-main.png')});
+    fs.mkdirSync(results,{recursive:true});
+    await main.screenshot({path:path.join(results,'host-liquid-glass-main.png')});
     await instance.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setSize(1180,760));
     await main.waitForFunction(()=>innerWidth<=1180);
     const narrowFit=await main.locator('.topbar').evaluate(el=>{
@@ -58,9 +59,9 @@ fs.writeFileSync(path.join(data, 'config.json'), JSON.stringify({
       return controls.right<=header.right && status.right<=controls.left && brand.right<=status.left && controls.bottom<=header.bottom;
     });
     assert.equal(narrowFit,true,'Header must fit at the minimum desktop window size');
-    await main.screenshot({path:path.join(root,'test-results','liquid-glass-narrow.png')});
+    await main.screenshot({path:path.join(results,'host-liquid-glass-narrow.png')});
     await main.evaluate(()=>applyThemeMode('dark'));
-    await main.screenshot({path:path.join(root,'test-results','liquid-glass-dark.png')});
+    await main.screenshot({path:path.join(results,'host-liquid-glass-dark.png')});
     await main.evaluate(()=>applyThemeMode('light'));
     await instance.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setSize(1480,960));
     await main.locator('#mainWindowMaximize').click();
@@ -160,8 +161,8 @@ fs.writeFileSync(path.join(data, 'config.json'), JSON.stringify({
     assert.equal(inside(resizedShape,resized.width-1,resized.height-1),false,'Rounded clipping must follow the resized window');
     assert.equal(inside(resizedShape,resized.width/2,resized.height/2),true);
     }
-    fs.mkdirSync(path.join(root,'test-results'),{recursive:true});
-    await asset.screenshot({path:path.join(root,'test-results','standalone-asset-library.png')});
+    fs.mkdirSync(results,{recursive:true});
+    await asset.screenshot({path:path.join(results,'standalone-asset-library.png')});
     await asset.locator('.asset-card').first().click();
     await asset.locator('#previewModal.active').waitFor();
     await asset.locator('#previewModal > .liquid-backdrop').waitFor({state:'attached'});
@@ -176,7 +177,7 @@ fs.writeFileSync(path.join(data, 'config.json'), JSON.stringify({
     assert.equal(await asset.locator('#previewBgWhite').evaluate(el=>el.classList.contains('active')),true,'Preview background controls must receive clicks');
     await asset.locator('#previewBgBlack').click();
     assert.equal(await asset.locator('#previewBgBlack').evaluate(el=>el.classList.contains('active')),true);
-    await asset.screenshot({path:path.join(root,'test-results','liquid-glass-image-preview.png')});
+    await asset.screenshot({path:path.join(results,'liquid-glass-image-preview.png')});
     await asset.evaluate(()=>closePreview());
     const size = await asset.locator('#assetLibraryWindow').evaluate(el=>{const r=el.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height,innerWidth,innerHeight};});
     assert.equal(size.x,0); assert.equal(size.y,0); assert.equal(size.width,size.innerWidth); assert.equal(size.height,size.innerHeight);
@@ -212,7 +213,7 @@ fs.writeFileSync(path.join(data, 'config.json'), JSON.stringify({
     assert.equal(await prompt.locator('#promptLibraryWindow').evaluate(el=>getComputedStyle(el).borderTopWidth),'0px');
     assert.equal(await prompt.locator('#promptLibraryHead').evaluate(el=>getComputedStyle(el).borderBottomWidth),'0px');
     await prompt.locator('#promptLibraryResize').waitFor({state:'visible'});
-    await prompt.screenshot({path:path.join(root,'test-results','standalone-prompt-library.png')});
+    await prompt.screenshot({path:path.join(results,'standalone-prompt-library.png')});
     await prompt.locator('.pl-card').filter({hasText:'Test template'}).getByText('应用',{exact:true}).click();
     await main.waitForFunction(()=>document.querySelector('#prompts').value === 'Sample prompt');
     assert.equal(await instance.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().find(win=>!win.webContents.getURL().includes('library=')).isVisible()),true,'Apply brings the main window forward');
