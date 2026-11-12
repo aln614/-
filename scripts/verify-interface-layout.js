@@ -16,6 +16,14 @@ fs.writeFileSync(path.join(data,'config.json'),JSON.stringify({port:18784,shortc
     const page=await app.firstWindow();
     await page.waitForURL('http://127.0.0.1:18784/**',{timeout:30000});
     await page.waitForFunction(()=>window.liquidGlassSettings && document.querySelector('.topbar .liquid-backdrop'));
+    await page.emulateMedia({reducedMotion:'reduce'});
+    const reducedMotion = await page.evaluate(()=>({
+      animation:getComputedStyle(document.querySelector('#page-home')).animationName,
+      transition:getComputedStyle(document.querySelector('#saveConfigBtn')).transitionDuration
+    }));
+    assert.equal(reducedMotion.animation,'none','Reduced motion must disable page entrance animation');
+    assert.ok(reducedMotion.transition.split(',').every(value=>parseFloat(value)===0),'Reduced motion must disable button transitions');
+    await page.emulateMedia({reducedMotion:'no-preference'});
     fs.mkdirSync(path.join(root,'test-results'),{recursive:true});
     const pageIds=['home','midjourney','history','images','video','video-manage','chat','api','lan','public','logs','settings'];
     const pageIssues=[];

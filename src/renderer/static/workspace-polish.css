@@ -1,0 +1,81 @@
+/* Shared workspace refinements; glass materials remain controlled by appearance settings. */
+body:not(.standalone-library) .page .section-head h1 {
+  letter-spacing: 0 !important;
+  line-height: 1.2;
+}
+body:not(.standalone-library) .page .section-head p {
+  line-height: 1.45;
+}
+body:not(.standalone-library) #page-home .card-title-row,
+body:not(.standalone-library) #page-home .card > h2 {
+  margin-bottom: 16px;
+}
+body:not(.standalone-library) #page-home .card-title-row h2,
+body:not(.standalone-library) #page-home .card > h2 {
+  font-size: 17px;
+  line-height: 1.3;
+}
+body:not(.standalone-library) #page-home .card label:not(.switch-line) {
+  line-height: 1.4;
+}
+body:not(.standalone-library) #page-home .dropzone {
+  gap: 6px;
+  padding: 16px;
+  line-height: 1.45;
+  border-style: dashed !important;
+  border-color: rgba(39, 116, 177, .4) !important;
+}
+body:not(.standalone-library) #page-home #refDrop {
+  border-color: rgba(33, 139, 128, .44) !important;
+}
+body:not(.standalone-library):not(.theme-dark)[data-background-mode="board"] #page-home #mainDrop {
+  background: rgba(220, 239, 255, .48) !important;
+}
+body:not(.standalone-library):not(.theme-dark)[data-background-mode="board"] #page-home #refDrop {
+  background: rgba(219, 246, 238, .48) !important;
+}
+body.theme-dark:not(.standalone-library)[data-background-mode="board"] #page-home #mainDrop {
+  background: rgba(39, 96, 151, .16) !important;
+}
+body.theme-dark:not(.standalone-library)[data-background-mode="board"] #page-home #refDrop {
+  background: rgba(34, 130, 111, .14) !important;
+}
+body:not(.standalone-library) #page-home .dropzone span {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+body:not(.standalone-library) #page-home .dropzone:is(:hover, .drag, :focus-within) {
+  border-color: rgba(32, 131, 210, .68) !important;
+  box-shadow: inset 0 0 0 1px rgba(32, 131, 210, .12) !important;
+}
+body:not(.standalone-library) #page-home .estimate {
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+body:not(.standalone-library) :is(.nav, .topbar button, .page button, .right-panel button):focus-visible,
+body:not(.standalone-library) :is(.page input, .page select, .page textarea):focus-visible {
+  outline: 2px solid #2986cc !important;
+  outline-offset: 2px;
+}
+body:not(.standalone-library) :is(.nav, .topbar button, .page button, .right-panel button):not([data-liquid-elastic]) {
+  transition-property: background-color, border-color, color, opacity, transform !important;
+  transition-duration: 150ms !important;
+  transition-timing-function: cubic-bezier(.2, .7, .2, 1) !important;
+}
+body:not(.standalone-library) .page.active {
+  animation: workspace-page-enter 160ms ease-out both;
+}
+@keyframes workspace-page-enter {
+  from { opacity: .88; }
+  to { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  body:not(.standalone-library) .page.active { animation: none !important; }
+  body:not(.standalone-library) :is(.nav, .topbar button, .page button, .right-panel button) {
+    transition: none !important;
+  }
+  body:not(.standalone-library) :is(.nav, .topbar button, .page button, .right-panel button):not([data-liquid-elastic]) {
+    transition-duration: 0s !important;
+    transition-delay: 0s !important;
+  }
+}
