@@ -187,14 +187,29 @@ body.liquid-glass-enabled [data-liquid-surface] > .liquid-backdrop {
 
 /* Keep the live task rail visually continuous with the workspace. */
 body .app-shell > #realtimeTaskPanel.glass {
-  border-color:transparent!important;
+  border:0!important;
+  outline:0!important;
   background:transparent!important;
   background-image:none!important;
   box-shadow:none!important;
   backdrop-filter:none!important;
   -webkit-backdrop-filter:none!important;
 }
-body .app-shell > #realtimeTaskPanel.glass::after {display:none!important}
+body .app-shell > #realtimeTaskPanel.glass::before,
+body .app-shell > #realtimeTaskPanel.glass::after {content:none!important;display:none!important}
+body .app-shell > #realtimeTaskPanel.glass > .liquid-backdrop {
+  --liquid-optical-edge:0px;
+  padding:0!important;
+  -webkit-mask:none!important;
+  mask:none!important;
+  background:transparent!important;
+  background-image:none!important;
+}
+body .app-shell > #realtimeTaskPanel.glass > .liquid-backdrop::before,
+body .app-shell > #realtimeTaskPanel.glass > .liquid-backdrop::after {
+  content:none!important;
+  display:none!important;
+}
 body.liquid-glass-enabled .app-shell > #realtimeTaskPanel.glass.liquid-surface-active {
   background:transparent!important;
   background-image:none!important;
@@ -217,3 +232,35 @@ body #realtimeTaskPanel.glass .stats>div {
   backdrop-filter:none!important;
   -webkit-backdrop-filter:none!important;
 }
+
+/* Recent thumbnails preserve the source aspect ratio inside stable square slots. */
+body :is(#miniImages,#mobileMiniImages) .mini-image-cell {
+  position:relative;
+  min-width:0;
+  aspect-ratio:1/1;
+  overflow:hidden;
+  border-radius:12px;
+  background:rgba(127,137,150,.12);
+}
+body :is(#miniImages,#mobileMiniImages) .mini-image-cell > .mini-draggable-image {
+  display:block!important;
+  width:100%!important;
+  height:100%!important;
+  aspect-ratio:auto!important;
+  object-fit:contain!important;
+  border-radius:inherit!important;
+  background:transparent!important;
+}
+body :is(#miniImages,#mobileMiniImages) .mini-image-fallback {
+  display:none;
+  position:absolute;
+  inset:0;
+  place-items:center;
+  padding:6px;
+  color:var(--ios-muted);
+  font-size:10px;
+  text-align:center;
+  pointer-events:none;
+}
+body :is(#miniImages,#mobileMiniImages) .mini-image-cell.is-broken .mini-image-fallback {display:grid}
+body.theme-dark :is(#miniImages,#mobileMiniImages) .mini-image-cell {background:rgba(255,255,255,.08)}

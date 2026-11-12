@@ -17,6 +17,14 @@ fs.writeFileSync(path.join(data,'config.json'),JSON.stringify({port:18784,shortc
     const page=await app.firstWindow();
     await page.waitForURL('http://127.0.0.1:18784/**',{timeout:30000});
     await page.waitForFunction(()=>window.liquidGlassSettings && document.querySelector('.topbar .liquid-backdrop'));
+    const fallbackSource='data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=';
+    const fallbackResult=await page.evaluate(source=>{
+      const cell=document.createElement('div'),img=document.createElement('img');
+      cell.className='mini-image-cell';img.dataset.fallbackUrls=JSON.stringify([source]);cell.appendChild(img);document.body.appendChild(cell);
+      bindRecentMiniImageFallback(img);img.dispatchEvent(new Event('error'));
+      const result=img.src;cell.remove();return result;
+    },fallbackSource);
+    assert.equal(fallbackResult,fallbackSource,'Recent image thumbnails retry their fallback source after a broken thumbnail URL');
     await page.emulateMedia({reducedMotion:'reduce'});
     const reducedMotion = await page.evaluate(()=>({
       animation:getComputedStyle(document.querySelector('#page-home')).animationName,
@@ -50,10 +58,19 @@ fs.writeFileSync(path.join(data,'config.json'),JSON.stringify({port:18784,shortc
         const panel=document.querySelector('#realtimeTaskPanel');
         if(panel){
           const style=getComputedStyle(panel),edge=getComputedStyle(panel,'::after');
-          if(style.borderTopColor!=='rgba(0, 0, 0, 0)' || style.backgroundColor!=='rgba(0, 0, 0, 0)' || style.backgroundImage!=='none' || style.boxShadow!=='none' || edge.display!=='none') issues.push('Live task panel outer divider is too prominent');
+          if(style.borderTopWidth!=='0px' || style.outlineStyle!=='none' || style.backgroundColor!=='rgba(0, 0, 0, 0)' || style.backgroundImage!=='none' || style.boxShadow!=='none' || edge.display!=='none') issues.push('Live task panel outer divider is too prominent');
+          const backdrop=panel.querySelector(':scope>.liquid-backdrop');
+          if(backdrop){
+            const optics=getComputedStyle(backdrop),opticalEdge=getComputedStyle(backdrop,'::after');
+            if(optics.padding!=='0px' || (opticalEdge.display!=='none' && opticalEdge.content!=='none')) issues.push('Live task panel still paints an optical edge');
+          }
           if(document.body.classList.contains('liquid-glass-enabled') && panel.classList.contains('liquid-surface-active') && !panel.querySelector('.liquid-backdrop')) issues.push('Live task panel lost its liquid-glass backdrop');
           const tiles=[...panel.querySelectorAll('.stats>div')];
           if(tiles.some(tile=>{const tileStyle=getComputedStyle(tile);return tileStyle.boxShadow!=='none' || tileStyle.backgroundColor!=='rgba(0, 0, 0, 0)'})) issues.push('Live task panel statistics still look like separate cards');
+          const gallery=document.getElementById('miniImages'),cell=document.createElement('div'),image=document.createElement('img');
+          cell.className='mini-image-cell';image.className='mini-draggable-image';cell.appendChild(image);gallery.appendChild(cell);
+          if(getComputedStyle(image).objectFit!=='contain') issues.push('Recent image thumbnails crop the source image');
+          cell.remove();
         }
         return issues;
       });

@@ -6611,6 +6611,39 @@ $('#deleteSelectedBtn').addEventListener('click',async()=>{
   selectedImages.clear(); loadImages();
 });
 
+function recentMiniImageSourceUrl(value){
+  const raw = String(value || '').trim();
+  if(!raw) return '';
+  try{
+    const url = new URL(raw, location.href);
+    return url.origin === location.origin ? withPublicAccess(raw) : url.href;
+  }catch(e){ return raw; }
+}
+function bindRecentMiniImageFallback(img){
+  if(!img || img.dataset.fallbackBound) return;
+  img.dataset.fallbackBound = '1';
+  img.addEventListener('error',()=>{
+    let sources = [];
+    try{ sources = JSON.parse(img.dataset.fallbackUrls || '[]'); }catch(e){}
+    const next = Array.isArray(sources) ? sources.shift() : '';
+    img.dataset.fallbackUrls = JSON.stringify(sources);
+    if(next){
+      img.dataset.usedFallback = '1';
+      img.dataset.previewUrl = next;
+      img.src = next;
+      return;
+    }
+    img.closest('.mini-image-cell')?.classList.add('is-broken');
+  });
+  img.addEventListener('load',()=>{
+    const cell = img.closest('.mini-image-cell');
+    cell?.classList.remove('is-broken');
+    if(img.dataset.usedFallback !== '1') return;
+    img.dataset.fullUrl = img.currentSrc || img.src;
+    const meta = imageMetaMap.get(img.dataset.id);
+    if(meta){ meta.fullUrl = img.dataset.fullUrl; meta.originalUrl = img.dataset.fullUrl; }
+  });
+}
 async function loadMiniImages(activeTasks = []){
   const now = Date.now();
   let imgs = miniImagesCache;
@@ -6626,14 +6659,15 @@ async function loadMiniImages(activeTasks = []){
   // V13.8: 右侧“最近图片”同时显示正在生成中的图片任务状态；无变化时不重绘，避免闪动。
   const signature = items.map(i => {
     if(i.__kind === 'task') return ['task', i.id, i.status, i.progress, i.progress_text, i.remote_task_id, i.updated_at].join('|');
-    return ['img', i.id, i.thumb_url || i.url, i.full_url || i.original_url || i.url, i.filename || ''].join('|');
+    return ['img', i.id, i.thumb_url || i.url, i.full_url || i.original_url || i.url, i.remote_url || '', i.filename || ''].join('|');
   }).join(';;');
   items.forEach(i=>{
     if(i.__kind !== 'image') return;
-    const thumb = i.thumb_url || i.url || i.remote_url || ''; 
-    const full = i.full_url || i.original_url || i.url || i.remote_url || ''; 
+    const thumb = recentMiniImageSourceUrl(i.thumb_url || i.url || i.remote_url || '');
+    const full = recentMiniImageSourceUrl(i.full_url || i.original_url || i.url || i.remote_url || '');
+    const remote = recentMiniImageSourceUrl(i.remote_url || '');
     const key = 'mini_' + i.id;
-    imageMetaMap.set(key, imageRowToPreviewMeta(i));
+    imageMetaMap.set(key,{...imageRowToPreviewMeta(i),fullUrl:full || thumb,originalUrl:full || thumb,thumbUrl:thumb,remoteUrl:remote});
   });
   if(signature === lastMiniImagesSignature){
     return;
@@ -6655,18 +6689,27 @@ async function loadMiniImages(activeTasks = []){
         <div class="mini-task-progress"><i style="width:${p}%"></i></div>
       </div>`;
     }
-    const thumb = i.thumb_url || i.url || '';
-    const full = i.full_url || i.original_url || i.url || '';
+    const thumb = recentMiniImageSourceUrl(i.thumb_url || i.url || i.remote_url || '');
+    const full = recentMiniImageSourceUrl(i.full_url || i.original_url || i.url || i.remote_url || '');
+    const remote = recentMiniImageSourceUrl(i.remote_url || '');
     const key = 'mini_' + i.id;
-    return `<img class="mini-draggable-image draggable-generated-thumb" draggable="true" loading="lazy" decoding="async" src="${thumb}" data-full-url="${full}" data-id="${key}" data-name="${escapeHtml(i.filename||'generated-image.png')}" title="拖动使用原图 / 右键复制返回 url 或提示词" onclick="showPreview('${full}', imageMetaMap.get('${key}') || {})">`;
+    const sources = [...new Set([thumb,full,remote].filter(Boolean))];
+    if(!sources.length) return '<div class="mini-image-cell is-broken"><span class="mini-image-fallback">图片暂不可用</span></div>';
+    const [src,...fallbacks] = sources;
+    return `<div class="mini-image-cell"><img class="mini-draggable-image draggable-generated-thumb" draggable="true" loading="eager" decoding="async" src="${escapeHtml(src)}" data-full-url="${escapeHtml(full || src)}" data-fallback-urls="${escapeHtml(JSON.stringify(fallbacks))}" data-id="${escapeHtml(key)}" data-name="${escapeHtml(i.filename||'generated-image.png')}" title="拖动使用原图 / 右键复制返回 url 或提示词" alt=""><span class="mini-image-fallback" aria-hidden="true">图片暂不可用</span></div>`;
   }).join('') || '<span class="hint">暂无图片</span>';
   if($('#miniImages')) $('#miniImages').innerHTML = miniHtml;
   if($('#mobileMiniImages')) $('#mobileMiniImages').innerHTML = miniHtml;
   $$('#miniImages .mini-draggable-image, #mobileMiniImages .mini-draggable-image').forEach(img=>{
     img.draggable = true;
     img.style.webkitUserDrag = 'element';
+    bindRecentMiniImageFallback(img);
+    img.addEventListener('click',()=>{
+      if(img.closest('.mini-image-cell')?.classList.contains('is-broken')) return;
+      showPreview(img.dataset.previewUrl || img.dataset.fullUrl || img.src, imageMetaMap.get(img.dataset.id) || {});
+    });
     img.addEventListener('dragstart', e=>{
-      const meta = imageMetaMap.get(img.dataset.id) || {fullUrl:img.dataset.fullUrl, filename:img.dataset.name || 'generated-image.png'};
+      const meta = {...(imageMetaMap.get(img.dataset.id) || {}),fullUrl:img.dataset.fullUrl, filename:img.dataset.name || 'generated-image.png'};
       setImageDragData(e, meta);
     });
   });
@@ -6678,7 +6721,7 @@ async function loadMiniImages(activeTasks = []){
       miniBox.addEventListener('dragstart', e=>{
         const img = e.target?.closest?.('.mini-draggable-image,[data-full-url]');
         if(!img) return;
-        const meta = imageMetaMap.get(img.dataset.id) || {fullUrl:img.dataset.fullUrl || img.src, filename:img.dataset.name || 'generated-image.png'};
+        const meta = {...(imageMetaMap.get(img.dataset.id) || {}),fullUrl:img.dataset.fullUrl || img.src, filename:img.dataset.name || 'generated-image.png'};
         setImageDragData(e, meta);
       }, true);
     }
@@ -11414,13 +11457,38 @@ let assetLibraryLoadSequence = 0;
 function renderAssetLoadStatus(){
   const status = $('#assetLoadStatus');
   if(!status) return;
+  const emptyState = !assetState.ready;
+  const unavailable = emptyState || assetState.loading || !!assetState.loadError;
+  const canManageCurrentGroup = !!assetState.currentGroup && assetCanEdit(assetGroupById(assetState.currentGroup));
+  const canUploadCurrentGroup = assetCanUploadToCurrentGroup();
   status.hidden = !assetState.loading && !assetState.loadError;
   $('#assetLoadMessage').textContent = assetState.loadError || (assetState.loading ? '正在读取资产库...' : '');
   status.classList.toggle('error', !!assetState.loadError);
+  status.classList.toggle('empty-state', emptyState);
+  $('.asset-library-main')?.classList.toggle('load-empty', emptyState);
+  $('#assetLibraryWindow')?.classList.toggle('asset-data-unavailable', unavailable);
   $('#assetLoadRetryBtn').hidden = !assetState.loadError;
+  $('#assetLibrarySearch').disabled = emptyState;
+  $('#assetSearchAllBtn').disabled = emptyState;
+  $('#assetBatchToggleBtn').disabled = unavailable;
+  $('#assetNewProjectBtn').disabled = unavailable;
+  $('#assetNewChildGroupBtn').disabled = unavailable;
+  $('#assetRenameGroupBtn').disabled = unavailable || !canManageCurrentGroup;
+  $('#assetDeleteGroupBtn').disabled = unavailable || !canManageCurrentGroup;
+  $('#assetShareCurrentGroupBtn').disabled = unavailable || !canManageCurrentGroup;
+  $('#assetUploadTopBtn').disabled = unavailable || !canUploadCurrentGroup;
+  $('#assetFileInput').disabled = unavailable || !canUploadCurrentGroup;
+  ['#assetSelectAllBtn','#assetInvertBtn','#assetClearSelectionBtn','#assetDownloadSelectedBtn','#assetShareSelectedBtn','#assetDeleteSelectedBtn'].forEach(selector=>{
+    const button=$(selector);
+    if(button) button.disabled=unavailable;
+  });
+  $('#assetGrid')?.querySelectorAll('.asset-card-actions button').forEach(button=>{button.disabled=unavailable;});
+  if($('#assetDropStatus')) $('#assetDropStatus').textContent = unavailable
+    ? (assetState.loading ? '正在读取资产库...' : '资产库不可用，恢复目录后再操作')
+    : (assetState.currentGroup ? (canUploadCurrentGroup ? '拖入文件到右侧任意位置即可上传' : '共享资产为只读，只能查看、下载、复制资产和使用') : '请先新建或选择一个资产库');
   if(!assetState.ready){
     if($('#assetCurrentGroupTitle')) $('#assetCurrentGroupTitle').textContent = assetState.loadError ? '资产库暂时无法读取' : '正在读取资产库';
-    if($('#assetCurrentGroupMeta')) $('#assetCurrentGroupMeta').textContent = assetState.loadError ? '读取失败不代表素材已删除' : '';
+    if($('#assetCurrentGroupMeta')) $('#assetCurrentGroupMeta').textContent = assetState.loadError ? '读取失败时，本程序没有创建空索引或删除文件。请检查资产库目录后重试。' : '';
     if($('#assetGroupTree')) $('#assetGroupTree').innerHTML = '';
     if($('#assetGrid')) $('#assetGrid').innerHTML = '';
   }
@@ -11442,7 +11510,6 @@ async function loadAssetLibrary(){
   }catch(e){
     if(sequence !== assetLibraryLoadSequence) return;
     assetState.loadError = e.message || '资产库加载失败，请检查网络目录后重试。';
-    toast(assetState.loadError);
   }finally{
     if(sequence === assetLibraryLoadSequence){ assetState.loading = false; renderAssetLoadStatus(); }
   }
@@ -11638,6 +11705,7 @@ function renderAssetLibrary({skipTree=false}={}){
   requestAnimationFrame(()=>assetRefreshOverlayScrollbars(false));
 }
 async function assetCreateGroup(parentId=''){
+  if(!assetState.ready || assetState.loading || assetState.loadError) return;
   const isProject = !parentId;
   const ret = await api('/api/assets/groups/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:isProject?'新建项目库':'新建分组',parent_id:parentId || null})});
   if(ret.group?.id) assetState.currentGroup = ret.group.id;
@@ -11655,6 +11723,7 @@ async function assetSaveGroupName(id, name){
 }
 async function assetDeleteGroup(id){ if(!confirm('删除后该分组及其子分组、素材将被移除，此操作不可恢复。')) return; await api('/api/assets/groups/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({group_id:id})}); const idx = assetState.groups.findIndex(g=>g.id===id); const next = assetState.groups[idx-1] || assetState.groups[idx+1] || null; assetState.currentGroup = next ? next.id : ''; assetState.editingGroupId=''; await loadAssetLibrary(); toast('库/分组已删除'); }
 async function assetUploadFiles(files){
+  if(!assetState.ready || assetState.loading || assetState.loadError) return;
   const list=[...files]; if(!list.length) return;
   if(!assetCanUploadToCurrentGroup()) return toast('共享资产为只读，不能上传到该分组');
   const items=[];
@@ -12151,12 +12220,18 @@ function setupAssetLibrary(){
   const dropArea=$('.asset-library-main');
   if(dropArea){
     dropArea.addEventListener('dragover',e=>{
+      if(!assetState.ready || assetState.loading || assetState.loadError) return;
       if(assetHasInternalDrag(e.dataTransfer)) return;
       e.preventDefault();
       dropArea.classList.add('drag');
     });
     dropArea.addEventListener('dragleave',e=>{ if(!dropArea.contains(e.relatedTarget)) dropArea.classList.remove('drag'); });
     dropArea.addEventListener('drop',e=>{
+      if(!assetState.ready || assetState.loading || assetState.loadError){
+        e.preventDefault();
+        dropArea.classList.remove('drag');
+        return;
+      }
       if(assetHasInternalDrag(e.dataTransfer)){
         e.preventDefault();
         e.stopPropagation();

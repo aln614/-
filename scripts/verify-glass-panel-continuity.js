@@ -8,7 +8,7 @@ const {PNG}=require('pngjs');
 const root=path.resolve(__dirname,'..');
 const temporary=fs.mkdtempSync(path.join(os.tmpdir(),'tenying-glass-continuity-'));
 const runtime=path.join(temporary,'runtime');
-const results=path.join(root,'test-results','glass-continuity');
+const results=process.env.GLASS_CONTINUITY_SCREENSHOT_DIR || path.join(root,'test-results','glass-continuity');
 fs.mkdirSync(runtime);fs.mkdirSync(results,{recursive:true});
 fs.writeFileSync(path.join(runtime,'config.json'),JSON.stringify({port:18798,shortcuts_enabled:false,update_auto_check:false,public_enabled:false,
   output_dir:path.join(temporary,'output'),asset_library_dir:path.join(temporary,'assets')}));
@@ -34,10 +34,10 @@ fs.writeFileSync(path.join(runtime,'config.json'),JSON.stringify({port:18798,sho
       document.getElementById('apiKey').value='fixture-not-submitted';
       document.getElementById('apiKeyWarning')?.remove();
       applyModelToUI('hy-image-v3.5-preview');
-      const canvas=document.createElement('canvas');canvas.width=90;canvas.height=90;
-      const ctx=canvas.getContext('2d');ctx.fillStyle='#506a75';ctx.fillRect(0,0,90,90);
+      const canvas=document.createElement('canvas');canvas.width=90;canvas.height=45;
+      const ctx=canvas.getContext('2d');ctx.fillStyle='#506a75';ctx.fillRect(0,0,90,45);
       const src=canvas.toDataURL();
-      document.getElementById('miniImages').innerHTML=Array.from({length:6},()=>`<img src="${src}" alt="fixture">`).join('');
+      document.getElementById('miniImages').innerHTML=Array.from({length:6},()=>`<div class="mini-image-cell"><img class="mini-draggable-image" src="${src}" alt="fixture"><span class="mini-image-fallback">unavailable</span></div>`).join('');
     });
     await page.mouse.move(700,70);
     for(const theme of ['dark','light']) {
@@ -57,10 +57,15 @@ fs.writeFileSync(path.join(runtime,'config.json'),JSON.stringify({port:18798,sho
         const material=host.querySelector(':scope > .liquid-material');
         const stat=host.querySelector('.stats>div');
         const content=host.querySelector('#imageRealtimePanel');
+        const edge=getComputedStyle(backdrop,'::after');
         return {box:host.getBoundingClientRect().toJSON(),backdrop:backdrop.getBoundingClientRect().toJSON(),
           panelBackground:getComputedStyle(host).backgroundColor,
           backdropBackground:getComputedStyle(backdrop).backgroundColor,
+          borderWidth:getComputedStyle(host).borderTopWidth,hostShadow:getComputedStyle(host).boxShadow,
+          hostEdgeDisplay:getComputedStyle(host,'::after').display,backdropPadding:getComputedStyle(backdrop).padding,
+          backdropEdgeDisplay:edge.display,backdropEdgeContent:edge.content,
           statBackground:getComputedStyle(stat).backgroundColor,statShadow:getComputedStyle(stat).boxShadow,
+          recentImageFit:getComputedStyle(document.querySelector('#miniImages img')).objectFit,
           padding:getComputedStyle(host).padding,overflow:getComputedStyle(host).overflowY,
           material:material && {box:material.getBoundingClientRect().toJSON(),filter:getComputedStyle(material).backdropFilter,zIndex:getComputedStyle(material).zIndex,background:getComputedStyle(material).backgroundColor},
           filter:getComputedStyle(backdrop).backdropFilter,viewport:{width:innerWidth,height:innerHeight},
@@ -96,8 +101,14 @@ fs.writeFileSync(path.join(runtime,'config.json'),JSON.stringify({port:18798,sho
       assert.ok(Math.abs(geometry.material.box.height-geometry.backdrop.height)<1,'Material covers the whole panel');
       assert.equal(geometry.panelBackground,'rgba(0, 0, 0, 0)','Task panel has no separate opaque wrapper');
       assert.equal(geometry.backdropBackground,'rgba(0, 0, 0, 0)','Liquid backdrop does not paint a full-panel tint');
+      assert.equal(geometry.borderWidth,'0px','Task rail has no outer border');
+      assert.equal(geometry.hostShadow,'none','Task rail has no separate card shadow');
+      assert.equal(geometry.hostEdgeDisplay,'none','Task rail has no decorative outer edge');
+      assert.equal(geometry.backdropPadding,'0px','Task rail has no optical ring inset');
+      assert.ok(geometry.backdropEdgeDisplay==='none' || geometry.backdropEdgeContent==='none','Task rail has no refractive edge highlight');
       assert.equal(geometry.statBackground,'rgba(0, 0, 0, 0)','Task statistics do not render as separate cards');
       assert.equal(geometry.statShadow,'none','Task statistics have no floating shadows');
+      assert.equal(geometry.recentImageFit,'contain','Recent landscape and portrait thumbnails are not cropped');
       assert.notEqual(geometry.material.background,'rgba(0, 0, 0, 0)','Glass fill is retained');
       assert.ok(maximum.change<6,`Horizontal seam at zoom ${zoom}, row ${maximum.y}: ${maximum.change}`);
     }
