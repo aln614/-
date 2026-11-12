@@ -47,6 +47,14 @@ fs.writeFileSync(path.join(data,'config.json'),JSON.stringify({port:18784,shortc
         if(model && model.title!==model.selectedOptions[0]?.textContent.trim()) issues.push('selected model label is not available as a tooltip');
         const lan=document.getElementById('lanState');
         if(lan && (!lan.title || lan.title!==lan.textContent || lan.getAttribute('aria-label')!==lan.textContent)) issues.push('LAN address tooltip or accessible label is incomplete');
+        const panel=document.querySelector('#realtimeTaskPanel');
+        if(panel){
+          const style=getComputedStyle(panel),edge=getComputedStyle(panel,'::after');
+          if(style.borderTopColor!=='rgba(0, 0, 0, 0)' || style.backgroundColor!=='rgba(0, 0, 0, 0)' || style.backgroundImage!=='none' || style.boxShadow!=='none' || edge.display!=='none') issues.push('Live task panel outer divider is too prominent');
+          if(document.body.classList.contains('liquid-glass-enabled') && panel.classList.contains('liquid-surface-active') && !panel.querySelector('.liquid-backdrop')) issues.push('Live task panel lost its liquid-glass backdrop');
+          const tiles=[...panel.querySelectorAll('.stats>div')];
+          if(tiles.some(tile=>{const tileStyle=getComputedStyle(tile);return tileStyle.boxShadow!=='none' || tileStyle.backgroundColor!=='rgba(0, 0, 0, 0)'})) issues.push('Live task panel statistics still look like separate cards');
+        }
         return issues;
       });
       assert.deepEqual(issues,[],mode+' '+size.width+'px controls must be visible and clickable');

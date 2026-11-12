@@ -55,8 +55,12 @@ fs.writeFileSync(path.join(runtime,'config.json'),JSON.stringify({port:18798,sho
         const host=document.querySelector('.right-panel');
         const backdrop=host.querySelector(':scope > .liquid-backdrop');
         const material=host.querySelector(':scope > .liquid-material');
+        const stat=host.querySelector('.stats>div');
         const content=host.querySelector('#imageRealtimePanel');
         return {box:host.getBoundingClientRect().toJSON(),backdrop:backdrop.getBoundingClientRect().toJSON(),
+          panelBackground:getComputedStyle(host).backgroundColor,
+          backdropBackground:getComputedStyle(backdrop).backgroundColor,
+          statBackground:getComputedStyle(stat).backgroundColor,statShadow:getComputedStyle(stat).boxShadow,
           padding:getComputedStyle(host).padding,overflow:getComputedStyle(host).overflowY,
           material:material && {box:material.getBoundingClientRect().toJSON(),filter:getComputedStyle(material).backdropFilter,zIndex:getComputedStyle(material).zIndex,background:getComputedStyle(material).backgroundColor},
           filter:getComputedStyle(backdrop).backdropFilter,viewport:{width:innerWidth,height:innerHeight},
@@ -90,6 +94,10 @@ fs.writeFileSync(path.join(runtime,'config.json'),JSON.stringify({port:18798,sho
       assert.ok(!geometry.material.filter.includes('url('),'Only the optical edge uses SVG refraction');
       assert.equal(geometry.material.zIndex,'-1','Material remains behind content');
       assert.ok(Math.abs(geometry.material.box.height-geometry.backdrop.height)<1,'Material covers the whole panel');
+      assert.equal(geometry.panelBackground,'rgba(0, 0, 0, 0)','Task panel has no separate opaque wrapper');
+      assert.equal(geometry.backdropBackground,'rgba(0, 0, 0, 0)','Liquid backdrop does not paint a full-panel tint');
+      assert.equal(geometry.statBackground,'rgba(0, 0, 0, 0)','Task statistics do not render as separate cards');
+      assert.equal(geometry.statShadow,'none','Task statistics have no floating shadows');
       assert.notEqual(geometry.material.background,'rgba(0, 0, 0, 0)','Glass fill is retained');
       assert.ok(maximum.change<6,`Horizontal seam at zoom ${zoom}, row ${maximum.y}: ${maximum.change}`);
     }
@@ -124,7 +132,10 @@ fs.writeFileSync(path.join(runtime,'config.json'),JSON.stringify({port:18798,sho
       await page.evaluate(({id,value})=>{const el=document.getElementById(id);el.value=value;el.dispatchEvent(new Event('input',{bubbles:true}));},{id,value});
     }
     assert.match(await page.locator('.liquid-material').evaluate(el=>getComputedStyle(el).backdropFilter),/blur\(36px\)/,'The existing blur setting still controls the material');
-    assert.match(await page.locator('.liquid-material').evaluate(el=>getComputedStyle(el).backgroundColor),/0\.345?\)/,'The existing opacity setting still controls the material');
+    const lowAlpha=await page.locator('.liquid-material').evaluate(el=>Number(getComputedStyle(el).backgroundColor.match(/,\s*([\d.]+)\)$/)?.[1]));
+    await page.evaluate(()=>{const el=document.getElementById('liquidOpacity');el.value='.8';el.dispatchEvent(new Event('input',{bubbles:true}));});
+    const highAlpha=await page.locator('.liquid-material').evaluate(el=>Number(getComputedStyle(el).backgroundColor.match(/,\s*([\d.]+)\)$/)?.[1]));
+    assert.ok(lowAlpha>0 && lowAlpha<.02 && highAlpha>lowAlpha && highAlpha<.05,'The opacity setting controls a subtle task-panel tint: '+lowAlpha+' -> '+highAlpha);
     browser=await chromium.launch({channel:'msedge',headless:true});
     const web=await browser.newPage({viewport:{width:1480,height:960}});
     await web.goto('http://127.0.0.1:18798/');
