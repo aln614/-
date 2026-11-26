@@ -354,6 +354,8 @@ async function jsonRequestWithFallback(url, apiKey, payload = null, method = 'GE
 }
 const APIMART_IMAGE_MODELS = [
   'gemini-nano-banana-2.1','gemini-nano-banana-2.1-ext',
+  'kling-v4-image','kling-v4-long-image','mai-image-2.7','mai-image-2.7-flash',
+  'minimax-h3-image','minimax-h3-image-highspeed',
   'flux-3-image','flux-3-image-klein','mai-image-2.6','mai-image-2.6-flash',
   'gemini-3.1-flash-image-preview','gemini-3.1-flash-image-preview-official',
   'gemini-3.1-flash-lite-image','gemini-3.1-flash-lite-image-ext',
@@ -420,6 +422,33 @@ const MAI_IMAGE_26_RULE = {
   customSizeMin: 768, customPixelMax: 2359296,
   resolutions: ['1K','2K'], defaultResolution: '1K', dimensionsTextOnly: true,
   booleanParams: ['auto_aspect_ratio','web_grounding']
+};
+const MAI_IMAGE_27_RULE = {
+  ...MAI_IMAGE_26_RULE, customPixelMax: 4194304, omitResolutionWithCustomSize: true,
+  sizes: ['1:1','4:3','3:4','3:2','2:3','16:9','9:16','2:1','1:2','21:9','9:21','4:1','1:4'],
+  arbitraryAspectRatios: false, minAspectRatio: undefined, maxAspectRatio: undefined, booleanParams: [],
+  allowBackground: true, backgrounds: ['auto','opaque']
+};
+const MINIMAX_H3_IMAGE_RULE = {
+  endpoint: '/v1/images/generations', taskQuery: 'batch',
+  maxImageUrls: 16, strictReferenceLimit: true, maxImageBytes: 64 * 1024 * 1024,
+  nMin: 1, nMax: 10, defaultN: 1, defaultSize: 'auto',
+  arbitraryAspectRatios: true, maxAspectComponent: 300,
+  minAspectRatio: 1 / 3, maxAspectRatio: 3, customPixelMin: 655360, customPixelMax: 20000000,
+  resolutions: ['1K','2K','4K'], defaultResolution: '4K', omitResolutionWithCustomSize: true,
+  outputFormats: ['jpeg','png','webp'], defaultOutputFormat: 'jpeg', allowOutputFormat: true,
+  allowWatermark: true
+};
+const KLING_V4_IMAGE_RULE = {
+  endpoint: '/v1/images/generations', taskQuery: 'batch',
+  maxImageUrls: 10, strictReferenceLimit: true, maxImageBytes: 30 * 1024 * 1024,
+  nMin: 1, nMax: 9, defaultN: 1, noCustomSize: true,
+  sizes: ['auto','16:9','9:16','1:1','4:3','3:4','3:2','2:3','21:9'], defaultSize: 'auto',
+  resolutions: ['2K','4K','8K'], defaultResolution: '2K', seriesMax: 4
+};
+const KLING_V4_LONG_IMAGE_RULE = {
+  ...KLING_V4_IMAGE_RULE, nMax: 1, seriesMax: 0, noSize: true, maxImageUrls: 3,
+  resolutions: ['1K','2K'], defaultResolution: '1K', longImage: true
 };
 const GEMINI_31_LITE_RULE = {
   endpoint: '/v1/images/generations', taskQuery: 'batch', maxImageUrls: 14,
@@ -626,6 +655,12 @@ const Z_IMAGE_TURBO_RULE = {
   textOnly: true, allowPromptExtend: true, promptExtendModes: ['direct'], defaultPromptExtendMode: 'direct'
 };
 const APIMART_MODEL_RULES = {
+  'kling-v4-image': KLING_V4_IMAGE_RULE,
+  'kling-v4-long-image': KLING_V4_LONG_IMAGE_RULE,
+  'mai-image-2.7': MAI_IMAGE_27_RULE,
+  'mai-image-2.7-flash': MAI_IMAGE_27_RULE,
+  'minimax-h3-image': MINIMAX_H3_IMAGE_RULE,
+  'minimax-h3-image-highspeed': MINIMAX_H3_IMAGE_RULE,
   'gemini-nano-banana-2.1': NANO_BANANA_21_RULE,
   'gemini-nano-banana-2.1-ext': NANO_BANANA_21_EXT_RULE,
   'flux-3-image': FLUX3_IMAGE_RULE,
@@ -731,6 +766,25 @@ function normalizeRuleResolution(value, rule = DEFAULT_APIMART_IMAGE_RULE) {
   const matched = available.find(x => String(x).toLowerCase() === String(r).toLowerCase());
   return matched || rule.defaultResolution || available[0] || '1k';
 }
+function applyKlingLongImageOptions(payload, rawPayload) {
+  const skill = String(rawPayload.skill || 'webpage').toLowerCase();
+  const images = payload.image_urls || [];
+  if (skill === 'ecommerce') {
+    if (!images.length) throw new Error('Kling V4 Long Image 电商模式需要 1 至 3 张商品图');
+    const length = String(rawPayload.length || 'medium').toLowerCase();
+    if (!['short','medium','long'].includes(length)) throw new Error('Kling V4 Long Image 电商模式的长度无效');
+    payload.length = length;
+  } else if (skill === 'webpage') {
+    if (images.length > 2) throw new Error('Kling V4 Long Image 网页模式最多支持 2 张参考图');
+    if (images.length) {
+      payload.image_with_roles = images.map((url, index) => ({ url, role:index === 0 ? 'subject' : 'style' }));
+      delete payload.image_urls;
+    }
+  } else {
+    throw new Error('Kling V4 Long Image 仅支持电商详情页或网页设计模式');
+  }
+  payload.skill = skill;
+}
 function sanitizeApimartImagePayload(rawPayload = {}, model = '') {
   const rule = getApimartImageRule(model);
   let sizeIsTier = false;
@@ -755,7 +809,8 @@ function sanitizeApimartImagePayload(rawPayload = {}, model = '') {
     if (rule.arbitraryAspectRatios && rawSize !== 'auto' && !/^\d+x\d+$/i.test(rawSize)) {
       const ratio = rawSize.match(/^(\d+):(\d+)$/);
       const value = ratio && Number(ratio[2]) > 0 ? Number(ratio[1]) / Number(ratio[2]) : 0;
-      if (value < rule.minAspectRatio || value > rule.maxAspectRatio) rawSize = rule.defaultSize;
+      if (value < rule.minAspectRatio || value > rule.maxAspectRatio ||
+          (ratio && rule.maxAspectComponent && ratio.slice(1).some(component => Number(component) > rule.maxAspectComponent))) rawSize = rule.defaultSize;
     }
     if (sizes && !sizeIsTier && !sizes.includes(rawSize) && !/^\d+x\d+$/i.test(rawSize)) rawSize = rule.defaultSize || sizes[0] || '1:1';
     if (sizes && rule.noCustomSize && /^\d+x\d+$/i.test(rawSize)) rawSize = rule.defaultSize || sizes[0] || '1:1';
@@ -798,6 +853,14 @@ function sanitizeApimartImagePayload(rawPayload = {}, model = '') {
     }
     if (maxImages < 1) throw new Error(`${payload.model} 当前输出数量 n=${payload.n} 已占满参考图名额，请减少 n 后再上传参考图`);
     payload.image_urls = rawPayload.image_urls.filter(Boolean).slice(0, maxImages);
+  }
+  if (rule.longImage) applyKlingLongImageOptions(payload, rawPayload);
+  if (rule.seriesMax && rawPayload.sequential_image_generation === 'auto') {
+    const count = Number(rawPayload.sequential_image_generation_options?.max_images ?? rawPayload.n);
+    if (!Number.isInteger(count) || count < 2 || count > rule.seriesMax) throw new Error('Kling V4 Image 关联组图需要 2 至 4 张输出');
+    payload.n = 1;
+    payload.sequential_image_generation = 'auto';
+    payload.sequential_image_generation_options = { max_images:count };
   }
   const quality = String(rawPayload.quality || '').trim().toLowerCase();
   if (rule.allowQuality && !(hasRefs && rule.qualityTextOnly)) {
@@ -886,6 +949,9 @@ function sanitizeApimartImagePayload(rawPayload = {}, model = '') {
     if (payload.sequential_image_generation === 'auto') payload.sequential_image_generation_options = { max_images: payload.n };
   }
   if (rule.allowWatermark && rawPayload.watermark !== undefined) payload.watermark = !!rawPayload.watermark;
+  if (rule === MINIMAX_H3_IMAGE_RULE && rawPayload.prompt_optimizer === false && !hasRefs && modelSize && modelSize !== 'auto') {
+    payload.prompt_optimizer = false;
+  }
   for (const key of rule.booleanParams || []) {
     if (typeof rawPayload[key] === 'boolean') payload[key] = rawPayload[key];
   }
@@ -1454,7 +1520,7 @@ async function generateOne({ cfg, prompt, mainImagePath, refImages = [], outputP
     version: cfg.image_version,
     prompt,
     size: sizeToAspect(cfg.size, model, cfg.imageSize || cfg.clarity || '1K'),
-    resolution: cfg.imageSize || cfg.clarity || '1K',
+    resolution: cfg.imageSize || cfg.clarity || rule.defaultResolution,
     n: cfg.imageN || cfg.image_n || cfg.n || cfg.count || 1,
     quality: cfg.quality,
     background: cfg.background,
@@ -1473,6 +1539,9 @@ async function generateOne({ cfg, prompt, mainImagePath, refImages = [], outputP
     prompt_extend_mode: cfg.promptExtendMode || cfg.prompt_extend_mode,
     optimize_prompt_options: cfg.optimize_prompt_options || cfg.promptOptimize,
     sequential_image_generation: cfg.sequential_image_generation,
+    skill: cfg.klingLongSkill,
+    length: cfg.klingLongLength,
+    prompt_optimizer: cfg.minimaxPromptOptimizer,
     watermark: cfg.watermark,
     seed: cfg.seed,
     prompt_upsampling: cfg.prompt_upsampling,
@@ -1499,7 +1568,7 @@ async function generateOne({ cfg, prompt, mainImagePath, refImages = [], outputP
     for (const p of refImages || []) payload.images.push(fileToDataUrl(p));
   }
 
-  const expectedCount = Math.max(1, Number(payload.n || cfg.imageN || cfg.image_n || 1));
+  const expectedCount = Math.max(1, Number(payload.sequential_image_generation_options?.max_images || payload.n || cfg.imageN || cfg.image_n || 1));
   const pollMs = apimartMode ? Math.max(2500, Number(cfg.pollIntervalMs || 2500)) : Math.max(100, Number(cfg.pollIntervalMs || 1200));
   const deadlineAt = Number(cfg.deadlineAt || 0) || (Date.now() + (Number(cfg.timeoutMs || 20 * 60 * 1000)));
   let submit = {};
@@ -1693,6 +1762,14 @@ async function generateFlow2ApiImage({ cfg, prompt, mainImagePath, refImages = [
 }
 
 const APIMART_RESPONSE_CHAT_MODELS = [
+  { id: 'gpt-6.2-sol', name: 'GPT · gpt-6.2-sol' },
+  { id: 'gpt-6.2-astra', name: 'GPT · gpt-6.2-astra' },
+  { id: 'gemini-4-neon', name: 'Gemini · gemini-4-neon' },
+  { id: 'gemini-4-hydrogen', name: 'Gemini · gemini-4-hydrogen' },
+  { id: 'gemini-4-carbon', name: 'Gemini · gemini-4-carbon' },
+  { id: 'claude-fable-5.2', name: 'Claude · claude-fable-5.2' },
+  { id: 'qwen4-max', name: 'Qwen · qwen4-max' },
+  { id: 'glm-5.1', name: 'GLM · glm-5.1' },
   { id: 'gpt-6.1-terra', name: 'OpenAI · gpt-6.1-terra' },
   // GPT first
   { id: 'gpt-6.1-sol', name: 'GPT · gpt-6.1-sol' },

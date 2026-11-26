@@ -323,10 +323,16 @@ class TaskQueue extends EventEmitter {
         const resolved = Array.isArray(payload.promptMentions)
           ? compilePromptMentions(prompt, payload.promptMentions, mainImages, refImages, main)
           : {prompt, refImages, highestImage:0};
-        if(resolved.highestImage){
+        const kling = /^kling-v4-(?:long-)?image$/i.test(String(fullCfg.model || ''));
+        if(resolved.highestImage || kling){
           const images = [main, ...resolved.refImages].filter(Boolean);
-          const accepted = sanitizeApimartImagePayload({image_urls:images, n:fullCfg.imageN, resolution:fullCfg.imageSize, size:fullCfg.size}, fullCfg.model);
-          if(resolved.highestImage > (accepted.image_urls || []).length) throw new Error('引用的图片超过当前模型支持的参考图数量，请减少图片或更换模型');
+          const accepted = sanitizeApimartImagePayload({
+            image_urls: images, n: fullCfg.imageN, resolution: fullCfg.imageSize, size: fullCfg.size,
+            sequential_image_generation: fullCfg.sequential_image_generation,
+            skill: fullCfg.klingLongSkill, length: fullCfg.klingLongLength
+          }, fullCfg.model);
+          const acceptedImages = accepted.image_urls || accepted.image_with_roles || [];
+          if(resolved.highestImage > acceptedImages.length) throw new Error('引用的图片超过当前模型支持的参考图数量，请减少图片或更换模型');
         }
         for (let r = 0; r < repeatCount; r++) {
           tasks.push({
@@ -486,7 +492,7 @@ class TaskQueue extends EventEmitter {
         this.emit('changed');
         try {
         const format = String(cfg.outputFormat || '').toLowerCase();
-        const ext = /^gpt-image-2\.6-/i.test(String(cfg.model || '')) && ['jpeg','webp','gif','svg'].includes(format)
+        const ext = /^(?:gpt-image-2\.6-|minimax-h3-image)/i.test(String(cfg.model || '')) && ['jpeg','webp','gif','svg'].includes(format)
           ? (format === 'jpeg' ? '.jpg' : '.' + format) : '.png';
         const fileName = String(task.task_index).padStart(5, '0') + ext;
         const outPath = path.join(batch.output_dir, fileName);

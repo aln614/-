@@ -182,7 +182,7 @@ strict.ok(payloadStart > 0 && payloadEnd > payloadStart);
 const watermarkLine = main.split(/\r?\n/).find(line=>line.includes('if (rule.watermarkParam &&'));
 context.normalizeVideoAspectRatio = value=>value || '16:9';
 context.addLog = ()=>{};
-vm.runInContext('this.payloadFor = function(rule, mode, imageUrls, audioUrls, normalizedResolution) { const body={watermark:true},videoModel=rule.model,prompt="test",documentFileUrl="",linkUrl="",videoUrls=[],hasReferenceFamilyInputs=!!audioUrls.length;'
+vm.runInContext('this.payloadFor = function(rule, mode, imageUrls, audioUrls, normalizedResolution) { const body={watermark:true},videoModel=rule.model,prompt="test",documentFileUrl="",linkUrl="",videoUrls=[],hasReferenceFamilyInputs=!!audioUrls.length,extendingVideo=false;'
   + main.slice(payloadStart,payloadEnd) + '\n' + watermarkLine + '\nreturn payload;};',context);
 const max = context.rules['minimax-h3-max'];
 strict.equal(context.payloadFor(max,'first_frame',['image1'],[],'1080P').first_frame_image,'image1');

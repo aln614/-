@@ -529,11 +529,13 @@ function getCurrentModelUsageContext(){
   const resolved = resolveImagePricingEntry(modelId);
   const format = String($('#outputFormat')?.value || 'png').toLowerCase();
   const formatPricingUnknown = isGptImage26ExtModel(modelId) && format === 'gif';
-  const variant = formatPricingUnknown ? null : resolveImagePricingVariant(resolved.entry, resolution, quality);
+  const longImageSpec = $('#klingLongSkill')?.value === 'ecommerce' ? ($('#klingLongLength')?.value || 'medium') : 'webpage';
+  const pricingSpec = modelId === 'kling-v4-long-image' ? resolution + '-' + longImageSpec : resolution;
+  const variant = formatPricingUnknown ? null : resolveImagePricingVariant(resolved.entry, pricingSpec, quality);
   const outputCount = typeof isMultiNImageModel === 'function' && isMultiNImageModel(modelId)
     ? Math.max(1, Number($('#imageN')?.value || 1))
     : 1;
-  const referenceImageCount = modelId === 'seedream-5-5'
+  const referenceImageCount = resolved.entry?.referenceImageCredits
     ? (Array.isArray(mainImages) && mainImages.length ? 1 : 0) + (Array.isArray(refImages) ? refImages.length : 0)
     : 0;
   const referenceCredits = Number(resolved.entry?.referenceImageCredits || 0) * referenceImageCount;
@@ -749,6 +751,9 @@ function videoPricingSpecCandidates(modelId = '', resolution = '', duration = un
   }else if(id === 'sora-2-pro'){
     add(`official-${res}`);
     add(res);
+  }else if(id === 'apimart-zoe'){
+    if(hasVideo) add(res + '-input');
+    add(res);
   }else if(['kling-v4','kling-v4-flash'].includes(id)){
     if(hasVideo) add(`${res}-input`);
     add(res);
@@ -809,6 +814,16 @@ function getCurrentVideoModelUsageContext(){
   if(['kling-v4','kling-v4-flash'].includes(modelId.toLowerCase()) && hasReferenceVideo()){
     // Edit billing uses output seconds plus max(output, input), rounded up.
     perTaskCredits = duration > 0 ? videoPricePerTask(variant, Math.ceil(duration) * 2) : null;
+  }
+  if(modelId === 'apimart-zoe'){
+    const sources = videoFilesData.map(item=>Number(item?.duration_seconds));
+    if(seedance25UsesAutomaticDuration()) perTaskCredits = null;
+    else if(hasReferenceVideo()){
+      const known = !($('#videoUrlInput')?.value || '').trim() && sources.length > 0 && sources.every(value=>value > 0);
+      const inputSeconds = videoMultiReferenceEnabled() ? sources.reduce((sum, value)=>sum + value, 0) : Math.max(...sources);
+      const billedSeconds = duration + Math.max(Math.floor(inputSeconds), Math.ceil(duration * 2 / 3));
+      perTaskCredits = known && duration > 0 ? videoPricePerTask(variant, billedSeconds) : null;
+    }
   }
   const uses = perTaskCredits === null ? null : estimateUsesForPrice(perTaskCredits, 1);
   return {platform:currentVideoPlatform(), modelId, label, rule, resolution, duration, mode:currentVideoModeValue(), priceModelId:resolved.priceModelId, entry:resolved.entry, variant, perTaskCredits, uses};
@@ -907,11 +922,12 @@ function renderVideoModelUsageDetails(){
     }
     const duration = modelId === context.modelId && context.duration ? context.duration : defaultVideoPricingDuration(rule);
     variants.forEach((variant, index)=>{
-      const cost = videoPricePerTask(variant, duration);
+      const zoeInput = modelId === 'apimart-zoe' && /-input$/i.test(variant.spec || '');
+      const cost = zoeInput ? null : videoPricePerTask(variant, duration);
       const uses = cost === null ? null : estimateUsesForPrice(cost, 1);
       const currentVariant = modelId === context.modelId && normalizePricingSpec(variant.spec) === normalizePricingSpec(context.variant?.spec);
       const spec = variant.unit === '秒' ? `${variant.spec || 'default'} · ${formatVideoPrice(duration)}秒` : (variant.spec || 'default');
-      const price = variant.unit === '秒' ? `${modelUsagePriceText(variant)} · ${formatVideoPrice(cost)} Credits/次` : modelUsagePriceText(variant);
+      const price = variant.unit === '秒' && cost !== null ? `${modelUsagePriceText(variant)} · ${formatVideoPrice(cost)} Credits/次` : modelUsagePriceText(variant);
       rows.push(`<div class="model-usage-row ${currentVariant ? 'current' : ''}"><div class="model-usage-name">${index === 0 ? `<strong>${escapeHtml(label)}</strong><small>${escapeHtml(modelId)}</small>` : '<span class="model-usage-repeat">同模型</span>'}</div><span>${escapeHtml(spec)}</span><span>${escapeHtml(price)}</span><b>${uses === null ? '--' : uses === Infinity ? '不限' : `约 ${escapeHtml(formatModelUsageCount(uses))} 次`}</b></div>`);
     });
   });
@@ -1635,6 +1651,12 @@ const APIMART_MODEL_OPTIONS = [
   ['flux-3-image-klein','FLUX 3 Image Klein'],
   ['mai-image-2.6','MAI-Image-2.6'],
   ['mai-image-2.6-flash','MAI-Image-2.6 Flash'],
+  ['mai-image-2.7','MAI-Image-2.7'],
+  ['mai-image-2.7-flash','MAI-Image-2.7 Flash'],
+  ['minimax-h3-image','MiniMax H3 Image'],
+  ['minimax-h3-image-highspeed','MiniMax H3 Image Highspeed'],
+  ['kling-v4-image','Kling V4 Image'],
+  ['kling-v4-long-image','Kling V4 Long Image'],
   ['gemini-3.1-flash-image-preview','Gemini-3.1-Flash-Image-preview（Nano banana2）'],
   ['gemini-3.1-flash-image-preview-official','Gemini-3.1-Flash-Image-preview 官方'],
   ['gemini-3.1-flash-lite-image','Gemini-3.1-Flash-Lite-Image（Nano Banana Lite）'],
@@ -1968,7 +1990,8 @@ function isNanoBananaLiteModel(model){
 }
 function isZImageTurboModel(model){ return imageModelKey(model) === 'z-image-turbo'; }
 function isNanoBanana21Model(model){ return ['gemini-nano-banana-2.1','gemini-nano-banana-2.1-ext'].includes(imageModelKey(model)); }
-function isMaiImage26Model(model){ return ['mai-image-2.6','mai-image-2.6-flash'].includes(imageModelKey(model)); }
+function isMaiImageModel(model){ return /^mai-image-2\.[67](?:-flash)?$/.test(imageModelKey(model)); }
+function isMiniMaxH3ImageModel(model){ return /^minimax-h3-image(?:-highspeed)?$/.test(imageModelKey(model)); }
 function isWan27ImageModel(model){ return ['wan2.7-image','wan2.7-image-pro'].includes(imageModelKey(model)); }
 function isGrokAspectRatioImageModel(model){
   return ['grok-imagine-image','grok-imagine-image-quality','grok-imagine-image-2.0'].includes(imageModelKey(model));
@@ -1997,7 +2020,7 @@ function applyDocumentedImageUiGuard(model){
 
   if(isNanoBanana21Model(m)){
     clampImageOutputCount(m.endsWith('-ext') ? 1 : 4);
-  }else if(['flux-3-image','flux-3-image-klein'].includes(m) || isMaiImage26Model(m)){
+  }else if(['flux-3-image','flux-3-image-klein'].includes(m) || isMaiImageModel(m)){
     clampImageOutputCount(1);
   }else if(isGptImage25ExtModel(m)){
     setSizeIfUnsupported(['auto','1:1','16:9','9:16','4:3','3:4','3:2','2:3','5:4','4:5','21:9'], 'auto');
@@ -2055,7 +2078,10 @@ function applyFluxImageUiGuard(model){
   const size = $('#size');
   const clarity = $('#clarity');
   if(!size || !clarity) return;
-  const profile = isNanoBanana21Model(model) ? imageModelKey(model) : isMaiImage26Model(model) ? 'mai-image-26'
+  const id = imageModelKey(model);
+  const profile = isNanoBanana21Model(model) ? id : isMaiImageModel(model) ? (id.startsWith('mai-image-2.7') ? 'mai-image-27' : 'mai-image-26')
+    : isMiniMaxH3ImageModel(id) ? 'minimax-h3-image'
+    : ['kling-v4-image','kling-v4-long-image'].includes(id) ? id
     : ['flux-3-image','flux-3-image-klein'].includes(imageModelKey(model)) ? 'flux-3-image'
     : ['hy-image-v3.5-preview','muse-image-ext'].includes(imageModelKey(model)) ? imageModelKey(model)
     : isSeedream55Model(model) ? 'seedream-5-5'
@@ -2082,15 +2108,26 @@ function applyFluxImageUiGuard(model){
     clarity.disabled = false;
     size.value = [...size.options].some(option=>option.value === oldSize) ? oldSize : 'auto';
     clarity.value = [...clarity.options].some(option=>option.value === oldClarity) ? oldClarity : '2K';
-  }else if(isNanoBanana21Model(model) || profile === 'mai-image-26' || profile === 'flux-3-image'){
+  }else if(['kling-v4-image','kling-v4-long-image','minimax-h3-image'].includes(profile)){
+    const long = profile === 'kling-v4-long-image';
+    const minimax = profile === 'minimax-h3-image';
+    const sizes = long ? ['auto'] : ['auto','16:9','9:16','1:1','4:3','3:4','3:2','2:3','21:9'];
+    if(minimax) sizes.push('9:21','3:1','1:3','custom');
+    const resolutions = long ? ['1K','2K'] : minimax ? ['1K','2K','4K'] : ['2K','4K','8K'];
+    size.innerHTML = sizes.map(value=>'<option value="'+value+'">'+(value === 'custom' ? '自定义宽高' : value === 'auto' ? '自动' : value)+'</option>').join('');
+    size.value = sizes.includes(oldSize) ? oldSize : minimax && /^\d+x\d+$/i.test(oldSize) ? 'custom' : 'auto';
+    clarity.innerHTML = resolutions.map(value=>'<option value="'+value+'">'+value+'</option>').join('');
+    clarity.value = resolutions.includes(oldClarity) ? oldClarity : long ? '1K' : minimax ? '4K' : '2K';
+    clarity.disabled = false;
+  }else if(isNanoBanana21Model(model) || isMaiImageModel(model) || profile === 'flux-3-image'){
     const sizes = profile === 'flux-3-image'
       ? ['auto','21:9','2:1','16:9','3:2','7:5','4:3','5:4','1:1','4:5','3:4','5:7','2:3','9:16','1:2','9:21']
-      : profile === 'mai-image-26' ? ['auto','custom','1:1','4:3','3:4','3:2','2:3','16:9','9:16','2:1','1:2','21:9','9:21','4:1','1:4']
+      : isMaiImageModel(model) ? [...(profile === 'mai-image-26' ? ['auto'] : []),'custom','1:1','4:3','3:4','3:2','2:3','16:9','9:16','2:1','1:2','21:9','9:21','4:1','1:4']
       : ['auto','1:1','3:2','2:3','4:3','3:4','16:9','9:16','5:4','4:5','21:9','1:4','4:1','1:8','8:1'];
     const resolutions = profile === 'flux-3-image' ? ['768sq','1K','1.5K','2K','4K']
-      : profile === 'mai-image-26' ? ['1K','2K'] : ['1K','2K','4K'];
+      : isMaiImageModel(model) ? ['1K','2K'] : ['1K','2K','4K'];
     size.innerHTML = sizes.map(value=>`<option value="${value}">${value === 'auto' ? 'auto 自动' : value === 'custom' ? '自定义宽高' : value}</option>`).join('');
-    size.value = sizes.includes(oldSize) ? oldSize : profile === 'mai-image-26' && /^\d+x\d+$/i.test(oldSize) ? 'custom' : 'auto';
+    size.value = sizes.includes(oldSize) ? oldSize : isMaiImageModel(model) && /^\d+x\d+$/i.test(oldSize) ? 'custom' : profile === 'mai-image-27' ? '1:1' : 'auto';
     clarity.innerHTML = resolutions.map(value=>`<option value="${value}">${value}</option>`).join('');
     clarity.value = resolutions.includes(oldClarity) ? oldClarity : '1K';
     clarity.disabled = false;
@@ -2140,6 +2177,7 @@ function applyFluxImageUiGuard(model){
 }
 function isMultiNImageModel(model){
   const m = imageModelKey(model);
+  if(m === 'kling-v4-image' || isMiniMaxH3ImageModel(m)) return true;
   if(isGptImage26ExtModel(m)) return false;
   if(m === 'gemini-nano-banana-2.1') return true;
   return isOfficialImageModel(m) || isGptImage25Model(m) || isGptImage25ExtModel(m) || isQwenImage2Model(m) || isQwenImage3Model(m) || isNanoBananaLiteModel(m) || isGrokAspectRatioImageModel(m) || isGrokImagine2ExtModel(m) || isWan27ImageModel(m) || ['doubao-seedance-4-0','doubao-seedream-4.0','doubao-seedream-4-0','seedream-4.0','seedream-4.5','seedream-5-0-lite','doubao-seedream-5-0-lite','doubao-seedream-5.0-lite','seedream-5.0-lite','grok-imagine-1.5-apimart','grok-imagine-1.5-ext','grok-imagine-1.0','grok-imagine-1.5-edit-apimart','grok-imagine-1.0-edit-apimart','grok-imagine-1.0-edit'].includes(m);
@@ -2194,7 +2232,18 @@ function updateOfficialImageOptions(){
   const flux = !grsai && isFluxImageModel(model);
   const seedream55 = !grsai && isSeedream55Model(model);
   const seedreamFlash = !grsai && imageModelKey(model) === 'seedream-5-0-flash';
-  const showOutput = !grsai && (official || gptImage25 || isSeedream5OutputFormatModel(model) || flux);
+  const minimax = !grsai && isMiniMaxH3ImageModel(model);
+  const kling = !grsai && imageModelKey(model) === 'kling-v4-image';
+  const klingLong = !grsai && imageModelKey(model) === 'kling-v4-long-image';
+  const series = kling && $('#klingImageSeries')?.value === 'auto';
+  for(const [id, visible] of [
+    ['klingImageOptions',kling || klingLong], ['klingImageSeriesWrap',kling],
+    ['klingLongSkillWrap',klingLong], ['klingLongLengthWrap',klingLong && $('#klingLongSkill')?.value === 'ecommerce'],
+    ['minimaxImageOptimizerWrap',minimax]
+  ]) if($('#'+id)) $('#'+id).style.display = visible ? '' : 'none';
+  const optimizer = $('#minimaxImageOptimizer');
+  if(optimizer) optimizer.disabled = !minimax || Boolean(mainImages.length || refImages.length) || getSizeValue() === 'auto';
+  const showOutput = !grsai && (official || gptImage25 || isSeedream5OutputFormatModel(model) || flux || minimax);
   const showN = !grsai && isMultiNImageModel(model);
   const showQuality = !grsai && (official || gptImage25 || grokImage20);
   const quality = $('#imageQuality');
@@ -2211,7 +2260,7 @@ function updateOfficialImageOptions(){
   const row2 = $('#officialImageOptions2'); if(row2) row2.style.display = showN ? '' : 'none';
   const row3 = $('#officialImageOptions3'); if(row3) row3.style.display = showQuality ? '' : 'none';
   const backgroundWrap = $('#imageBackground')?.closest('div');
-  if(backgroundWrap) backgroundWrap.style.display = flux || seedreamFlash || isGptImage26ExtModel(model) || imageModelKey(model) === 'gpt-image-2-official' ? 'none' : '';
+  if(backgroundWrap) backgroundWrap.style.display = flux || minimax || seedreamFlash || isGptImage26ExtModel(model) || imageModelKey(model) === 'gpt-image-2-official' ? 'none' : '';
   const transparentOption = $('#imageBackground option[value="transparent"]');
   if(transparentOption) transparentOption.textContent = seedream55 ? 'transparent 透明' : 'transparent 透明（官方会降级）';
   if($('#outputFormat')) [...$('#outputFormat').options].forEach(option=>{
@@ -2236,11 +2285,14 @@ function updateOfficialImageOptions(){
   for(const id of ['gpt26GifFramesWrap','gpt26GifDurationWrap']) if($('#'+id)) $('#'+id).style.display = fmt === 'gif' && !isGptImage26ExtModel(model) ? '' : 'none';
   for(const id of ['gpt26SvgModelWrap','gpt26SvgEffortWrap']) if($('#'+id)) $('#'+id).style.display = fmt === 'svg' && isGptImage26Model(model) ? '' : 'none';
   if(fmt === 'svg' && isGptImage26Model(model)) clampImageOutputCount(1);
-  if($('#imageN')) [...$('#imageN').options].forEach(option=>{
-    const limit = fmt === 'svg' && isGptImage26Model(model) ? 1 : isGptImage26ExtModel(model) ? 1 : isGptImage26Model(model) ? 4 : 15;
-    option.disabled = Number(option.value) > limit;
-    option.hidden = option.disabled;
-  });
+  const imageN = $('#imageN');
+  if(imageN){
+    const min = series ? 2 : 1;
+    const max = series ? 4 : kling ? 9 : minimax ? 10
+      : isGptImage26ExtModel(model) || (fmt === 'svg' && isGptImage26Model(model)) ? 1 : isGptImage26Model(model) ? 4 : 15;
+    for(const option of imageN.options) option.hidden = option.disabled = Number(option.value) < min || Number(option.value) > max;
+    imageN.value = String(Math.max(min, Math.min(max, Number(imageN.value || 1))));
+  }
   const compWrap = $('#outputCompression')?.closest('div');
   if(compWrap) compWrap.style.display = grokImage20 || seedreamFlash || seedream55 || isGptImage26ExtModel(model) ? 'none' : '';
   if(compWrap) compWrap.style.opacity = (fmt === 'jpeg' || fmt === 'webp') ? '1' : '.45';
@@ -2334,6 +2386,8 @@ function applySizeToUI(sizeValue){
   updateSizeHint();
 }
 function updateSizeHint(){
+  const optimizer = $('#minimaxImageOptimizer');
+  if(optimizer) optimizer.disabled = Boolean(mainImages.length || refImages.length) || getSizeValue() === 'auto';
   const model = $('#model')?.value || $('#modelPreset')?.value || 'gemini-3.1-flash-image-preview';
   applyFluxImageUiGuard(model);
   applyQwenImage3UiGuard(model);
@@ -2371,10 +2425,17 @@ function updateSizeHint(){
     $('#sizeHint').textContent = `当前比例：${v}；Flux 2.0 提交参数 size=${actual}，resolution=${clarity}；最多 8 张参考图。`;
     return;
   }
-  if(isMaiImage26Model(model)){
+  if(isMaiImageModel(model)){
+    const version = imageModelKey(model).startsWith('mai-image-2.7') ? '2.7' : '2.6';
     $('#sizeHint').textContent = mainImages.length || refImages.length
-      ? 'MAI-Image-2.6：最多 5 张参考图；图生图尺寸由模型决定，不使用所选比例和分辨率。'
-      : 'MAI-Image-2.6：1K/2K；自定义宽高至少 768px，总像素不超过 2359296，输出按 32px 向下取整。';
+      ? 'MAI-Image-' + version + '：最多 5 张参考图；图生图尺寸由模型决定。'
+      : 'MAI-Image-' + version + '：1K/2K；自定义宽高至少 768px，总像素不超过 ' + (version === '2.7' ? '4194304' : '2359296') + '。';
+    return;
+  }
+  if(imageModelKey(model) === 'kling-v4-long-image'){
+    $('#sizeHint').textContent = $('#klingLongSkill')?.value === 'ecommerce'
+      ? '长图 · 1 至 3 张商品图 · PNG'
+      : '长图 · 参考图可选，顺序为主体、风格 · PNG';
     return;
   }
   if(['flux-3-image','flux-3-image-klein'].includes(imageModelKey(model))){
@@ -5286,6 +5347,9 @@ $('#imageQuality')?.addEventListener('change', renderModelUsageEstimate);
 $('#imageN')?.addEventListener('change', renderModelUsageEstimate);
 $('#imageBackground')?.addEventListener('change', ()=>{ updateOfficialImageOptions(); renderModelUsageEstimate(); });
 $('#outputFormat')?.addEventListener('change', ()=>{ updateOfficialImageOptions(); renderModelUsageEstimate(); });
+for(const id of ['klingImageSeries','klingLongSkill','klingLongLength']){
+  $('#'+id)?.addEventListener('change', ()=>{ updateOfficialImageOptions(); updateSizeHint(); renderModelUsageEstimate(); });
+}
 $('#gpt26EditMode')?.addEventListener('change', updateOfficialImageOptions);
 $('#apiKey')?.addEventListener('input', updateApiKeyWarning);
 $('#apiKey')?.addEventListener('change', ()=>{
@@ -5521,6 +5585,10 @@ function collectConfig(){
     svg_model: $('#gpt26SvgModel')?.value?.trim() || 'gpt-5.4-mini',
     svg_effort: $('#gpt26SvgEffort')?.value || 'auto',
     image_n: Math.max(1, Math.min(15, Number($('#imageN')?.value || 1))),
+    sequential_image_generation: currentImageModelId() === 'kling-v4-image' ? $('#klingImageSeries')?.value : undefined,
+    kling_long_skill: currentImageModelId() === 'kling-v4-long-image' ? $('#klingLongSkill')?.value : undefined,
+    kling_long_length: currentImageModelId() === 'kling-v4-long-image' ? $('#klingLongLength')?.value : undefined,
+    minimax_prompt_optimizer: isMiniMaxH3ImageModel(currentImageModelId()) ? $('#minimaxImageOptimizer')?.checked : undefined,
     concurrency: Number($('#concurrency').value || 30),
     retry_times: Number($('#retryTimes').value || 0),
     repeat_count: Math.max(1, Number($('#repeatCount').value || 1)),
@@ -8192,6 +8260,10 @@ function registerApimartVideoUiRules(items = []){
       supportsLinkReference:item.supportsLinkReference === true,
       characterOrientation:item.characterOrientation === true,
       referenceVideoDurationRangeByOrientation:item.referenceVideoDurationRangeByOrientation || null,
+      referenceVideoDurationRangeByType:item.referenceVideoDurationRangeByType || null,
+      supportsVideoExtension:item.supportsVideoExtension === true,
+      referenceOnlyVideo:item.referenceOnlyVideo === true,
+      aspectFollowsFrames:item.aspectFollowsFrames === true,
       supportsAudioReference:item.supportsAudioReference === true,
       maxAudioCount:Number(item.maxAudioCount || 0),
       audioReferenceParam:item.audioReferenceParam || '',
@@ -8217,6 +8289,9 @@ function registerApimartVideoUiRules(items = []){
   });
 }
 registerApimartVideoUiRules([
+  { model:'magi-2', label:'MAGI-2', resolutions:['1080p'], defaultResolution:'1080p', aspects:['16:9','9:16','1:1','4:3','3:4','21:9'], defaultAspect:'16:9', durationMin:4, durationMax:30, defaultDuration:5, supportsVideo:true, durationWithVideo:true, maxImageCount:10, maxVideoCount:5, referenceVideoDurationRange:[2,30], referenceVideoTotalDurationMax:30, referenceOnlyVideo:true, aspectFollowsFrames:true, supportsAudioReference:true, supportsGeneratedAudio:true, defaultGeneratedAudio:true, maxAudioCount:5, audioReferenceParam:'audio_urls', audioMinDuration:2, audioMaxDuration:30, audioTotalDuration:30, promptMaxLength:15000, allowedModes:['text_to_video','first_frame','first_last_frame','multi_reference'] },
+  { model:'seedance-2-5-flash', label:'Seedance 2.5 Flash', resolutions:['480p','720p'], defaultResolution:'720p', aspects:['16:9','4:3','1:1','3:4','9:16','21:9','adaptive'], defaultAspect:'adaptive', durationMin:4, durationMax:30, defaultDuration:5, supportsAutoDuration:true, supportsVideo:true, durationWithVideo:true, maxImageCount:10, maxVideoCount:5, referenceVideoDurationRange:[2,30], referenceVideoDurationRangeByType:{edit:[4,30]}, referenceVideoTotalDurationMax:30, supportsVideoExtension:true, supportsAudioReference:true, supportsGeneratedAudio:true, defaultGeneratedAudio:true, maxAudioCount:5, audioReferenceParam:'audio_urls', audioMinDuration:2, audioMaxDuration:30, audioTotalDuration:30, forceAdaptiveForVideoEdit:true, forceAdaptiveForFrameModes:true, forceAutoDurationForVideoEdit:true, outputFormats:['mp4','mov'] },
+  { model:'apimart-zoe', label:'APIMart Zoe', resolutions:['480p','720p','1080p','2k','4k'], defaultResolution:'720p', aspects:['21:9','16:9','4:3','1:1','3:4','9:16','adaptive'], defaultAspect:'adaptive', durationMin:4, durationMax:30, defaultDuration:5, supportsAutoDuration:true, supportsVideo:true, durationWithVideo:true, maxImageCount:30, maxVideoCount:10, referenceVideoDurationRange:[1.8,15.2], referenceVideoDurationRangeByType:{edit:[3.8,30.2]}, supportsAudioReference:true, supportsGeneratedAudio:true, defaultGeneratedAudio:true, audioRequiresReference:true, maxAudioCount:10, audioReferenceParam:'audio_urls', audioMinDuration:1.8, audioMaxDuration:15.2, audioTotalDuration:30.2, forceAdaptiveForVideoEdit:true, forceAutoDurationForVideoEdit:true, outputFormats:['mp4','mov'], allowedModes:['text_to_video','first_frame','first_last_frame','multi_reference','video_edit'], promptOptionalWithMedia:true, promptMaxLength:204800 },
   { model:'gemini-omni-flash-preview', label:'Gemini Omni Flash Preview', resolutions:['720p'], defaultResolution:'720p', aspects:['16:9','9:16'], defaultAspect:'16:9', durationMin:3, durationMax:10, defaultDuration:6, note:'支持文生视频、图生视频和上传视频编辑；输出 720p / 24fps，时长由模型自动决定（3–10 秒）。', supportsDuration:false },
   { model:'doubao-seedance-1-5-pro', label:'Doubao Seedance 1.5 Pro', resolutions:['480p','720p','1080p'], defaultResolution:'720p', aspects:['16:9','9:16','1:1'], durationMin:4, durationMax:12 },
   { model:'doubao-seedance-2.0', label:'Doubao Seedance 2.0', resolutions:['480p','720p','1080p','4k'], aspects:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'], durationMin:4, durationMax:15 },
@@ -8401,7 +8476,9 @@ APIMART_VIDEO_MODEL_RULES_UI['sora-2'].catalogRemoved = true;
 APIMART_VIDEO_MODEL_RULES_UI['sora-2-pro'].catalogRemoved = true;
 const APIMART_VIDEO_MODEL_GROUPS_UI = [
   ['Omni / Google / FLUX / LTX', ['gemini-omni-1.2-flash','gemini-omni-1.2-flash-ext','gemini-omni-1.1-flash','omni-flash-ext','gemini-omni-flash-preview','veo3.1-fast','veo3.1-quality','veo3.1-lite','veo3.1-fast-official','veo3.1-quality-official','flux-3-video','ltx-2.3-text-video','ltx-2.3-image-video']],
-  ['Seedance', ['doubao-seedance-1-0-pro-fast','doubao-seedance-1-0-pro-quality','doubao-seedance-1-5-pro','doubao-seedance-2.0','doubao-seedance-2.0-fast','doubao-seedance-2.0-mini','doubao-seedance-2.5']],
+  ['Seedance', ['doubao-seedance-1-0-pro-fast','doubao-seedance-1-0-pro-quality','doubao-seedance-1-5-pro','doubao-seedance-2.0','doubao-seedance-2.0-fast','doubao-seedance-2.0-mini','doubao-seedance-2.5','seedance-2-5-flash']],
+  ['APIMart', ['apimart-zoe']],
+  ['Sand AI', ['magi-2']],
   ['MiniMax / SkyReels', ['MiniMax-Hailuo-02','MiniMax-Hailuo-2.3','MiniMax-Hailuo-2.3-Fast','MiniMax-H3','MiniMax-H3-Max','skyreels-v4-fast','skyreels-v4-std']],
   ['HappyHorse / Wan', ['happyhorse-1.0','happyhorse-1.1','wan3.0-video','wan3.0-video-prime','wan2.5-preview','wan2.6','wan2.6-i2v','wan2.6-i2v-flash','wan2.7','wan2.7-r2v','wan2.7-videoedit']],
   ['Kling', ['kling-v4','kling-v4-flash','kling-v2-6','kling-v2-6-motion-control','kling-v3','kling-v3-motion-control','kling-v3-omni','kling-video-o1','kling-3.0-turbo']],
@@ -8430,7 +8507,11 @@ function videoModeAutoLabel(){
   if(videoMultiFirstFrameEnabled()) return '多首帧（每张参考图独立生成）';
   if(hasWan3ReferenceDocument()) return '文档 / 网页参考生成';
   if(videoAudioFilesData.length) return '多模态参考';
-  if(hasVideo) return '上传视频编辑';
+  if(hasVideo) {
+    const rule = currentApimartVideoRule();
+    if(currentVideoPlatform() === 'apimart' && rule.supportsVideoExtension && currentVideoReferenceType() === 'extend') return '视频延长';
+    return currentVideoPlatform() === 'apimart' && rule.referenceOnlyVideo ? '多素材生成' : '上传视频编辑';
+  }
   if(images && currentVideoPlatform() === 'apimart' && currentApimartVideoRule().referenceOnlyImages) return '多素材参考生成';
   if(images > 2) return '多素材生成';
   if(images === 2) return $('#videoModel')?.value === 'viduq4-preview' || (currentVideoPlatform() === 'apimart' && currentApimartVideoRule().allowedModes && !currentApimartVideoRule().allowedModes.includes('first_last_frame')) ? '多素材生成' : '首尾帧生成';
@@ -8444,13 +8525,18 @@ function currentVideoModeValue(){
   return v === 'auto' ? 'auto' : v;
 }
 function isSeedance25VideoModel(model = $('#videoModel')?.value){
-  return currentVideoPlatform() === 'apimart' && String(model || '').toLowerCase() === 'doubao-seedance-2.5';
+  return currentVideoPlatform() === 'apimart' && ['doubao-seedance-2.5','seedance-2-5-flash','apimart-zoe'].includes(String(model || '').toLowerCase());
+}
+function supportsVideoDraft(){
+  const model = $('#videoModel')?.value;
+  return isSeedance25VideoModel(model) && model !== 'seedance-2-5-flash' && !(model === 'apimart-zoe' && seedance25VideoEditIsActive());
 }
 function seedance25DraftEnabled(){
-  return isSeedance25VideoModel() && $('#seedance25Draft')?.checked === true;
+  return supportsVideoDraft() && $('#seedance25Draft')?.checked === true;
 }
 function seedance25VideoEditIsActive(){
   if(!isSeedance25VideoModel()) return false;
+  if(currentApimartVideoRule().supportsVideoExtension && currentVideoReferenceType() === 'extend') return false;
   const mode = currentVideoModeValue();
   return mode === 'video_edit' || (mode === 'auto' && hasReferenceVideo() && !videoAudioFilesData.length);
 }
@@ -8458,7 +8544,9 @@ function seedance25RequiresAdaptiveAspect(){
   if(!isSeedance25VideoModel()) return false;
   const mode = currentVideoModeValue();
   const autoFrameMode = mode === 'auto' && !hasReferenceVideo() && !videoAudioFilesData.length && [1,2].includes(videoRefImages.length);
-  return seedance25VideoEditIsActive() || autoFrameMode || ['first_frame','first_last_frame'].includes(mode);
+  const rule = currentApimartVideoRule();
+  return seedance25VideoEditIsActive() || (rule.supportsVideoExtension && currentVideoReferenceType() === 'extend')
+    || (rule.forceAdaptiveForFrameModes && (autoFrameMode || ['first_frame','first_last_frame'].includes(mode)));
 }
 function seedance25UsesAutomaticDuration(){
   return isSeedance25VideoModel() && (seedance25VideoEditIsActive() || $('#seedance25AutoDuration')?.checked === true);
@@ -8510,11 +8598,26 @@ function updateSeedance25Options(){
   const row = $('#seedance25Options');
   const enabled = isSeedance25VideoModel();
   if(row) row.classList.toggle('hidden', !enabled);
+  const draft = $('#seedance25Draft');
+  const supportsDraft = supportsVideoDraft();
+  draft?.closest('label')?.classList.toggle('hidden', !supportsDraft);
+  if(draft?.checked && !supportsDraft){
+    draft.checked = false;
+    if($('#videoResolution')?.disabled) updateVideoResolutionOptions();
+  }
+  $('#seedance25Watermark')?.closest('label')?.classList.toggle('hidden', $('#videoModel')?.value === 'apimart-zoe');
   const automaticDuration = $('#seedance25AutoDuration');
   const forceAutomaticDuration = enabled && seedance25VideoEditIsActive();
   let changed = false;
   if(automaticDuration){
-    if(forceAutomaticDuration && !automaticDuration.checked){ automaticDuration.checked = true; changed = true; }
+    if(forceAutomaticDuration && !automaticDuration.disabled){
+      automaticDuration.dataset.previousChoice = String(automaticDuration.checked);
+      automaticDuration.checked = true;
+      changed = true;
+    }else if(!forceAutomaticDuration && automaticDuration.disabled){
+      automaticDuration.checked = automaticDuration.dataset.previousChoice === 'true';
+      changed = true;
+    }
     automaticDuration.disabled = forceAutomaticDuration;
     automaticDuration.title = forceAutomaticDuration ? 'Video editing requires automatic duration.' : '';
   }
@@ -8794,6 +8897,12 @@ function updateVideoModeUI(){
   if(selectedMode === 'veo_remix') mode = '任务续写';
   if($('#videoModeHint')) $('#videoModeHint').textContent = selectedMode === 'auto' ? `当前：${mode}` : `已手动选择：${mode}`;
   const apimartRule = currentApimartVideoRule();
+  if(platform === 'apimart' && apimartRule.aspectFollowsFrames && $('#videoAspect')){
+    const frames = ['first_frame','first_last_frame'].includes(selectedMode)
+      || (selectedMode === 'auto' && !hasVideo && !videoAudioFilesData.length && [1,2].includes(images));
+    $('#videoAspect').disabled = frames;
+    $('#videoAspect').title = frames ? '比例跟随首帧' : '';
+  }
   updateVideoMultiReferenceControl();
   const modelRuleNote = $('#videoAdvancedRuleRow .setting-note-box');
   if(modelRuleNote && platform === 'apimart'){
@@ -8966,7 +9075,10 @@ function enableMultiVideoReferenceWithCompatibleModel(){
   return true;
 }
 function isSkyReelsVideoModel(model = $('#videoModel')?.value){ return /^skyreels-v4-(fast|std)$/i.test(String(model || '')); }
-function currentVideoReferenceType(){ return $('#videoReferenceType')?.value === 'extend' ? 'extend' : 'reference'; }
+function currentVideoReferenceType(){
+  const supportsExtension = isSkyReelsVideoModel() || currentApimartVideoRule().supportsVideoExtension;
+  return supportsExtension && hasReferenceVideo() && $('#videoReferenceType')?.value === 'extend' ? 'extend' : 'reference';
+}
 function apimartVideoUsesRequestedDurationWithReference(rule = currentApimartVideoRule()){
   return rule?.durationWithVideo === true && !(isSkyReelsVideoModel() && currentVideoReferenceType() === 'reference');
 }
@@ -8983,7 +9095,13 @@ function updateVideoDurationVisibility(){
   const veoTaskExtension = currentVideoModeValue() === 'veo_remix' && isVeoTaskExtensionModel();
   const hideDuration = rule.supportsDuration === false || veoTaskExtension || (referenceVideoMode && (platform === 'flow2api' || !apimartVideoUsesRequestedDurationWithReference(rule)));
   $('#videoDurationWrap')?.classList.toggle('hidden', hideDuration);
-  $('#videoReferenceTypeWrap')?.classList.toggle('hidden', platform !== 'apimart' || !isSkyReelsVideoModel() || !hasReferenceVideo());
+  const referenceType = $('#videoReferenceTypeWrap');
+  referenceType?.classList.toggle('hidden', platform !== 'apimart' || !(isSkyReelsVideoModel() || rule.supportsVideoExtension) || !hasReferenceVideo());
+  if(referenceType){
+    referenceType.querySelector('label').textContent = isSkyReelsVideoModel() ? 'SkyReels 视频参考方式' : '视频参考方式';
+    referenceType.querySelector('option[value="reference"]').textContent = isSkyReelsVideoModel() ? '动作 / 主体参考' : '参考 / 编辑';
+    referenceType.querySelector('.field-help').textContent = isSkyReelsVideoModel() ? '动作参考跟随源视频时长；视频扩展使用当前时长，且不能同时使用参考图。' : '';
+  }
   $('#videoCharacterOrientationWrap')?.classList.toggle('hidden', platform !== 'apimart' || !rule.characterOrientation);
   $('#videoSourceTaskIdWrap')?.classList.toggle('hidden', platform !== 'apimart' || currentVideoModeValue() !== 'veo_remix');
   updateVideoDurationDisplay();
@@ -9205,7 +9323,7 @@ async function submitVideoTask(opts = {}){
     if(refVideoMode && apimartRule.videoMaxImageCount > 0 && videoRefImages.length > apimartRule.videoMaxImageCount) return reject(`${apimartRule.label} 的视频编辑最多支持 ${apimartRule.videoMaxImageCount} 张参考图`);
     const sourceVideoDurations = videoFilesData.map(item=>Number(item.duration_seconds)).filter(value=>Number.isFinite(value) && value > 0);
     if(sourceVideoDurations.length){
-      const range = apimartRule.referenceVideoDurationRange;
+      const range = (seedance25VideoEditIsActive() && apimartRule.referenceVideoDurationRangeByType?.edit) || apimartRule.referenceVideoDurationRange;
       if(Array.isArray(range) && sourceVideoDurations.some(value=>value < Number(range[0]) || value > Number(range[1]))) return reject(`${apimartRule.label} 的参考视频时长需为 ${range[0]}-${range[1]} 秒`);
       const sourceVideoTotal = sourceVideoDurations.reduce((sum,value)=>sum + value, 0);
       const isCombinedReference = videoMultiReferenceEnabled() || sourceVideoDurations.length === 1;
@@ -9262,7 +9380,7 @@ async function submitVideoTask(opts = {}){
   if(seedance25){
     if(seedance25DraftEnabled()) { body.draft = true; body.resolution = '480p'; }
     body.generate_audio = $('#seedance25GenerateAudio')?.checked !== false;
-    body.watermark = $('#seedance25Watermark')?.checked === true;
+    if(body.video_model !== 'apimart-zoe') body.watermark = $('#seedance25Watermark')?.checked === true;
     body.return_last_frame = $('#seedance25ReturnLastFrame')?.checked === true;
     body.output_format = $('#seedance25OutputFormat')?.value || 'mp4';
   }
@@ -9470,21 +9588,23 @@ function closeVideoPreview(){ const p=$('#videoPreviewPlayer'); if(p){p.pause?.(
 const seedanceFinalSubmissions = new Set();
 function canFinalizeSeedanceDraft(row = {}){
   return row.status === '已完成' && Boolean(row.task_id)
-    && ['seedance-2.5','doubao-seedance-2.5'].includes(String(row.model || '').toLowerCase())
+    && ['seedance-2.5','doubao-seedance-2.5','apimart-zoe'].includes(String(row.model || '').toLowerCase())
     && (row.draft === true || row.submission_payload?.draft === true);
 }
 async function finalizeSeedanceDraft(row, button){
   if(!canFinalizeSeedanceDraft(row) || seedanceFinalSubmissions.has(row.id)) return;
   const apiKey = videoPlatformApiKey('apimart');
   if(!apiKey) return toast('请先填写 APIMart API Key');
-  if(!confirm('将此样片生成 1080p 正式片，会单独计费。样片须在创建后 7 天内，且属于当前 API Key 的账户。是否继续？')) return;
+  const zoe = String(row.model || '').toLowerCase() === 'apimart-zoe';
+  const validity = zoe ? '24 小时' : '7 天';
+  if(!confirm('将此样片生成 1080p 正式片，会单独计费。样片须在创建后 ' + validity + '内，且属于当前 API Key 的账户。是否继续？')) return;
   seedanceFinalSubmissions.add(row.id);
   if(button) button.disabled = true;
   try{
     const body = {
-      video_model:'doubao-seedance-2.5', api_key:apiKey,
+      video_model:zoe ? 'apimart-zoe' : 'doubao-seedance-2.5', api_key:apiKey,
       draft_task_id:row.task_id, resolution:'1080p', copies:1, retry_times:0,
-      output_format:row.submission_payload?.output_format || 'mp4'
+      ...(zoe ? {} : {output_format:row.submission_payload?.output_format || 'mp4'})
     };
     const result = await api('/api/video_batch_submit', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
     if(!result.success) throw new Error(result.errors?.[0] || '正式片提交失败，请查看任务日志');

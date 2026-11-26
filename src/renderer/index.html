@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>TENYING_AI 1.0</title>
-  <link rel="stylesheet" href="/static/style.css?v=1.0.153" />
+  <link rel="stylesheet" href="/static/style.css?v=1.0.153-models-20261126" />
   <link rel="stylesheet" href="/static/sidebar.css?v=1.0.153" />
   <link rel="stylesheet" href="/static/clear-glass.css?v=1.0.153" />
   <link rel="stylesheet" href="/static/recent-media.css?v=1.0.130" />
@@ -268,6 +268,12 @@
               </select></div>
               <div><label>输出压缩 0-100</label><input id="outputCompression" type="number" min="0" max="100" step="1" value="90" /><div class="field-help">仅 jpeg / webp 有效，png 会自动不传。</div></div>
             </div>
+            <div class="row official-image-options" id="klingImageOptions" style="display:none">
+              <div id="klingImageSeriesWrap"><label for="klingImageSeries">生成方式</label><select id="klingImageSeries"><option value="disabled">独立出图</option><option value="auto">关联组图</option></select></div>
+              <div id="klingLongSkillWrap"><label for="klingLongSkill">长图类型</label><select id="klingLongSkill"><option value="webpage">网页设计</option><option value="ecommerce">电商详情页</option></select></div>
+              <div id="klingLongLengthWrap"><label for="klingLongLength">详情页长度</label><select id="klingLongLength"><option value="short">短</option><option value="medium" selected>中</option><option value="long">长</option></select></div>
+            </div>
+            <label id="minimaxImageOptimizerWrap" class="switch-line" style="display:none"><input type="checkbox" id="minimaxImageOptimizer" checked /> 提示词增强</label>
             <div class="row official-image-options" id="gpt26Options" style="display:none">
               <div><label for="gpt26Complexity">规划强度</label><select id="gpt26Complexity">
                 <option value="auto">自动</option><option value="low">低</option><option value="medium">中</option><option value="high">高</option>
@@ -1102,7 +1108,7 @@
   <script src="/static/prompt-mentions.js?v=1.0.109"></script>
   <script src="/static/local-appearance.js?v=1.0.133"></script>
   <script src="/static/liquid-glass-bundle.js?v=1.0.153"></script>
-  <script src="/static/app.js?v=1.0.153"></script>
+  <script src="/static/app.js?v=1.0.153-models-20261126"></script>
   <script src="/static/library-backdrop-motion.js?v=1.0.127"></script>
   <script src="/static/main-window-drag.js?v=1.0.127"></script>
 </body>

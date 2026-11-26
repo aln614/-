@@ -1,6 +1,6 @@
 'use strict';
 
-const SEEDANCE_MODELS = new Set(['seedance-2.5', 'doubao-seedance-2.5']);
+const DRAFT_MODELS = new Set(['seedance-2.5', 'doubao-seedance-2.5', 'apimart-zoe']);
 const INHERITED_FIELDS = [
   'prompt', 'prompts', 'image_urls', 'image_with_roles', 'video_urls', 'audio_urls',
   'duration', 'size', 'aspect_ratio', 'seed', 'generate_audio', 'audio',
@@ -14,8 +14,9 @@ function seedanceDraftSettings(body = {}) {
   const taskId = String(body.draft_task_id || '').trim();
   const draft = body.draft === true;
   if (!draft && !taskId) return { draft:false, taskId:'' };
-  if (!SEEDANCE_MODELS.has(String(body.video_model || body.model || '').toLowerCase())) {
-    throw new Error('样片模式仅支持 Seedance 2.5。');
+  const model = String(body.video_model || body.model || '').toLowerCase();
+  if (!DRAFT_MODELS.has(model)) {
+    throw new Error('样片模式仅支持 Seedance 2.5 和 APIMart Zoe。');
   }
   if (draft && taskId) throw new Error('生成样片与样片转正式片不能同时使用。');
   if (Object.hasOwn(body, 'service_tier')) throw new Error('Seedance 2.5 样片模式不支持 service_tier。');
@@ -42,7 +43,14 @@ function validateSeedanceDraftRequest(body = {}) {
 function buildSeedanceFinalPayload(body = {}) {
   const { taskId } = seedanceDraftSettings(body);
   if (!taskId) throw new Error('缺少样片任务 ID。');
-  const payload = { model:'seedance-2.5', draft_task_id:taskId, resolution:'1080p' };
+  const zoe = String(body.video_model || body.model || '').toLowerCase() === 'apimart-zoe';
+  const payload = { model:zoe ? 'apimart-zoe' : 'seedance-2.5', draft_task_id:taskId, resolution:'1080p' };
+  if (zoe) {
+    if (['output_format','return_last_frame','enhance_prompt','watermark'].some(key => Object.hasOwn(body, key))) {
+      throw new Error('APIMart Zoe 正片沿用样片设置，不接受输出格式、尾帧、提示词优化或水印参数。');
+    }
+    return payload;
+  }
   if (body.output_format !== undefined) {
     const format = String(body.output_format).toLowerCase();
     if (!['mp4','mov'].includes(format)) throw new Error('正式片输出格式仅支持 MP4 / MOV。');

@@ -34,6 +34,11 @@ const APP_VIDEO_PRICE_MODEL_MAP = Object.freeze({
 });
 
 const FIXED_IMAGE_PRICES = Object.freeze({
+  'kling-v4-image': [['2K',0.571432],['4K',0.857144],['8K',1.428568]],
+  'kling-v4-long-image': [
+    ['1K-SHORT',2.142856],['1K-MEDIUM',4.285712],['1K-LONG',7.142856],['1K-WEBPAGE',5],
+    ['2K-SHORT',2.571432],['2K-MEDIUM',5],['2K-LONG',7.857144],['2K-WEBPAGE',5.428568]
+  ],
   'gpt-image-2.6-ext': [['flare@1K',0.085], ['flare@2K',0.3], ['flare@4K',0.4], ['sunburst@1K',0.085], ['sunburst@2K',0.3], ['sunburst@4K',0.4]],
   'hy-image-v3.5-preview': [['1K',0.192], ['2K',0.192], ['4K',0.256]],
   'muse-image-ext': [['default',0.048]],
@@ -45,7 +50,7 @@ const FIXED_IMAGE_PRICES = Object.freeze({
   'nano-banana-ext': [['default', 0.125]],
   'nano-banana-2-lite-ext': [['default', 0.125]],
   'seedream-5-0-pro': [['default', 0.36], ['1K', 0.2925], ['1K-layer', 0.14625], ['2K', 0.585], ['2K-layer', 0.2925]],
-  'seedream-5-5': [['default',0.2275], ['1K',0.13], ['1.5K',0.13], ['2K',0.2275]],
+  'seedream-5-5': [['default',0.28], ['1K',0.16], ['1.5K',0.16], ['2K',0.28]],
   'nano-banana-2-ext': [['default', 0.15], ['0.5K', 0.15], ['1K', 0.15], ['2K', 0.2], ['4K', 0.25]],
   'grok-imagine-1.5-ext': [['default', 0.15]],
   'grok-imagine-1.5-edit-ext': [['default', 0.15]],
@@ -74,6 +79,11 @@ const FIXED_IMAGE_PRICES = Object.freeze({
 // APIMart public pricing snapshot. Live values are refreshed from the pricing
 // page; this table keeps estimates available while the network is offline.
 const FIXED_VIDEO_PRICES = Object.freeze({
+  'magi-2': { unit:'秒', rows:[['1080P',0.8]] },
+  'apimart-zoe': { unit:'秒', rows:[
+    ['480P',0.864],['720P',1.836],['1080P',4.556],['2K',11.22],['4K',12.308],
+    ['480P-input',0.544],['720P-input',1.088],['1080P-input',2.72],['2K-input',6.596],['4K-input',7.276]
+  ] },
   'kling-v4': { unit:'秒', rows:[['720P',1.4],['1080P',2.1],['720P-input',0.84],['1080P-input',1.26]] },
   'kling-v4-flash': { unit:'秒', rows:[['720P',0.857144],['720P-input',0.571432]] },
   'gemini-omni-1.2-flash-ext': { unit:'秒', rows:[['360P',0.16],['720P',0.24],['1080P',0.24],['4K',0.56]] },
@@ -135,6 +145,10 @@ const TOKEN_METERED_IMAGE_MODELS = Object.freeze([
   'gemini-nano-banana-2.1',
   'mai-image-2.6',
   'mai-image-2.6-flash',
+  'mai-image-2.7',
+  'mai-image-2.7-flash',
+  'minimax-h3-image',
+  'minimax-h3-image-highspeed',
   'nano-banana-2-lite',
   'nano-banana',
   'nano-banana-2',
@@ -183,8 +197,9 @@ function makeFixedModel(id, rows, aliases = []) {
 function fallbackModels() {
   const models = {};
   Object.entries(FIXED_IMAGE_PRICES).forEach(([id, rows]) => { models[id] = makeFixedModel(id, rows); });
-  models['seedream-5-5'].referenceImageCredits = 0.052;
-  models['seedream-5-5'].note = '参考图另计 0.052 Credits/张；当前可用次数按已上传图片数计入参考图费用';
+  models['seedream-5-5'].referenceImageCredits = 0.064;
+  models['kling-v4-image'].referenceImageCredits = 0.028568;
+  models['kling-v4-long-image'].referenceImageCredits = 0.028568;
   Object.entries(FIXED_VIDEO_PRICES).forEach(([id, value]) => {
     models[id] = makeFixedModel(id, (value.rows || []).map(([spec, credits]) => [spec, credits, value.unit || '秒']));
     models[id].category = 'video';
@@ -192,6 +207,9 @@ function fallbackModels() {
   TOKEN_METERED_IMAGE_MODELS.forEach(id => {
     models[id] = { id, aliases:[], metered:true, note:'按实际 Token 用量结算，无法给出固定次数', variants:[] };
   });
+  for (const id of ['mai-image-2.7','mai-image-2.7-flash','minimax-h3-image','minimax-h3-image-highspeed']) {
+    models[id].unverifiedPricing = true;
+  }
   models['seedream-5-0-flash'] = {
     id:'seedream-5-0-flash', aliases:[], metered:false, variants:[],
     unverifiedPricing:true,
@@ -200,6 +218,10 @@ function fallbackModels() {
   models['gemini-omni-1.2-flash'] = {
     id:'gemini-omni-1.2-flash', category:'video', aliases:[], metered:true, variants:[], unverifiedPricing:true,
     note:'官方文档按实际 Token 用量结算，展示秒价仅供参考，暂不估算固定次数'
+  };
+  models['seedance-2-5-flash'] = {
+    id:'seedance-2-5-flash', category:'video', aliases:[], metered:true, variants:[], unverifiedPricing:true,
+    note:'按实际 Token 用量结算，平台秒价用于预扣，无法给出固定次数'
   };
   return models;
 }
@@ -216,13 +238,15 @@ function mergePricingModels(liveModels = {}) {
       const oneK = variants.find(item=>normalizeSpec(item.spec).toUpperCase() === '1K');
       if(oneK) variants.push({...oneK, spec:'1.5K'});
     }
+    const inputPrice = current.referenceImageCredits && variants.find(item=>/^input$/i.test(normalizeSpec(item.spec)));
     merged[id] = {
       ...current,
       ...value,
       id,
       note: value.note || current.note || '',
       aliases: Array.from(new Set([...(current.aliases || []), ...(value.aliases || [])])),
-      variants
+      referenceImageCredits: inputPrice ? inputPrice.credits : current.referenceImageCredits,
+      variants: inputPrice ? variants.filter(item=>item !== inputPrice) : variants
     };
   });
   return merged;

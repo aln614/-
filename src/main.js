@@ -2941,6 +2941,7 @@ function registerApimartVideoRules(items = []) {
   }
 }
 registerApimartVideoRules([
+  { model:'magi-2', label:'MAGI-2', resolutions:['1080p'], defaultResolution:'1080p', aspectRatios:['16:9','9:16','1:1','4:3','3:4','21:9'], defaultAspectRatio:'16:9', durationRange:[4,30], defaultDuration:5, supportsImageUrls:true, supportsImageWithRoles:true, supportsLastFrame:true, maxImageCount:10, supportsVideoUrls:true, videoParam:'video_urls', maxVideoCount:5, referenceVideoDurationRange:[2,30], referenceVideoTotalDurationMax:30, durationWithVideo:true, referenceOnlyVideo:true, omniTaskTypeParam:'omni_reference_task_type', omniTaskTypeByMode:true, omitAspectWithImageModes:['first_frame','first_last_frame'], audioParam:'generate_audio', defaultAudio:true, audioReferenceParam:'audio_urls', maxAudioCount:5, audioMinDuration:2, audioMaxDuration:30, audioTotalDuration:30, promptMaxLength:15000, allowedModes:['text_to_video','first_frame','first_last_frame','multi_reference'] },
   { model:'gemini-omni-flash-preview', label:'Gemini Omni Flash Preview', resolutions:['720p'], defaultResolution:'720p', aspectRatios:['16:9','9:16'], defaultAspectRatio:'16:9', supportsImageUrls:true, supportsVideoUrls:true, videoParam:'video_urls', maxImageCount:16, maxVideoCount:1, referenceVideoDurationRange:[1,24], supportsDuration:false, supportsSeed:false, durationWithVideo:false, promptOptionalWithMedia:true, omitAspectWithVideo:true },
   { model:'gemini-omni-1.1-flash', label:'Gemini Omni 1.1 Flash', resolutions:['360p','720p','1080p','4k'], defaultResolution:'720p', aspectRatios:['16:9','9:16'], defaultAspectRatio:'16:9', supportsImageUrls:true, supportsVideoUrls:true, supportsImageWithRoles:true, supportsLastFrame:true, videoParam:'video_urls', maxImageCount:10, maxVideoCount:1, referenceVideoDurationRange:[1,10], supportsDuration:false, supportsSeed:false, durationWithVideo:false, promptOptionalWithMedia:true, omitAspectWithVideo:true },
   { model:'doubao-seedance-1-0-pro-fast', apiModel:'seedance-1-0-pro-fast', label:'Seedance 1.0 Pro Fast', resolutions:['480p','720p','1080p'], defaultResolution:'1080p', aspectRatios:['16:9','9:16','1:1','4:3','3:4','21:9'], durationRange:[2,12], defaultDuration:5, supportsImageUrls:false, supportsImageWithRoles:true, supportsLastFrame:false, maxImageCount:1 },
@@ -2997,6 +2998,8 @@ registerApimartVideoRules([
   { model:'Omni-Flash-Ext', apiModel:'gemini-omni-1.1-flash-ext', label:'Gemini Omni 1.1 Flash Ext', resolutions:['360p','720p','1080p','4k'], defaultResolution:'720p', aspectRatios:['16:9','9:16'], defaultAspectRatio:'16:9', durations:[4,6,8,10], defaultDuration:6, supportsImageUrls:true, supportsVideoUrls:true, videoParam:'video_urls', allowedImageCounts:[0,1,3], generationTypeParam:'generation_type', supportsReferenceGeneration:true, supportsSeed:false, durationWithVideo:false }
 ]);
 registerApimartVideoRules([
+  { model:'seedance-2-5-flash', label:'Seedance 2.5 Flash', resolutions:['480p','720p'], defaultResolution:'720p', aspectRatios:['16:9','4:3','1:1','3:4','9:16','21:9','adaptive'], defaultAspectRatio:'adaptive', aspectParam:'size', durationRange:[4,30], defaultDuration:5, supportsAutoDuration:true, supportsImageUrls:true, supportsVideoUrls:true, supportsImageWithRoles:true, supportsLastFrame:true, imageRolesBecomeReferencesWithMedia:true, maxImageCount:10, maxVideoCount:5, referenceVideoDurationRange:[2,30], referenceVideoDurationRangeByType:{edit:[4,30]}, referenceVideoTotalDurationMax:30, videoParam:'video_urls', durationWithVideo:true, omniTaskTypeParam:'omni_reference_task_type', omniTaskTypeByMode:true, supportsVideoExtension:true, audioParam:'generate_audio', defaultAudio:true, watermarkParam:'watermark', returnLastFrameParam:'return_last_frame', audioReferenceParam:'audio_urls', maxAudioCount:5, audioMinDuration:2, audioMaxDuration:30, audioTotalDuration:30, audioReferenceExtensions:['.mp3','.wav'], audioReferenceMaxBytes:15*1024*1024, outputFormatParam:'output_format', outputFormats:['mp4','mov'], forceAdaptiveForVideoEdit:true, forceAdaptiveForFrameModes:true, forceAutoDurationForVideoEdit:true },
+  { model:'apimart-zoe', label:'APIMart Zoe', resolutions:['480p','720p','1080p','2k','4k'], defaultResolution:'720p', aspectRatios:['21:9','16:9','4:3','1:1','3:4','9:16','adaptive'], defaultAspectRatio:'adaptive', durationRange:[4,30], defaultDuration:5, supportsAutoDuration:true, supportsImageUrls:true, supportsVideoUrls:true, supportsImageWithRoles:true, supportsLastFrame:true, maxImageCount:30, maxVideoCount:10, referenceVideoDurationRange:[1.8,15.2], referenceVideoDurationRangeByType:{edit:[3.8,30.2]}, videoParam:'video_urls', durationWithVideo:true, omniTaskTypeParam:'omni_reference_task_type', omniTaskTypeByMode:true, audioParam:'generate_audio', defaultAudio:true, returnLastFrameParam:'return_last_frame', audioReferenceParam:'audio_urls', audioRequiresReference:true, maxAudioCount:10, audioMinDuration:1.8, audioMaxDuration:15.2, audioTotalDuration:30.2, audioReferenceExtensions:['.mp3','.wav'], audioReferenceMaxBytes:15*1024*1024, outputFormatParam:'output_format', outputFormats:['mp4','mov'], forceAdaptiveForVideoEdit:true, forceAutoDurationForVideoEdit:true, promptOptionalWithMedia:true, promptMaxLength:204800 },
   { model:'kling-v4', label:'Kling V4', resolutions:['720p','1080p'], aspectRatios:['16:9','9:16','1:1','21:9'], durationRange:[3,30], defaultDuration:5, supportsImageUrls:true, supportsImageWithRoles:true, supportsLastFrame:true, maxImageCount:10, supportsVideoUrls:true, videoParam:'video_urls', maxVideoCount:1, referenceVideoDurationRange:[3,30], omniTaskTypeParam:'omni_reference_task_type', omitAspectWithImageModes:['first_frame','first_last_frame'], omitAspectWithVideo:true, durationWithVideo:false, supportsSeed:false, promptOptionalModes:['first_frame','first_last_frame'] },
   { model:'kling-v4-flash', label:'Kling V4 Flash', resolutions:['720p'], aspectRatios:['16:9','9:16','1:1','21:9'], durationRange:[3,20], defaultDuration:5, supportsImageUrls:true, supportsImageWithRoles:true, maxImageCount:10, supportsVideoUrls:true, videoParam:'video_urls', maxVideoCount:1, referenceVideoDurationRange:[3,20], omniTaskTypeParam:'omni_reference_task_type', omitAspectWithImageModes:['first_frame'], omitAspectWithVideo:true, durationWithVideo:false, supportsSeed:false, promptOptionalModes:['first_frame'], allowedModes:['text_to_video','first_frame','multi_reference','video_edit'] },
   { model:'gemini-omni-1.2-flash', label:'Gemini Omni 1.2 Flash', resolutions:['360p','720p','1080p','4k'], defaultResolution:'720p', aspectRatios:['16:9','9:16'], durationRange:[3,15], defaultDuration:10, firstLastDurations:[3,4,5,6,7,8,9,10], supportsImageUrls:true, supportsImageWithRoles:true, supportsLastFrame:true, maxImageCount:10, supportsVideoUrls:true, videoParam:'video_urls', maxVideoCount:1, referenceVideoDurationRange:[1,15], omniTaskTypeParam:'omni_reference_task_type', omitAspectWithVideo:true, durationWithVideo:false, supportsSeed:false },
@@ -3011,6 +3014,7 @@ const APIMART_VIDEO_MODEL_ALIASES = Object.freeze({
   'seedance-2.0-fast': 'doubao-seedance-2.0-fast',
   'seedance-2.0-mini': 'doubao-seedance-2.0-mini',
   'seedance-2.5': 'doubao-seedance-2.5',
+  'doubao-seedance-2-5-flash': 'seedance-2-5-flash',
   'veo3.1-fast-ext': 'veo3.1-fast',
   'veo3.1-quality-ext': 'veo3.1-quality',
   'veo3.1-lite-ext': 'veo3.1-lite',
@@ -3777,7 +3781,7 @@ function videoBatchOutputDir(row = {}) {
   return dir;
 }
 function videoOutputFilePath(row = {}) {
-  const ext = '.mp4';
+  const ext = String(row.output_format || '').toLowerCase() === 'mov' ? '.mov' : '.mp4';
   const copy = Number(row.copy_index || 0) > 1 ? `_copy${String(row.copy_index).padStart(2, '0')}` : '';
   const source = row.source_video_name ? `_${safeName(path.basename(row.source_video_name, path.extname(row.source_video_name)), 'source')}` : '';
   const name = safeName(`${row.id}${copy}${source}`, row.id || `video_${Date.now().toString(36)}`);
@@ -4381,6 +4385,9 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
   row.owner_id = row.owner_id || ownerId;
   row.platform = 'apimart';
   row.model = videoModel;
+  row.output_format = Array.isArray(rule.outputFormats)
+    && rule.outputFormats.includes(String(body.output_format || '').toLowerCase())
+    ? String(body.output_format).toLowerCase() : 'mp4';
   row.prompt = prompt;
   row.retry_times = retryTimes;
   row.task_id = '';
@@ -4449,6 +4456,15 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
       throw new Error(`${rule.label || videoModel} 参考图最多支持 ${rule.maxImageCount} 张，当前为 ${imageUrls.length} 张。`);
     }
     let mode = viduMode || resolveApimartVideoMode(body.video_mode, { imageCount: imageUrls.length, hasVideo: videoUrls.length > 0, hasAudio: audioUrls.length > 0 });
+    const extendingVideo = rule.supportsVideoExtension && body.video_reference_type === 'extend';
+    if (rule.referenceOnlyVideo && normalizeVideoMode(body.video_mode) === 'auto' && videoUrls.length) mode = 'multi_reference';
+    if (rule.omniTaskTypeByMode && !rule.supportsVideoExtension && body.video_reference_type === 'extend') throw new Error(rule.label + ' 不支持视频延长。');
+    if (extendingVideo) {
+      if (!videoUrls.length) throw new Error(rule.label + ' 视频延长需要提供参考视频。');
+      mode = 'multi_reference';
+    }
+    if (rule.omniTaskTypeByMode && mode === 'video_edit' && !videoUrls.length) throw new Error(rule.label + ' 视频编辑需要提供参考视频。');
+    if (draftSettings.draft && rule.model === 'apimart-zoe' && mode === 'video_edit') throw new Error('APIMart Zoe 视频编辑不能使用样片模式。');
     if (rule.omniTaskTypeParam && normalizeVideoMode(body.video_mode) === 'auto' && mode === 'first_last_frame' && !rule.supportsLastFrame) mode = 'multi_reference';
     if (rule.referenceOnlyImages && imageUrls.length) {
       if (normalizeVideoMode(body.video_mode) !== 'auto' && mode !== 'multi_reference') throw new Error(`${rule.label} 仅支持参考图生成，不支持首帧或首尾帧控制。`);
@@ -4459,7 +4475,8 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
       if (imageUrls.length !== expected) throw new Error(`${rule.label} 的当前帧模式需要恰好 ${expected} 张图片。`);
       if (videoUrls.length) throw new Error(`${rule.label} 不能混用首尾帧控制和视频编辑。`);
     }
-    if (rule.allowedModes && !rule.allowedModes.includes(mode)) throw new Error(`${rule.label || videoModel} 仅支持文生视频或单图首帧生成。`);
+    if (rule.allowedModes && !rule.allowedModes.includes(mode)) throw new Error(`${rule.label || videoModel} 不支持所选任务模式。`);
+    if (rule.model === 'apimart-zoe' && mode === 'veo_remix') throw new Error('APIMart Zoe 不支持任务续写。');
     const hasReferenceFamilyInputs = Boolean(videoUrls.length || audioUrls.length || documentFileUrl || linkUrl);
     if (rule.referenceFamilyInputsForceReferenceImages && hasReferenceFamilyInputs && imageUrls.length && ['first_frame', 'first_last_frame'].includes(mode)) {
       if (normalizeVideoMode(body.video_mode) !== 'auto') {
@@ -4517,14 +4534,12 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
       throw new Error(`${rule.label || videoModel} 在“${body.character_orientation === 'video' ? '跟随参考视频' : '跟随参考图'}”模式下仅支持 ${referenceVideoDurationRange[0]}-${referenceVideoDurationRange[1]} 秒的参考视频。`);
     }
     if (videoUrls.length) {
-      const inputVideoDurations = [
-        body.source_video_duration,
-        ...(Array.isArray(body.source_video_durations) ? body.source_video_durations : [])
-      ];
+      const inputVideoDurations = Array.isArray(body.source_video_durations) && body.source_video_durations.length
+        ? body.source_video_durations : [body.source_video_duration];
       assertApimartVideoInputDurationRules({
         rule,
         durations: inputVideoDurations,
-        referenceType: videoReferenceType
+        referenceType: rule.omniTaskTypeByMode && mode === 'video_edit' ? 'edit' : videoReferenceType
       });
     }
     const promptOptionalForMode = Array.isArray(rule.promptOptionalModes) && rule.promptOptionalModes.includes(mode);
@@ -4550,7 +4565,7 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
     if (prompt) payload.prompt = prompt;
     if (documentFileUrl) payload.file_url = documentFileUrl;
     if (linkUrl) payload.link_url = linkUrl;
-    const forceAdaptiveAspect = (rule.forceAdaptiveForVideoEdit === true && mode === 'video_edit')
+    const forceAdaptiveAspect = extendingVideo || (rule.forceAdaptiveForVideoEdit === true && mode === 'video_edit')
       || (rule.forceAdaptiveForFrameModes === true && ['first_frame', 'first_last_frame'].includes(mode));
     let normalizedAspectRatio = forceAdaptiveAspect ? 'adaptive' : normalizeVideoAspectRatio(body.aspect_ratio, videoModel);
     const allowedResolutionAspects = rule.resolutionAspectRatios && rule.resolutionAspectRatios[normalizedResolution];
@@ -4604,7 +4619,9 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
         payload.first_frame_image = imageUrls[0];
       }
     }
-    if (rule.omniTaskTypeParam && (videoUrls.length || mode === 'multi_reference')) {
+    if (rule.omniTaskTypeByMode && (imageUrls.length || videoUrls.length || audioUrls.length) && ['video_edit','multi_reference'].includes(mode)) {
+      payload[rule.omniTaskTypeParam] = extendingVideo ? 'extend' : mode === 'video_edit' ? 'edit' : 'reference';
+    } else if (!rule.omniTaskTypeByMode && rule.omniTaskTypeParam && (videoUrls.length || mode === 'multi_reference')) {
       payload[rule.omniTaskTypeParam] = videoUrls.length ? 'edit' : 'reference';
     }
     if (rule.generationTypeParam && imageUrls.length) {
@@ -4739,6 +4756,7 @@ async function createApimartVideoTask(body, ownerId, req, cfg, existingRow = nul
     row.local_video_paths = localVideoPaths;
     row.local_audio_paths = localAudioPaths;
     row.submission_payload = payload;
+    row.output_format = payload.output_format || 'mp4';
     if (sourceVideoName) row.source_video_name = sourceVideoName;
     if (body.source_video_duration) row.source_video_duration = body.source_video_duration;
     row.updated_at = nowISO(); getDB()._save();
@@ -7004,6 +7022,10 @@ function mapPayloadToQueue(body, owner) {
     editMode,
     editImagePath,
     imageN: Number(body.image_n || cfg.imageN || 1),
+    sequential_image_generation: body.sequential_image_generation === 'auto' ? 'auto' : undefined,
+    klingLongSkill: body.kling_long_skill,
+    klingLongLength: body.kling_long_length,
+    minimaxPromptOptimizer: body.minimax_prompt_optimizer,
     maskUrl: body.mask_url || cfg.maskUrl || '',
     negativePrompt: body.negative_prompt || cfg.negativePrompt || cfg.negative_prompt || '',
     promptExtend: body.prompt_extend ?? cfg.promptExtend ?? cfg.prompt_extend ?? false,

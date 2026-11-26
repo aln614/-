@@ -45,10 +45,10 @@ assert.equal(transparent.background,'transparent');
 assert.equal(transparent.output_format,'png');
 
 const fallback = createFallbackPricingCatalog().models[model];
-assert.equal(fallback.variants.find(item=>item.spec==='1K').credits,0.13);
-assert.equal(fallback.variants.find(item=>item.spec==='1.5K').credits,0.13);
-assert.equal(fallback.variants.find(item=>item.spec==='2K').credits,0.2275);
-assert.equal(fallback.referenceImageCredits,0.052);
+assert.equal(fallback.variants.find(item=>item.spec==='1K').credits,0.16);
+assert.equal(fallback.variants.find(item=>item.spec==='1.5K').credits,0.16);
+assert.equal(fallback.variants.find(item=>item.spec==='2K').credits,0.28);
+assert.equal(fallback.referenceImageCredits,0.064);
 
 const demoRows = Array.from({length:16},(_,index)=>`<h3 title="demo-${index}">demo-${index}</h3><table><tbody><tr><th scope="row" title="default">default</th><td>1 Credits/张</td></tr></tbody></table>`).join('');
 const seedreamRows = ['default:0.2275','1K:0.13','1K-layer:0.13','2K:0.2275','2K-layer:0.2275'].map(item=>{
@@ -57,7 +57,7 @@ const seedreamRows = ['default:0.2275','1K:0.13','1K-layer:0.13','2K:0.2275','2K
 }).join('');
 const live = createLivePricingCatalog(`${demoRows}<h3 title="${model}">${model}</h3><table><tbody>${seedreamRows}</tbody></table>`).models[model];
 assert.equal(live.variants.find(item=>item.spec==='1.5K').credits,0.13);
-assert.equal(live.referenceImageCredits,0.052);
+assert.equal(live.referenceImageCredits,0.064);
 
 async function verifySubmission() {
   const file = path.join(__dirname,'../src/services/apiClient.js');

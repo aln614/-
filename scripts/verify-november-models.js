@@ -11,6 +11,38 @@ const {createFallbackPricingCatalog, createLivePricingCatalog, APP_IMAGE_PRICE_M
 const draft = require('../src/services/seedanceDraft');
 const refs = Array.from({length:17}, (_,i)=>`https://example.com/${i}.png`);
 
+for (const id of ['mai-image-2.7','mai-image-2.7-flash']) {
+  const custom = sanitize({size:'2048x2048',resolution:'2K',background:'transparent',n:3},id);
+  assert.deepEqual(custom,{model:id,prompt:undefined,n:1,size:'2048x2048'});
+  const edit = sanitize({size:'16:9',resolution:'2K',image_urls:refs.slice(0,5)},id);
+  assert.ok(!('size' in edit) && !('resolution' in edit));
+  assert.throws(()=>sanitize({image_urls:refs.slice(0,6)},id),/5/);
+}
+for (const id of ['minimax-h3-image','minimax-h3-image-highspeed']) {
+  const fixed = sanitize({size:'4096x4096',resolution:'4K',n:10,output_format:'webp',prompt_optimizer:false},id);
+  assert.equal(fixed.size,'4096x4096');
+  assert.equal(fixed.n,10);
+  assert.equal(fixed.output_format,'webp');
+  assert.equal(fixed.prompt_optimizer,false);
+  assert.ok(!('resolution' in fixed));
+  assert.ok(!('prompt_optimizer' in sanitize({size:'auto',prompt_optimizer:false},id)));
+  assert.throws(()=>sanitize({image_urls:refs},id),/16/);
+}
+const klingSeries = sanitize({resolution:'8K',n:4,sequential_image_generation:'auto'},'kling-v4-image');
+assert.equal(klingSeries.n,1);
+assert.equal(klingSeries.resolution,'8K');
+assert.equal(klingSeries.sequential_image_generation_options.max_images,4);
+assert.equal(sanitize({n:9},'kling-v4-image').n,9);
+assert.throws(()=>sanitize({n:5,sequential_image_generation:'auto'},'kling-v4-image'),/2 至 4/);
+const klingShop = sanitize({skill:'ecommerce',length:'long',size:'1:1',resolution:'2K',image_urls:refs.slice(0,3)},'kling-v4-long-image');
+assert.equal(klingShop.length,'long');
+assert.equal(klingShop.image_urls.length,3);
+assert.ok(!('size' in klingShop));
+const klingWeb = sanitize({skill:'webpage',length:'short',image_urls:refs.slice(0,2)},'kling-v4-long-image');
+assert.deepEqual(klingWeb.image_with_roles,[{url:refs[0],role:'subject'},{url:refs[1],role:'style'}]);
+assert.ok(!('length' in klingWeb) && !('image_urls' in klingWeb));
+assert.throws(()=>sanitize({skill:'ecommerce'},'kling-v4-long-image'),/商品图/);
+
 for (const model of ['gpt-image-2.6-flare','gpt-image-2.6-sunburst']) {
   const rule = getApimartImageRule(model);
   for (const resolution of rule.resolutions) for (const quality of rule.qualities) {
@@ -96,8 +128,18 @@ async function verifyImageSubmission() {
       if(extra.editMode==='mask') assert.match(payload.mask_url,/^data:image\/png;base64,/);
     }
     assert.equal(downloaded.length,4);
+    context.module.exports.__mockImageTransport({
+      upload:async()=> 'https://example.com/ref.png',
+      post:async(_url,_key,payload)=>{
+        submitted.push(JSON.parse(JSON.stringify(payload)));
+        return {data:refs.slice(0,4).map(url=>({url:[url]}))};
+      },
+      download:async(url,target)=>{downloaded.push({url,target});await fs.promises.writeFile(target,'mock');}
+    });
+    await context.module.exports.generateOne({cfg:{model:'kling-v4-image',imageSize:'8K',imageN:4,sequential_image_generation:'auto'},prompt:'test',outputPath:path.join(temp,'series.png')});
+    assert.equal(downloaded.length,8,'Series downloads all four images even though n is 1');
     await assert.rejects(context.module.exports.generateOne({cfg:{model:'gpt-image-2.6-ext',outputFormat:'gif'},prompt:'test',mainImagePath:ref,outputPath:path.join(temp,'bad.gif')}),/仅支持文生图/);
-    assert.equal(submitted.length,4);
+    assert.equal(submitted.length,5);
   } finally { fs.rmSync(temp,{recursive:true,force:true}); }
 }
 const hy = 'hy-image-v3.5-preview';
@@ -120,11 +162,20 @@ assert.equal(prices['muse-video-ext'].variants[0].unit,'次');
 assert.equal(prices['muse-video-ext'].variants[0].credits,0.24);
 assert.equal(prices['kling-v4'].variants.find(x=>x.spec==='720P-input').credits,0.84);
 for (const id of ['gpt-image-2.6-flare','gpt-image-2.6-sunburst','gemini-omni-1.2-flash']) assert.equal(prices[id].metered,true);
+for (const id of ['mai-image-2.7','mai-image-2.7-flash','minimax-h3-image','minimax-h3-image-highspeed','seedance-2-5-flash']) {
+  assert.equal(prices[id].metered,true);
+  assert.equal(prices[id].variants.length,0);
+}
+assert.equal(prices['kling-v4-image'].referenceImageCredits,0.028568);
+assert.equal(prices['kling-v4-long-image'].variants.find(x=>x.spec==='2K-LONG').credits,7.857144);
+assert.equal(prices['apimart-zoe'].variants.find(x=>x.spec==='720P-input').credits,1.088);
 const liveFixture = Array.from({length:16},(_,i)=>`<h3 title="demo-${i}">demo-${i}</h3><table><tbody><tr><th scope="row" title="default">default</th><td>1 Credits/张</td></tr></tbody></table>`).join('');
 const conflicting = '<script>self.__next_f.push([1,'+JSON.stringify(JSON.stringify({video:[{id:'gemini-omni-1.2-flash',specification:'second',billing_type:'per_second',fixed_prices:{unit:'usd_per_second',dimension:'resolution',items:[{key:'720P',after_discount:0.06}]}}]}))+'])</script>';
 assert.deepEqual(createLivePricingCatalog(liveFixture+conflicting).models['gemini-omni-1.2-flash'].variants,[]);
 
 const main = fs.readFileSync(path.join(__dirname,'../src/main.js'),'utf8');
+assert(main.includes("String(row.output_format || '').toLowerCase() === 'mov' ? '.mov' : '.mp4'"), 'MOV tasks must be saved with the matching file extension');
+assert(main.includes("String(row.output_format || '').toLowerCase() === 'mov' ? '.mov' : '.mp4'"), 'MOV tasks must be saved with the matching file extension');
 function extract(name, async = false) {
   const start = main.indexOf((async?'async ':'')+'function '+name+'(');
   assert.ok(start>=0,'Missing '+name);
@@ -163,6 +214,39 @@ async function verify() {
     assert.equal(row.status,'已提交',row.error_message);
     return submitted.at(-1);
   };
+  const clip = 'https://example.com/clip.mp4';
+  for (const model of ['seedance-2-5-flash','apimart-zoe']) {
+    const text = await submit(model,{duration:30});
+    assert.equal(text.duration,30);
+    assert.ok(!('omni_reference_task_type' in text));
+    const frames = await submit(model,{ref_image_urls:refs.slice(0,2),output_format:'mov'});
+    assert.deepEqual(frames.image_with_roles.map(item=>item.role),['first_frame','last_frame']);
+    assert.equal(frames.output_format,'mov');
+    if(model === 'seedance-2-5-flash') assert.equal(frames.size,'adaptive');
+    const reference = await submit(model,{video_urls:[clip],video_mode:'multi_reference',source_video_duration:8,duration:12});
+    assert.equal(reference.omni_reference_task_type,'reference');
+    assert.equal(reference.duration,12);
+    const edit = await submit(model,{video_urls:[clip],video_mode:'video_edit',source_video_duration:20,duration:12,aspect_ratio:'16:9'});
+    assert.equal(edit.omni_reference_task_type,'edit');
+    assert.equal(edit.duration,-1);
+    assert.equal(edit.size || edit.aspect_ratio,'adaptive');
+  }
+  const extend = await submit('seedance-2-5-flash',{video_urls:[clip],video_reference_type:'extend',duration:10});
+  assert.equal(extend.omni_reference_task_type,'extend');
+  assert.equal(extend.size,'adaptive');
+  assert.equal(extend.duration,10);
+  assert.equal((await submit('apimart-zoe',{draft:true,resolution:'480p'})).draft,true);
+  assert.deepEqual(draft.buildSeedanceFinalPayload({video_model:'apimart-zoe',draft_task_id:'task_sample'}),{
+    model:'apimart-zoe',draft_task_id:'task_sample',resolution:'1080p'
+  });
+  assert.throws(()=>draft.validateSeedanceDraftRequest({video_model:'seedance-2-5-flash',draft:true}),/仅支持/);
+  const magi = await submit('magi-2',{video_urls:[clip],resolution:'720p',source_video_duration:8,duration:6});
+  assert.equal(magi.omni_reference_task_type,'reference');
+  assert.equal(magi.resolution,'1080p');
+  assert.equal(magi.duration,6);
+  const magiFrames = await submit('magi-2',{ref_image_urls:refs.slice(0,2),aspect_ratio:'21:9'});
+  assert.equal(magiFrames.image_with_roles[1].role,'last_frame');
+  assert.ok(!('aspect_ratio' in magiFrames));
   for (const model of ['kling-v4','kling-v4-flash','gemini-omni-1.2-flash','gemini-omni-1.2-flash-ext']) {
     const text = await submit(model,{duration:30,seed:123});
     assert.equal(text.model,model);
@@ -207,7 +291,11 @@ async function verify() {
     ['gemini-omni-1.2-flash-ext',{video_urls:['https://example.com/x.mp4'],ref_image_urls:[refs[0]]}],
     ['muse-video-ext',{ref_image_urls:[refs[0]],video_mode:'first_frame'}],
     ['muse-video-ext',{ref_image_urls:refs.slice(0,10)}],
-    ['muse-video-ext',{video_urls:['https://example.com/x.mp4']}]
+    ['muse-video-ext',{video_urls:['https://example.com/x.mp4']}],
+    ['apimart-zoe',{video_mode:'multi_reference',video_urls:[clip],source_video_duration:20}],
+    ['apimart-zoe',{video_mode:'video_edit',video_urls:[clip],draft:true,resolution:'480p'}],
+    ['seedance-2-5-flash',{video_mode:'video_edit',video_urls:[clip],source_video_duration:3}],
+    ['magi-2',{video_mode:'video_edit',video_urls:[clip]}]
   ]) {
     const row = await context.createApimartVideoTask({api_key:'mock',video_model:model,prompt:'test',retry_times:0,...body},'owner',{},{});
     assert.notEqual(row.status,'已提交',model);
@@ -228,6 +316,6 @@ async function verify() {
     fs.truncateSync(file,20*1024*1024+1);
     await assert.rejects(generateOne({cfg:{model:'gpt-image-2.6-ext'},prompt:'test',refImages:[file]}),/20MB/);
   } finally { fs.rmSync(temp,{recursive:true,force:true}); }
-  console.log('November model contracts passed: six image choices, five video models, aliases, parameter limits, editing, fixed/token prices and pre-upload rejection (mocked API, no charges).');
+  console.log('November model contracts passed: image and video model payloads, series downloads, editing, extensions, drafts and pricing (mocked API, no charges).');
 }
 verify().catch(error=>{console.error(error);process.exitCode=1;});

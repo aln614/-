@@ -109,12 +109,38 @@ fs.writeFileSync(path.join(runtime,'config.json'),JSON.stringify({
         mainImages.length=0; refImages.length=0;
         return {price:result.variant?.credits,referenceImageCount:result.referenceImageCount,perTaskCredits:result.perTaskCredits};
       });
-      assert.equal(seedreamEstimate.price,0.13);
+      assert.equal(seedreamEstimate.price,0.16);
       assert.equal(seedreamEstimate.referenceImageCount,2);
-      assert.ok(Math.abs(seedreamEstimate.perTaskCredits - 0.234) < 1e-9);
+      assert.ok(Math.abs(seedreamEstimate.perTaskCredits - 0.288) < 1e-9);
       await page.screenshot({path:path.join(output,`${name}-seedream55.png`)});
+      await page.selectOption('#modelPreset','kling-v4-image');
+      await page.selectOption('#clarity','8K');
+      await page.selectOption('#klingImageSeries','auto');
+      assert.equal(await page.inputValue('#imageN'),'2');
+      assert.equal(await page.locator('#imageN option[value="5"]').isDisabled(),true);
+      await page.selectOption('#imageN','4');
+      const series = await page.evaluate(()=>({cfg:collectConfig(),credits:getCurrentModelUsageContext().perTaskCredits}));
+      assert.equal(series.cfg.sequential_image_generation,'auto');
+      assert.equal(series.cfg.image_n,4);
+      assert.ok(Math.abs(series.credits - 1.428568*4) < 0.001);
+      await page.selectOption('#modelPreset','kling-v4-long-image');
+      await page.selectOption('#clarity','2K');
+      await page.selectOption('#klingLongSkill','ecommerce');
+      await page.selectOption('#klingLongLength','long');
+      assert.equal(await page.evaluate(()=>getCurrentModelUsageContext().variant.spec),'2K-LONG');
+      await page.selectOption('#klingLongSkill','webpage');
+      assert.equal(await page.locator('#klingLongLength').isVisible(),false);
+      assert.equal(await page.evaluate(()=>getCurrentModelUsageContext().variant.spec),'2K-WEBPAGE');
+      for(const selector of ['#officialImageOptions','#officialImageOptions2','#officialImageOptions3','#gpt26Options','#gpt26EditOptions']){
+        assert.equal(await page.locator(selector).isVisible(),false,selector + ' stays hidden for Kling Long Image');
+      }
+      await page.screenshot({path:path.join(output,`${name}-kling-long.png`)});
+      for(const model of ['mai-image-2.7','mai-image-2.7-flash','minimax-h3-image','minimax-h3-image-highspeed']){
+        await page.selectOption('#modelPreset',model);
+        assert.equal(await page.evaluate(()=>getCurrentModelUsageContext().entry.metered),true);
+      }
       await page.evaluate(()=>setPage('video'));
-      for (const [model,max] of [['kling-v4',30],['kling-v4-flash',20],['gemini-omni-1.2-flash',15],['gemini-omni-1.2-flash-ext',15],['muse-video-ext',10]]) {
+      for (const [model,max] of [['kling-v4',30],['kling-v4-flash',20],['gemini-omni-1.2-flash',15],['gemini-omni-1.2-flash-ext',15],['muse-video-ext',10],['apimart-zoe',30],['seedance-2-5-flash',30],['magi-2',30]]) {
         await page.selectOption('#videoModel',model);
         const state = await page.evaluate(()=>({max:currentApimartVideoRule().durations.at(-1),label:currentApimartVideoRule().label}));
         assert.equal(state.max,max,model);
@@ -143,6 +169,25 @@ fs.writeFileSync(path.join(runtime,'config.json'),JSON.stringify({
       });
       assert.equal(editCost,6.72,'Kling V4 input tier and rounded input+output seconds');
       await page.screenshot({path:path.join(output,`${name}-video.png`)});
+      await page.selectOption('#videoModel','magi-2');
+      assert.equal(await page.inputValue('#videoResolution'),'1080p');
+      assert.equal(await page.locator('#videoModeSelect option[value="video_edit"]').isDisabled(),true);
+      await page.selectOption('#videoModel','seedance-2-5-flash');
+      assert.equal(await page.locator('#seedance25Draft').isVisible(),false);
+      assert.equal(await page.evaluate(()=>getCurrentVideoModelUsageContext().variant),null);
+      await page.selectOption('#videoModel','apimart-zoe');
+      assert.equal(await page.locator('#videoModeSelect option[value="veo_remix"]').isDisabled(),true);
+      await page.evaluate(()=>{videoFilesData.push({duration_seconds:2.8});updateVideoModeUI();});
+      await page.selectOption('#videoModeSelect','multi_reference');
+      await page.selectOption('#videoResolution','720p');
+      const zoeCost = await page.evaluate(()=>{
+        $('#videoDuration').dataset.durationValue = '8';
+        return getCurrentVideoModelUsageContext().perTaskCredits;
+      });
+      assert.equal(zoeCost,1.088*14,'Zoe charges at least ceil(two thirds of the output seconds) for reference video');
+      await page.evaluate(()=>{videoFilesData.length=0;updateVideoModeUI();});
+      await page.check('#seedance25Draft');
+      assert.equal(await page.inputValue('#videoResolution'),'480p');
       assert.deepEqual(errors,[],`${name} renderer errors`);
     }
     console.log('November model UI passed: isolated host and browser, all new choices, custom dimensions, mode switching, limits, audio, pricing and desktop/narrow screenshots.');
